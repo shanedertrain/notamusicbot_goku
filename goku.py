@@ -2,9 +2,9 @@ import os
 from dotenv import load_dotenv
 import discord
 from discord.ext import commands
-import youtube_dlc
 import asyncio
 
+import convert_time as ct
 import configuration as cfg
 import video_types as vt
 
@@ -35,7 +35,7 @@ async def audio_player(bot):
 
             if voice_client and voice_client.is_connected():
                 # Send message to the channel where the video was added
-                await video.channel.send(f"Now playing: {video.title} | Duration: {video.duration}")
+                await video.channel.send(f"Now playing: {video.title} | Duration: {ct.convert_seconds_to_minutes_seconds(video.duration)}")
                 
                 voice_client.play(discord.FFmpegPCMAudio(video.url, before_options=FFMPEG_BEFORE_OPTIONS, options=FFMEG_OPTIONS))
                 
@@ -77,11 +77,11 @@ async def play(ctx, url: str):
     # Join the voice channel if the bot is not already connected
     voice_client = ctx.guild.voice_client
     if voice_client is None or not voice_client.is_connected():
+        await hey_its_me_goku()
         await ctx.author.voice.channel.connect()
 
     # Start the audio player task if it's not already running
     if audio_player_task is None or audio_player_task.done():
-        await hey_its_me_goku()
         audio_player_task = bot.loop.create_task(audio_player(bot))
         await ctx.send("Audio player started.")
     
