@@ -1,10 +1,16 @@
 from dataclasses import dataclass
 from typing import AsyncIterator
+from typing import Optional
 import asyncio
 import json
 import subprocess
 
 import discord
+
+@dataclass
+class User:
+    name: str
+    id: int
 
 @dataclass
 class Video:
@@ -15,6 +21,7 @@ class Video:
     view_count: int
     formats: list
     channel: discord.TextChannel  # Add the channel property
+    requester: Optional[User] = None  
 
 async def extract_info(url, channel: discord.TextChannel) -> AsyncIterator[Video]:
     process = await asyncio.create_subprocess_exec(
