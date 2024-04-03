@@ -10,6 +10,7 @@ import video_types as vt
 
 FFMPEG_BEFORE_OPTIONS = "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -nostdin"
 FFMEG_OPTIONS = "-vn"
+GUILD = 'BigbyInTheHouse'
 
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
@@ -19,6 +20,7 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.typing = False
 intents.presences = False
+intents.members = True
 
 playlist:list[vt.Video] = []
 audio_player_task = None
@@ -35,7 +37,7 @@ async def audio_player(bot):
 
             if voice_client and voice_client.is_connected():
                 # Send message to the channel where the video was added
-                await video.channel.send(f"Now playing: {video.title} | Duration: {ct.convert_seconds_to_minutes_seconds(video.duration)}")
+                await video.channel.send(f"Now playing: {video.title} | Duration: {ct.convert_seconds_to_minutes_seconds(video.duration)} | Requester: {video.requester.name}")
                 
                 voice_client.play(discord.FFmpegPCMAudio(video.url, before_options=FFMPEG_BEFORE_OPTIONS, options=FFMEG_OPTIONS))
                 
@@ -54,6 +56,20 @@ async def on_ready():
         f'{guild.name}(id: {guild.id})'
     )
     print("Ready...")
+    
+    # Fetch users asynchronously
+    # users_dict = await get_users(guild)
+    
+    # print(users_dict)
+
+async def get_users(guild):
+    # Fetch all members in the guild
+    await guild.fetch_members(limit=None).flatten()
+    
+    # Create a dictionary of users
+    users_dict = {member.name: member.id for member in guild.members}
+    
+    return users_dict
 
 @bot.event
 async def on_error(event, *args, **kwargs):
