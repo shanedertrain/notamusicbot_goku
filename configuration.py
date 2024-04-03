@@ -2,6 +2,7 @@ from pathlib import Path
 
 FOLDER_THIS = Path(__file__).parent
 FOLDER_INPUT = FOLDER_THIS / "input"
+FOLDER_PRE_PLAY = FOLDER_THIS / "pre_play"
 
 FILEPATH_START_SOUND = FOLDER_INPUT / "heyitsmegoku.mp3"
 # FILEPATH_START_SOUND = FOLDER_INPUT / "biden.mp3"

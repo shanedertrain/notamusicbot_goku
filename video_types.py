@@ -4,6 +4,7 @@ from typing import Optional
 import asyncio
 import json
 import subprocess
+from pathlib import Path
 
 import discord
 
@@ -37,6 +38,7 @@ class Video:
     formats: list
     channel: discord.TextChannel  # Add the channel property
     requester: Optional[User] = None  
+    path_pre_play: Optional[Path] = None 
 
 async def extract_info(url, channel: discord.TextChannel) -> AsyncIterator[Video]:
     process = await asyncio.create_subprocess_exec(
