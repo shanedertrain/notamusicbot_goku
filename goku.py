@@ -77,8 +77,8 @@ async def play(ctx, url: str):
     # Join the voice channel if the bot is not already connected
     voice_client = ctx.guild.voice_client
     if voice_client is None or not voice_client.is_connected():
-        await hey_its_me_goku()
         await ctx.author.voice.channel.connect()
+        await hey_its_me_goku()
 
     # Start the audio player task if it's not already running
     if audio_player_task is None or audio_player_task.done():
@@ -86,6 +86,7 @@ async def play(ctx, url: str):
         await ctx.send("Audio player started.")
     
     async for video in vt.extract_info(url, ctx.channel):
+        video.requester = vt.User(name=ctx.author.name, id=ctx.author.id)
         if video: 
             playlist.append(video)
 
