@@ -1,3 +1,3 @@
-[submodule "rvc-cli"]
-	path = rvc-cli
+[submodule "rvc_cli"]
+	path = rvc_cli
 	url = https://github.com/AshtonScalise/rvc-cli.git

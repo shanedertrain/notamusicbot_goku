@@ -8,25 +8,7 @@ from pathlib import Path
 
 import discord
 
-import configuration as cfg
-
-@dataclass
-class User:
-    name: str
-    id: int
-    real_name: str = None  # Default value None for real_name
-
-    def __post_init__(self):
-        # Load real names from JSON file
-        with open(cfg.JSON_USERS, 'r') as file:
-            users_dict = json.load(file)
-        
-        # Check if the user's name exists in the JSON data
-        if self.name in users_dict:
-            self.real_name = users_dict[self.name]['real_name']
-        else:
-            # If real name not found, set it to the same as username
-            self.real_name = self.name
+from users import User
 
 @dataclass
 class Video:
