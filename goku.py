@@ -3,7 +3,6 @@ from dotenv import load_dotenv
 import asyncio
 import discord
 from discord.ext import commands
-from pathlib import Path
 
 import convert_time as ct
 import configuration as cfg
@@ -109,7 +108,7 @@ async def play(ctx, url: str):
     voice_client = ctx.guild.voice_client
     if not voice_client:
         await ctx.author.voice.channel.connect()
-    await hey_its_me_goku()
+    await channel_join_audio()
 
     # Start the audio player task if it's not already running
     if audio_player_task is None or audio_player_task.done():
@@ -157,7 +156,7 @@ async def skip(ctx):
         await ctx.send("No song is currently playing.")
 
 
-async def hey_its_me_goku():
+async def channel_join_audio():
     voice_client = bot.voice_clients[0] if bot.voice_clients else None
 
     if voice_client and voice_client.is_connected():
