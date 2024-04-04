@@ -19,7 +19,7 @@ FOLDER_LOGS.mkdir(parents=True, exist_ok=True)
 FILEPATH_LOG = FOLDER_LOGS / 'log.log'
 
 def configure_logger(log_file) -> logging.Logger:
-    logger = logging.getLogger('cfg_logger')
+    logger = logging.getLogger('logger_main')
     logger.setLevel(logging.DEBUG)
 
     # Create file handler which logs only messages above INFO level to the file
