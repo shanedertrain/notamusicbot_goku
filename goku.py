@@ -34,7 +34,7 @@ async def generate_pre_play_audio_file(real_name: str):
     # For demonstration, let's assume it generates an audio file with the real name
     audio_filename = cfg.FOLDER_PRE_PLAY / f"{real_name}_audio.mp3"
     # Simulate some time-consuming audio generation process
-    await asyncio.sleep(5)
+    await asyncio.sleep(0)
     # Return the path to the generated audio file
     # return Path(audio_filename)
     return None
