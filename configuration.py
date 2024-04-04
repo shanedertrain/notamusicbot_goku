@@ -1,9 +1,44 @@
 from pathlib import Path
+import logging
 
-FOLDER_THIS = Path(__file__).parent
-FOLDER_INPUT = FOLDER_THIS / "input"
-FOLDER_PRE_PLAY = FOLDER_THIS / "pre_play"
+DEBUG = True
 
-FILEPATH_START_SOUND = FOLDER_INPUT / "heyitsmegoku.mp3"
+DATETIME_FORMAT = '%Y-%m-%d %H:%M:%S.%f'
+
+FOLDER_ROOT = Path(__file__).parent
+
+FOLDER_INPUT = FOLDER_ROOT / "input"
+FOLDER_INPUT.mkdir(parents=True, exist_ok=True)
 
 JSON_USERS = FOLDER_INPUT / "users.json"
+FILEPATH_START_SOUND = FOLDER_INPUT / "heyitsmegoku.mp3"
+
+FOLDER_LOGS = FOLDER_ROOT / "logs"
+FOLDER_LOGS.mkdir(parents=True, exist_ok=True)
+
+FILEPATH_LOG = FOLDER_LOGS / 'log.log'
+
+def configure_logger(log_file) -> logging.Logger:
+    logger = logging.getLogger('cfg_logger')
+    logger.setLevel(logging.DEBUG)
+
+    # Create file handler which logs only messages above INFO level to the file
+    file_handler = logging.FileHandler(log_file)
+    file_handler.setLevel(logging.INFO)
+
+    # Create stream handler to log messages to the console
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)  # Change the level as needed
+
+    # Create a formatter and set it to the handler
+    formatter = logging.Formatter('[%(levelname)s] %(asctime)s: %(filename)s | %(message)s', '%H:%M:%S')
+    file_handler.setFormatter(formatter)
+    console_handler.setFormatter(formatter)
+
+    # Add the file handler to the logger
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+    
+    return logger
+
+LOGGER = configure_logger(FILEPATH_LOG)
