@@ -13,6 +13,7 @@ import users
 
 from rvc_cli import song_comment_generator as scg
 from rvc_cli import tts
+from rvc_cli import audio_processor
 
 FFMPEG_BEFORE_OPTIONS = "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -nostdin"
 FFMEG_OPTIONS = "-vn"
@@ -35,8 +36,9 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 
 async def generate_pre_play_audio_file(video:vt.Video) -> Path:
     song_comment = scg.generate_song_comment(video.requester.real_name, video.requester.background, video.title, video.uploader)
-    pre_play_filepath = tts.text_to_speech(song_comment)
-    return pre_play_filepath
+    tts_filepath = tts.text_to_speech(song_comment)
+    final_filepath = audio_processor.increase_speed_and_volume(tts_filepath, volume_modifier_db=2, speed_multiplier=1.25)
+    return final_filepath
 
 async def audio_player(bot):
     global playlist
@@ -83,10 +85,12 @@ async def on_ready():
 
 async def get_users(guild):
     # Fetch all members in the guild
-    await guild.fetch_members(limit=None).flatten()
+    members = []
+    async for member in guild.fetch_members(limit=None):
+        members.append(member)
     
     # Create a dictionary of users
-    users_dict = {member.id: member.name for member in guild.members}
+    users_dict = {member.id: member.name for member in members}
     
     return users_dict
 
@@ -113,7 +117,7 @@ async def play(ctx, url: str):
     voice_client = ctx.guild.voice_client
     if not voice_client:
         await ctx.author.voice.channel.connect()
-    await channel_join_audio()
+        await channel_join_audio()
 
     # Start the audio player task if it's not already running
     if audio_player_task is None or audio_player_task.done():
@@ -158,7 +162,6 @@ async def skip(ctx):
             leave()
     else:
         await ctx.send("No song is currently playing.")
-
 
 async def channel_join_audio():
     voice_client = bot.voice_clients[0] if bot.voice_clients else None
