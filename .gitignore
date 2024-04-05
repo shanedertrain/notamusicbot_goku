@@ -2,3 +2,4 @@
 input/*
 logs/*
 output/*
+hubert_base.pt
