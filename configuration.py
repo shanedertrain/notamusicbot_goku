@@ -27,7 +27,7 @@ def configure_logger(log_file) -> logging.Logger:
 
     # Create file handler which logs only messages above INFO level to the file
     file_handler = logging.FileHandler(log_file)
-    file_handler.setLevel(logging.INFO)
+    file_handler.setLevel(logging.DEBUG)
 
     # Create stream handler to log messages to the console
     console_handler = logging.StreamHandler()
