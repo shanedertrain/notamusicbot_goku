@@ -54,6 +54,10 @@ OR
 4. Update the `.env` file in the rvc_cli directory of the project:  
     GEMENI_API_KEY=<your_api_key>
 
+5. Run `goku.py` and then update the `users.json` file with the backgrounds of the users in your Discord server. 
+
+6. Restart `goku.py` for the changes to take effect. 
+
 ## Usage
 
 1. Start the bot by running the `goku.py` script:
