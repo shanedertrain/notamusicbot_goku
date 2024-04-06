@@ -15,6 +15,7 @@ This Discord bot is designed to play audio in a voice channel based on user requ
 - Python 3.9 >=< 3.10
 - `ffmpeg` installed and added to the system PATH: https://ffmpeg.org/download.html
 - Windows 10 SDK installed to build fairseq: https://developer.microsoft.com/en-us/windows/downloads/windows-sdk/
+- hubert_base.pt placed into in the root directory: https://huggingface.co/lj1995/VoiceConversionWebUI/blob/main/hubert_base.pt
 
 ### Installation
 
@@ -42,8 +43,7 @@ This Discord bot is designed to play audio in a voice channel based on user requ
 
         ./setup.sh
 
-
-4. Create a `.env` file in the root directory of the project and add your Discord bot token:
+4. Update the `.env` file in the root directory of the project:
 
     DISCORD_TOKEN=<your_discord_token>
     DISCORD_GUILD=<discord_server_name>
@@ -51,12 +51,12 @@ This Discord bot is designed to play audio in a voice channel based on user requ
     FILENAME_START_SOUND=<startup_sound> 
         This plays when the bot first runs or joins a channel
 
-5. Adjust the bot's configuration settings and file paths as needed in the `configuration.py` file.
+5. Update the `.env` file in the rvc_cli directory of the project:
+    GEMENI_API_KEY=<your_api_key>
 
 ## Usage
 
 1. Start the bot by running the `goku.py` script:
-
 
 2. Use the command prefix `!g` followed by the desired command to interact with the bot. For example:
 
