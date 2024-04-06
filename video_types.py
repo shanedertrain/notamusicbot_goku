@@ -5,6 +5,7 @@ import asyncio
 import json
 import subprocess
 from pathlib import Path
+import youtube_dlc
 
 import discord
 
