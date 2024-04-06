@@ -41,7 +41,8 @@ bot = commands.Bot(command_prefix='!g', intents=intents)
 
 async def generate_pre_play_audio_file(video:vt.Video) -> Path:
     song_comment = scg.generate_song_comment(video.requester.real_name, video.requester.background, video.title, video.uploader)
-    tts_filepath = tts.text_to_speech(song_comment, output_path=Path(cfg.FOLDER_TTS / f"{uuid.uuid4()}.wav"))
+    song_comment_without_quotes = song_comment.replace('"', '')
+    tts_filepath = tts.text_to_speech(song_comment_without_quotes, output_path=Path(cfg.FOLDER_TTS / f"{uuid.uuid4()}.wav"))
     final_filepath = audio_processor.increase_speed_and_volume(tts_filepath, volume_modifier_db=4, speed_multiplier=1.25)
     return final_filepath
 
