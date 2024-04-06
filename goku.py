@@ -51,7 +51,6 @@ async def audio_player(bot):
 
             if voice_client and voice_client.is_connected():
                 # Send message to the channel where the video was added
-                await video.channel.send(f"Now playing: {video.title} | Duration: {ct.convert_seconds_to_minutes_seconds(video.duration)} | Requester: {video.requester.screen_name} ({video.requester.real_name})")
                 
                 if video.path_pre_play != None:
                     voice_client.play(discord.FFmpegPCMAudio(video.path_pre_play))
@@ -61,6 +60,7 @@ async def audio_player(bot):
 
                     os.remove(video.path_pre_play)
 
+                await video.channel.send(f"Now playing: {video.title} | Duration: {ct.convert_seconds_to_minutes_seconds(video.duration)} | Requester: {video.requester.screen_name} ({video.requester.real_name})")
                 voice_client.play(discord.FFmpegPCMAudio(video.url, before_options=FFMPEG_BEFORE_OPTIONS, options=FFMEG_OPTIONS))
                 
                 while voice_client.is_playing():
@@ -118,7 +118,7 @@ async def play(ctx, url: str):
     voice_client = ctx.guild.voice_client
     if not voice_client:
         await ctx.author.voice.channel.connect()
-        # await channel_join_audio()
+        await channel_join_audio()
 
     # Start the audio player task if it's not already running
     if audio_player_task is None or audio_player_task.done():
