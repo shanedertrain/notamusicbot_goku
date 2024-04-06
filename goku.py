@@ -45,6 +45,8 @@ async def generate_pre_play_audio_file(video:vt.Video) -> Path:
 
 async def audio_player(bot):
     global playlist
+    idle_seconds = 0
+    left_channel = True
 
     while True:
         if playlist:
@@ -52,7 +54,7 @@ async def audio_player(bot):
             voice_client = bot.voice_clients[0] if bot.voice_clients else None
 
             if voice_client and voice_client.is_connected():
-                # Send message to the channel where the video was added
+                left_channel = False
                 
                 if video.path_pre_play != None:
                     voice_client.play(discord.FFmpegPCMAudio(video.path_pre_play))
@@ -72,8 +74,8 @@ async def audio_player(bot):
             await asyncio.sleep(1)
             idle_seconds += 1
 
-            if idle_seconds >= IDLE_SECONDS_MAX:
-                await leave_current_voice_channel()
+            if idle_seconds >= IDLE_SECONDS_MAX and not left_channel:
+                left_channel = await leave_current_voice_channel()
 
 @bot.event
 async def on_ready():
@@ -194,14 +196,16 @@ async def leave(ctx):
     else:
         await ctx.send("The bot is not connected to a voice channel.")
 
-async def leave_current_voice_channel():
+async def leave_current_voice_channel() -> bool:
     # Get the bot's voice client
     voice_client = discord.utils.get(bot.voice_clients)
     if voice_client:
         await voice_client.disconnect()
-        print(f'Idle for too long, left voice channel: {voice_client.channel.name}')
+        cfg.LOGGER.info(f'Idle for too long, left voice channel: {voice_client.channel.name}')
+        return True
     else:
-        print('Error: Bot is not connected to any voice channel.')
+        cfg.LOGGER.error('Error: Bot is not connected to any voice channel.')
+        return False
 
 def clear_tts_folder():
     for file in cfg.FOLDER_TTS.iterdir():
