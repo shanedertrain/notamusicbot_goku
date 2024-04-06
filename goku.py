@@ -24,6 +24,7 @@ GUILD = 'BigbyInTheHouse'
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 GUILD = os.getenv('DISCORD_GUILD')
+FILEPATH_START_SOUND = cfg.FOLDER_INPUT / os.getenv('FILENAME_START_SOUND')
 
 intents = discord.Intents.default()
 intents.message_content = True

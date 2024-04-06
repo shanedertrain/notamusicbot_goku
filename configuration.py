@@ -11,7 +11,6 @@ FOLDER_INPUT = FOLDER_ROOT / "input"
 FOLDER_INPUT.mkdir(parents=True, exist_ok=True)
 
 FILEPATH_USERS = FOLDER_INPUT / "users.json"
-FILEPATH_START_SOUND = FOLDER_INPUT / "heyitsmegoku.mp3"
 
 FOLDER_OUTPUT = FOLDER_ROOT / "output"
 FOLDER_OUTPUT.mkdir(parents=True, exist_ok=True)

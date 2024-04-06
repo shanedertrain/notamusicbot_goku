@@ -47,6 +47,9 @@ This Discord bot is designed to play audio in a voice channel based on user requ
 
     DISCORD_TOKEN=<your_discord_token>
     DISCORD_GUILD=<discord_server_name>
+        As it appears in the Discord client
+    FILENAME_START_SOUND=<startup_sound> 
+        This plays when the bot first runs or joins a channel
 
 5. Adjust the bot's configuration settings and file paths as needed in the `configuration.py` file.
 
