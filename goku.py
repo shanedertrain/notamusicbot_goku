@@ -199,7 +199,7 @@ async def channel_join_audio():
     voice_client = bot.voice_clients[0] if bot.voice_clients else None
 
     if voice_client and voice_client.is_connected():
-        audio_file = discord.FFmpegPCMAudio(cfg.FILEPATH_START_SOUND)
+        audio_file = discord.FFmpegPCMAudio(FILEPATH_START_SOUND)
         voice_client.play(audio_file)
         while voice_client.is_playing():
             await asyncio.sleep(1)
