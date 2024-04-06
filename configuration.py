@@ -16,6 +16,9 @@ FILEPATH_START_SOUND = FOLDER_INPUT / "heyitsmegoku.mp3"
 FOLDER_OUTPUT = FOLDER_ROOT / "output"
 FOLDER_OUTPUT.mkdir(parents=True, exist_ok=True)
 
+FOLDER_TTS = FOLDER_OUTPUT / "tts"
+FOLDER_TTS.mkdir(parents=True, exist_ok=True)
+
 FOLDER_LOGS = FOLDER_ROOT / "logs"
 FOLDER_LOGS.mkdir(parents=True, exist_ok=True)
 

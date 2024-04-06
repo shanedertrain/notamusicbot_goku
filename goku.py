@@ -2,6 +2,7 @@ import os
 from dotenv import load_dotenv
 import asyncio
 from pathlib import Path
+import uuid
 
 import discord
 from discord.ext import commands
@@ -36,8 +37,8 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 
 async def generate_pre_play_audio_file(video:vt.Video) -> Path:
     song_comment = scg.generate_song_comment(video.requester.real_name, video.requester.background, video.title, video.uploader)
-    tts_filepath = tts.text_to_speech(song_comment)
-    final_filepath = audio_processor.increase_speed_and_volume(tts_filepath, volume_modifier_db=2, speed_multiplier=1.25)
+    tts_filepath = tts.text_to_speech(song_comment, output_path=Path(cfg.FOLDER_TTS / f"{uuid.uuid4()}.wav"))
+    final_filepath = audio_processor.increase_speed_and_volume(tts_filepath, volume_modifier_db=4, speed_multiplier=1.25)
     return final_filepath
 
 async def audio_player(bot):
@@ -117,7 +118,7 @@ async def play(ctx, url: str):
     voice_client = ctx.guild.voice_client
     if not voice_client:
         await ctx.author.voice.channel.connect()
-        await channel_join_audio()
+        # await channel_join_audio()
 
     # Start the audio player task if it's not already running
     if audio_player_task is None or audio_player_task.done():
@@ -126,7 +127,7 @@ async def play(ctx, url: str):
     
     async for video in vt.extract_info(url, ctx.channel):
         video.requester = users.get_user_by_id(ctx.author.id)
-        if video: 
+        if video:
             # Generate audio file based on the real name of the requester
             if video.requester is not None and video.requester.real_name is not None:
                 audio_file_path = await generate_pre_play_audio_file(video)
@@ -182,5 +183,15 @@ async def leave(ctx):
     else:
         await ctx.send("The bot is not connected to a voice channel.")
 
+def clear_tts_folder():
+    for file in cfg.FOLDER_TTS.iterdir():
+        if file.is_file():
+            try:
+                file.unlink()
+                print(f"Deleted file: {file}")
+            except Exception as e:
+                print(f"Error deleting file: {file} - {e}")
+
 if __name__ == '__main__':
+    clear_tts_folder()
     bot.run(TOKEN)
