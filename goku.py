@@ -82,11 +82,11 @@ async def audio_player(bot):
 @bot.event
 async def on_ready():
     guild = discord.utils.find(lambda g: g.name == GUILD, bot.guilds)
-    print(
+    cfg.LOGGER.info(
         f'{bot.user} is connected to the following guild:\n'
         f'{guild.name}(id: {guild.id})'
     )
-    print("Ready...")
+    cfg.LOGGER.info("Ready...")
     
     # Fetch users asynchronously
     users_dict = await get_users(guild)
@@ -230,9 +230,9 @@ def clear_tts_folder():
         if file.is_file():
             try:
                 file.unlink()
-                print(f"Deleted file: {file}")
+                cfg.LOGGER.debug(f"Deleted file: {file}")
             except Exception as e:
-                print(f"Error deleting file: {file} - {e}")
+                cfg.LOGGER.debug(f"Error deleting file: {file} - {e}")
 
 if __name__ == '__main__':
     clear_tts_folder()
