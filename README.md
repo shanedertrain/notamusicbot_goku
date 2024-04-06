@@ -23,35 +23,35 @@ This Discord bot is designed to play audio in a voice channel based on user requ
 
     git clone <repository_url>
 
-2. Initialize and update submodules:
+2A.
 
-    git submodule update --init --recursive
+        1. Run the `setup.sh` script:
 
-    OR
+            ./setup.sh
 
-    Run the `setup.sh` script:
+OR
 
-        ./setup.sh
+2B.
 
-3. Install the required Python packages:
+        1. Initialize and update submodules:
 
-    pip install -r requirements.txt
+            git submodule update --init --recursive
 
-    OR
 
-    Run the `setup.sh` script:
+        2. Install the required Python packages:
 
-        ./setup.sh
+            pip install -r requirements.txt
 
-4. Update the `.env` file in the root directory of the project:
 
-    DISCORD_TOKEN=<your_discord_token>
-    DISCORD_GUILD=<discord_server_name>
-        As it appears in the Discord client
-    FILENAME_START_SOUND=<startup_sound> 
+3. Update the `.env` file in the root directory of the project:
+
+    DISCORD_TOKEN=<your_discord_token>  
+    DISCORD_GUILD=<discord_server_name>  
+        As it appears in the Discord client  
+    FILENAME_START_SOUND=<startup_sound>  
         This plays when the bot first runs or joins a channel
 
-5. Update the `.env` file in the rvc_cli directory of the project:
+4. Update the `.env` file in the rvc_cli directory of the project:  
     GEMENI_API_KEY=<your_api_key>
 
 ## Usage
@@ -60,9 +60,9 @@ This Discord bot is designed to play audio in a voice channel based on user requ
 
 2. Use the command prefix `!g` followed by the desired command to interact with the bot. For example:
 
-- `!g play <video_url>`: Add a video or playlist to the queue and start playing.
-- `!g stop`: Stop playing the audio and disconnect from the voice channel.
-- `!g skip`: Skip the current song and move to the next in the playlist.
+- `!gplay <video_url>`: Add a video or playlist to the queue and start playing.
+- `!gstop`: Stop playing the audio and disconnect from the voice channel.
+- `!gskip`: Skip the current song and move to the next in the playlist.
 
 ## Contributors
 
