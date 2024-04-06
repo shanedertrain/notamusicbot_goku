@@ -127,6 +127,11 @@ async def play(ctx, url: str):
         await ctx.author.voice.channel.connect()
         await channel_join_audio()
 
+    # Start the audio player task if it's not already running
+    if audio_player_task is None or audio_player_task.done():
+        audio_player_task = bot.loop.create_task(audio_player(bot))
+        await ctx.send("Audio player started.")
+
     async for video in vt.extract_info(url, ctx.channel):
         video.requester = users.get_user_by_id(ctx.author.id)
         if video:
@@ -140,11 +145,6 @@ async def play(ctx, url: str):
                 await video.channel.send(f"Added to playlist: {video.title} | Duration: {ct.convert_seconds_to_minutes_seconds(video.duration)} | Requester: {video.requester.screen_name} ({video.requester.real_name})")
             except Exception as e:
                 await ctx.send(f"Error processing video: {e}")
-
-    # Start the audio player task if it's not already running
-    if audio_player_task is None or audio_player_task.done():
-        audio_player_task = bot.loop.create_task(audio_player(bot))
-        await ctx.send("Audio player started.")
 
 @bot.command(name='stop', help='Stops playing the audio and disconnects from the voice channel')
 async def stop(ctx):
