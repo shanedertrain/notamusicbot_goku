@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 import asyncio
 from pathlib import Path
 import uuid
+import json
 
 import discord
 from discord.ext import commands
@@ -96,15 +97,31 @@ async def get_users(guild):
     members = []
     async for member in guild.fetch_members(limit=None):
         members.append(member)
-    
-    # Create a dictionary of users
+
+    if not cfg.FILEPATH_USERS.exists():
+        write_users_to_json(members)
+        users.USERS = users.read_users_from_json_file(cfg.FILEPATH_USERS) 
+
     users_dict = {member.id: member.name for member in members}
     
     return users_dict
 
+def write_users_to_json(members):
+    users_dict = {
+        member.display_name: {
+            "id": member.id,
+            "real_name": member.display_name,
+            "background": ""
+        }
+        for member in members
+    }
+
+    with open(cfg.FILEPATH_USERS, 'w') as f:
+        json.dump(users_dict, f, indent=2)
+
 @bot.event
 async def on_error(event, *args, **kwargs):
-    with open('err.log', 'a') as f:
+    with open(cfg.FOLDER_LOGS / 'bot_errors.log', 'a') as f:
         if event == 'on_message':
             f.write(f'Unhandled message: {args[0]}\n')
         else:

@@ -10,7 +10,7 @@ FOLDER_ROOT = Path(__file__).parent
 FOLDER_INPUT = FOLDER_ROOT / "input"
 FOLDER_INPUT.mkdir(parents=True, exist_ok=True)
 
-JSON_USERS = FOLDER_INPUT / "users.json"
+FILEPATH_USERS = FOLDER_INPUT / "users.json"
 FILEPATH_START_SOUND = FOLDER_INPUT / "heyitsmegoku.mp3"
 
 FOLDER_OUTPUT = FOLDER_ROOT / "output"
