@@ -33,7 +33,9 @@ intents.members = True
 playlist:list[vt.Video] = []
 audio_player_task = None
 
-bot = commands.Bot(command_prefix='!', intents=intents)
+IDLE_SECONDS_MAX = 5*60
+
+bot = commands.Bot(command_prefix='!g', intents=intents)
 
 async def generate_pre_play_audio_file(video:vt.Video) -> Path:
     song_comment = scg.generate_song_comment(video.requester.real_name, video.requester.background, video.title, video.uploader)
@@ -58,17 +60,20 @@ async def audio_player(bot):
                     while voice_client.is_playing():
                         await asyncio.sleep(1)
 
-                    os.remove(video.path_pre_play)
-
                 await video.channel.send(f"Now playing: {video.title} | Duration: {ct.convert_seconds_to_minutes_seconds(video.duration)} | Requester: {video.requester.screen_name} ({video.requester.real_name})")
                 voice_client.play(discord.FFmpegPCMAudio(video.url, before_options=FFMPEG_BEFORE_OPTIONS, options=FFMEG_OPTIONS))
                 
                 while voice_client.is_playing():
                     await asyncio.sleep(1)
+                    idle_seconds = 0
                     
         else:
             # If the playlist is empty, wait for a short duration and check again
             await asyncio.sleep(1)
+            idle_seconds += 1
+
+            if idle_seconds >= IDLE_SECONDS_MAX:
+                await leave_current_voice_channel()
 
 @bot.event
 async def on_ready():
@@ -103,7 +108,7 @@ async def on_error(event, *args, **kwargs):
         else:
             raise
 
-@bot.command(name='gplay', help='Add a video or playlist to the queue and start playing')
+@bot.command(name='play', help='Add a video or playlist to the queue and start playing')
 async def play(ctx, url: str):
     """
     Adds the provided link to the playlist queue and starts playing.
@@ -120,11 +125,6 @@ async def play(ctx, url: str):
         await ctx.author.voice.channel.connect()
         await channel_join_audio()
 
-    # Start the audio player task if it's not already running
-    if audio_player_task is None or audio_player_task.done():
-        audio_player_task = bot.loop.create_task(audio_player(bot))
-        await ctx.send("Audio player started.")
-    
     async for video in vt.extract_info(url, ctx.channel):
         video.requester = users.get_user_by_id(ctx.author.id)
         if video:
@@ -138,6 +138,11 @@ async def play(ctx, url: str):
                 await video.channel.send(f"Added to playlist: {video.title} | Duration: {ct.convert_seconds_to_minutes_seconds(video.duration)} | Requester: {video.requester.screen_name} ({video.requester.real_name})")
             except Exception as e:
                 await ctx.send(f"Error processing video: {e}")
+
+    # Start the audio player task if it's not already running
+    if audio_player_task is None or audio_player_task.done():
+        audio_player_task = bot.loop.create_task(audio_player(bot))
+        await ctx.send("Audio player started.")
 
 @bot.command(name='stop', help='Stops playing the audio and disconnects from the voice channel')
 async def stop(ctx):
@@ -166,7 +171,7 @@ async def skip(ctx):
         voice_client.stop()
         await ctx.send("Skipping current song.")
         if len(playlist) == 0:
-            leave()
+            leave(ctx)
     else:
         await ctx.send("No song is currently playing.")
 
@@ -188,6 +193,15 @@ async def leave(ctx):
         await voice_client.disconnect()
     else:
         await ctx.send("The bot is not connected to a voice channel.")
+
+async def leave_current_voice_channel():
+    # Get the bot's voice client
+    voice_client = discord.utils.get(bot.voice_clients)
+    if voice_client:
+        await voice_client.disconnect()
+        print(f'Idle for too long, left voice channel: {voice_client.channel.name}')
+    else:
+        print('Error: Bot is not connected to any voice channel.')
 
 def clear_tts_folder():
     for file in cfg.FOLDER_TTS.iterdir():
