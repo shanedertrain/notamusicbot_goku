@@ -128,12 +128,16 @@ async def play(ctx, url: str):
     async for video in vt.extract_info(url, ctx.channel):
         video.requester = users.get_user_by_id(ctx.author.id)
         if video:
-            # Generate audio file based on the real name of the requester
-            if video.requester is not None and video.requester.real_name is not None:
-                audio_file_path = await generate_pre_play_audio_file(video)
-                video.path_pre_play = audio_file_path
-            
-            playlist.append(video)
+            try:
+                # Generate audio file based on the real name of the requester
+                if video.requester is not None and video.requester.real_name is not None:
+                    audio_file_path = await generate_pre_play_audio_file(video)
+                    video.path_pre_play = audio_file_path
+                
+                playlist.append(video)
+                await video.channel.send(f"Added to playlist: {video.title} | Duration: {ct.convert_seconds_to_minutes_seconds(video.duration)} | Requester: {video.requester.screen_name} ({video.requester.real_name})")
+            except Exception as e:
+                await ctx.send(f"Error processing video: {e}")
 
 @bot.command(name='stop', help='Stops playing the audio and disconnects from the voice channel')
 async def stop(ctx):
@@ -144,6 +148,8 @@ async def stop(ctx):
     global audio_player_task
 
     playlist.clear()
+    if audio_player_task and not audio_player_task.done():
+        await audio_player_task
     if audio_player_task and not audio_player_task.done():
         audio_player_task.cancel()
     await leave(ctx)
