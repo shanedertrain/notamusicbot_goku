@@ -13,6 +13,9 @@ import configuration as cfg
 import video_types as vt
 import users
 
+import sys
+sys.path.append(str(cfg.FOLDER_ROOT / 'rvc_cli'))
+
 from rvc_cli import song_comment_generator as scg
 from rvc_cli import tts
 from rvc_cli import audio_processor
@@ -49,7 +52,11 @@ async def generate_pre_play_audio_file(video:vt.Video) -> Path:
     song_comment_without_quotes = song_comment.replace('"', '')
     tts_filepath = tts.text_to_speech(song_comment_without_quotes, output_path=Path(cfg.FOLDER_TTS / f"{uuid.uuid4()}.wav"))
     tts_processed_filepath = audio_processor.increase_speed_and_volume(tts_filepath, volume_modifier_db=4, speed_multiplier=1.25)
+    
+    cfg.LOGGER.debug("Starting voice conversion")
     output_path = VC_HANDLER.convert_voice(tts_processed_filepath, cfg.FOLDER_OUTPUT)
+    cfg.LOGGER.debug("Voice conversion complete!")
+    
     return output_path
 
 async def audio_player(bot):
