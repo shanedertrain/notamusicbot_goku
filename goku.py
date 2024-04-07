@@ -54,9 +54,9 @@ async def generate_pre_play_audio_file(video:vt.Video) -> Path:
     tts_processed_filepath = audio_processor.increase_speed_and_volume(tts_filepath, volume_modifier_db=4, speed_multiplier=1.25)
     
     cfg.LOGGER.debug("Starting voice conversion")
-    output_path = VC_HANDLER.convert_voice(tts_processed_filepath, cfg.FOLDER_OUTPUT)
+    output_path = await asyncio.to_thread(VC_HANDLER.convert_voice, tts_processed_filepath, cfg.FOLDER_OUTPUT)
     cfg.LOGGER.debug("Voice conversion complete!")
-    
+
     return output_path
 
 async def audio_player(bot):
@@ -177,6 +177,7 @@ async def play(ctx, url: str):
                 playlist.append(video)
                 await video.channel.send(f"Added to playlist: {video.title} | Duration: {ct.convert_seconds_to_minutes_seconds(video.duration)} | Requester: {video.requester.screen_name} ({video.requester.real_name})")
             except Exception as e:
+                cfg.LOGGER.error(f"Error processing video: {e}", exc_info=True)
                 await ctx.send(f"Error processing video: {e}")
 
 @BOT.command(name='stop', help='Stops playing the audio and disconnects from the voice channel')
