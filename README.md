@@ -50,6 +50,12 @@ OR
         As it appears in the Discord client  
     FILENAME_START_SOUND=<startup_sound>  
         This plays when the bot first runs or joins a channel
+    PTH_PATH=<pth_path>  
+        Relative path from root to .pth file for your model. ex: rvc_cli\models\Goku\Goku_5100.pth
+    INDEX_PATH=<index_path>  
+        Relative path from root to .index file for your model. ex: rvc_cli\models\Goku\added_IVF842_Flat_nprobe_7.index
+    GENERATOR=<gpu_or_cpu>  
+        GPU or CPU depending on what you want to use. If no CUDA cores (NVIDIA), then use CPU
 
 4. Update the `.env` file in the rvc_cli directory of the project:  
     GEMENI_API_KEY=<your_api_key>
