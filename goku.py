@@ -4,6 +4,7 @@ import asyncio
 from pathlib import Path
 import uuid
 import json
+from typing import Union
 
 import discord
 from discord.ext import commands
@@ -47,15 +48,19 @@ VC_HANDLER = vc.VoiceConverterHandler(Path(PTH_PATH), Path(INDEX_PATH), generato
 playlist:list[vt.Video] = []
 audio_player_task = None
 
-async def generate_pre_play_audio_file(video:vt.Video) -> Path:
-    song_comment = scg.generate_song_comment(video.requester.real_name, video.requester.background, video.title, video.uploader)
-    song_comment_without_quotes = song_comment.replace('"', '')
-    tts_filepath = tts.text_to_speech(song_comment_without_quotes, output_path=Path(cfg.FOLDER_TTS / f"{uuid.uuid4()}.wav"))
-    tts_processed_filepath = audio_processor.increase_speed_and_volume(tts_filepath, volume_modifier_db=4, speed_multiplier=1.25)
-    
-    cfg.LOGGER.debug("Starting voice conversion")
-    output_path = await asyncio.to_thread(VC_HANDLER.convert_voice, tts_processed_filepath, cfg.FOLDER_OUTPUT)
-    cfg.LOGGER.debug("Voice conversion complete!")
+async def generate_pre_play_audio_file(video:vt.Video) -> Union[Path, None]:
+    try:
+        song_comment = await asyncio.to_thread(scg.generate_song_comment, video.requester.real_name, video.requester.background, video.title, video.uploader)
+        song_comment_without_quotes = song_comment.replace('"', '')
+        tts_filepath = await asyncio.to_thread(tts.text_to_speech, song_comment_without_quotes, output_path=Path(cfg.FOLDER_TTS / f"{uuid.uuid4()}.wav"))
+        tts_processed_filepath = await asyncio.to_thread(audio_processor.increase_speed_and_volume, tts_filepath, volume_modifier_db=6, speed_multiplier=1.0)
+        
+        cfg.LOGGER.debug("Starting voice conversion")
+        output_path = await asyncio.to_thread(VC_HANDLER.convert_voice, tts_processed_filepath, cfg.FOLDER_OUTPUT)
+        cfg.LOGGER.debug("Voice conversion complete!")
+    except Exception as e:
+        cfg.LOGGER.error(e)
+        output_path = None
 
     return output_path
 
@@ -172,7 +177,8 @@ async def play(ctx, url: str):
                 # Generate audio file based on the real name of the requester
                 if video.requester is not None and video.requester.real_name is not None:
                     audio_file_path = await generate_pre_play_audio_file(video)
-                    video.path_pre_play = audio_file_path
+                    if audio_file_path != None:
+                        video.path_pre_play = audio_file_path
                 
                 playlist.append(video)
                 await video.channel.send(f"Added to playlist: {video.title} | Duration: {ct.convert_seconds_to_minutes_seconds(video.duration)} | Requester: {video.requester.screen_name} ({video.requester.real_name})")
