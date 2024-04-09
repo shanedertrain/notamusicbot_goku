@@ -164,6 +164,8 @@ async def play(ctx, url: str):
     global playlist
     global audio_player_task
 
+    users.USERS = users.read_users_from_json_file(cfg.FILEPATH_USERS) 
+
     # Join the voice channel if the bot is not already connected
     voice_client = ctx.guild.voice_client
     if not voice_client:
