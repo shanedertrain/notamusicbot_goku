@@ -9,6 +9,7 @@ class User:
     id: int
     real_name: str
     background: str
+    tts_type: str
     screen_name: str = None
 
 def read_users_from_json_file(file_path:Path) -> List[User]:
@@ -20,7 +21,8 @@ def read_users_from_json_file(file_path:Path) -> List[User]:
                 user = User(
                     id=user_info['id'],
                     real_name=user_info['real_name'],
-                    background=user_info['background']
+                    background=user_info['background'],
+                    tts_type=user_info['tts_type']
                 )
                 users.append(user)
     except FileNotFoundError:

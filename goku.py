@@ -45,17 +45,24 @@ intents.members = True
 BOT = commands.Bot(command_prefix='!g', intents=intents)
 
 VC_HANDLER = vc.VoiceConverterHandler(Path(PTH_PATH), Path(INDEX_PATH), generator=GENERATOR)
-TTS_MODULE = tts.TextToSpeechConverter_Pyttsx3()
 
 playlist:list[vt.Video] = []
 audio_player_task = None
 
 async def generate_pre_play_audio_file(video:vt.Video) -> Union[Path, None]:
+    user = users.get_user_by_id(video.requester.id)
+    if user.tts_type == 'gtts':
+        tts_module = tts.TextToSpeechConverter_gTTS()
+    elif user.tts_type == 'pyttsx3':
+        tts_module = tts.TextToSpeechConverter_Pyttsx3()
+    else:
+        tts_module = tts.TextToSpeechConverter_gTTS()
+    
     try:
         song_comment = await asyncio.to_thread(scg.generate_song_comment, video.requester.real_name, video.requester.background, video.title, video.uploader)
         song_comment_without_quotes = song_comment.replace('"', '')
         
-        tts_filepath = await asyncio.to_thread(TTS_MODULE.text_to_speech, song_comment_without_quotes, output_path=Path(cfg.FOLDER_TTS / f"{uuid.uuid4()}.wav"))
+        tts_filepath = await asyncio.to_thread(tts_module.text_to_speech, song_comment_without_quotes, output_path=Path(cfg.FOLDER_TTS / f"{uuid.uuid4()}.wav"))
         tts_speedup_filepath = await asyncio.to_thread(ap.increase_speed, tts_filepath, speed_multiplier=1.0)
         
         cfg.LOGGER.debug("Starting voice conversion")
@@ -137,7 +144,8 @@ def write_users_to_json(members):
         member.display_name: {
             "id": member.id,
             "real_name": member.display_name,
-            "background": ""
+            "background": "No Background",
+            "tts_type": "gtts"
         }
         for member in members
     }
