@@ -5,6 +5,7 @@ from pathlib import Path
 import uuid
 import json
 from typing import Union
+import time
 
 import discord
 from discord.ext import commands
@@ -44,6 +45,7 @@ intents.members = True
 BOT = commands.Bot(command_prefix='!g', intents=intents)
 
 VC_HANDLER = vc.VoiceConverterHandler(Path(PTH_PATH), Path(INDEX_PATH), generator=GENERATOR)
+TTS_MODULE = tts.TextToSpeechConverter_Pyttsx3()
 
 playlist:list[vt.Video] = []
 audio_player_task = None
@@ -52,8 +54,8 @@ async def generate_pre_play_audio_file(video:vt.Video) -> Union[Path, None]:
     try:
         song_comment = await asyncio.to_thread(scg.generate_song_comment, video.requester.real_name, video.requester.background, video.title, video.uploader)
         song_comment_without_quotes = song_comment.replace('"', '')
-        tts_filepath = await asyncio.to_thread(tts.text_to_speech, song_comment_without_quotes, output_path=Path(cfg.FOLDER_TTS / f"{uuid.uuid4()}.wav"))
-        tts_processed_filepath = await asyncio.to_thread(audio_processor.increase_speed_and_volume, tts_filepath, volume_modifier_db=6, speed_multiplier=1.0)
+        tts_filepath = await asyncio.to_thread(TTS_MODULE.text_to_speech, song_comment_without_quotes, output_path=Path(cfg.FOLDER_TTS / f"{uuid.uuid4()}.wav"))
+        tts_processed_filepath = await asyncio.to_thread(audio_processor.increase_speed_and_volume, tts_filepath, volume_modifier_db=8, speed_multiplier=1.0)
         
         cfg.LOGGER.debug("Starting voice conversion")
         output_path = await asyncio.to_thread(VC_HANDLER.convert_voice, tts_processed_filepath, cfg.FOLDER_OUTPUT)
@@ -217,6 +219,18 @@ async def skip(ctx):
     else:
         await ctx.send("No song is currently playing.")
 
+# Command to delete all messages in the channel where the command is executed
+# @BOT.command(name='deleteallmessages', help='Deletes all messages posted by this bot in the current channel')
+# async def delete_bot_messages(ctx):
+#     # Fetches the channel where the command was executed
+#     channel = ctx.channel
+#     # Fetches all messages in the channel
+#     async for message in channel.history(limit=None):
+#         # Check if the message author is the bot itself
+#         if message.author == BOT.user:
+#             await message.delete()
+#             await asyncio.sleep(1)  # Adjust the time as needed
+
 async def channel_join_audio():
     voice_client = BOT.voice_clients[0] if BOT.voice_clients else None
 
@@ -248,8 +262,8 @@ async def leave_current_voice_channel() -> bool:
         cfg.LOGGER.error('Error: Bot is not connected to any voice channel.')
         return False
 
-def clear_tts_folder():
-    for file in cfg.FOLDER_TTS.iterdir():
+def clear_folder_contents(folder:Path):
+    for file in folder.iterdir():
         if file.is_file():
             try:
                 file.unlink()
@@ -258,5 +272,6 @@ def clear_tts_folder():
                 cfg.LOGGER.debug(f"Error deleting file: {file} - {e}")
 
 if __name__ == '__main__':
-    clear_tts_folder()
+    clear_folder_contents(cfg.FOLDER_TTS)
+    clear_folder_contents(cfg.FOLDER_OUTPUT)
     BOT.run(TOKEN)
