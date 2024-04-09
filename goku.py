@@ -20,7 +20,7 @@ sys.path.append(str(cfg.FOLDER_ROOT / 'rvc_cli'))
 
 from rvc_cli import song_comment_generator as scg
 from rvc_cli import tts
-from rvc_cli import audio_processor
+from rvc_cli import audio_processor as ap
 from rvc_cli import voice_converter as vc
 
 IDLE_SECONDS_MAX = 15*60
@@ -54,17 +54,20 @@ async def generate_pre_play_audio_file(video:vt.Video) -> Union[Path, None]:
     try:
         song_comment = await asyncio.to_thread(scg.generate_song_comment, video.requester.real_name, video.requester.background, video.title, video.uploader)
         song_comment_without_quotes = song_comment.replace('"', '')
+        
         tts_filepath = await asyncio.to_thread(TTS_MODULE.text_to_speech, song_comment_without_quotes, output_path=Path(cfg.FOLDER_TTS / f"{uuid.uuid4()}.wav"))
-        tts_processed_filepath = await asyncio.to_thread(audio_processor.increase_speed_and_volume, tts_filepath, volume_modifier_db=8, speed_multiplier=1.0)
+        tts_speedup_filepath = await asyncio.to_thread(ap.increase_speed, tts_filepath, speed_multiplier=1.0)
         
         cfg.LOGGER.debug("Starting voice conversion")
-        output_path = await asyncio.to_thread(VC_HANDLER.convert_voice, tts_processed_filepath, cfg.FOLDER_OUTPUT)
+        vc_converted_filepath = await asyncio.to_thread(VC_HANDLER.convert_voice, tts_speedup_filepath, cfg.FOLDER_OUTPUT)
         cfg.LOGGER.debug("Voice conversion complete!")
+
+        output_filepath = await asyncio.to_thread(ap.increase_volume, vc_converted_filepath, volume_modifier_db=6)
     except Exception as e:
         cfg.LOGGER.error(e)
-        output_path = None
+        output_filepath = None
 
-    return output_path
+    return output_filepath
 
 async def audio_player(bot):
     global playlist
@@ -220,16 +223,18 @@ async def skip(ctx):
         await ctx.send("No song is currently playing.")
 
 # Command to delete all messages in the channel where the command is executed
-# @BOT.command(name='deleteallmessages', help='Deletes all messages posted by this bot in the current channel')
-# async def delete_bot_messages(ctx):
-#     # Fetches the channel where the command was executed
-#     channel = ctx.channel
-#     # Fetches all messages in the channel
-#     async for message in channel.history(limit=None):
-#         # Check if the message author is the bot itself
-#         if message.author == BOT.user:
-#             await message.delete()
-#             await asyncio.sleep(1)  # Adjust the time as needed
+@BOT.command(name='deleteallmessages', help='Deletes all messages posted by this bot in the current channel')
+async def delete_bot_messages(ctx):
+    # Check if the user is an admin
+    if ctx.author.guild_permissions.administrator:
+        # Fetches the channel where the command was executed
+        channel = ctx.channel
+        # Fetches all messages in the channel
+        async for message in channel.history(limit=None):
+            # Check if the message author is the bot itself
+            if message.author == ctx.bot.user:
+                await message.delete()
+                await asyncio.sleep(1)  # Adjust the time as needed
 
 async def channel_join_audio():
     voice_client = BOT.voice_clients[0] if BOT.voice_clients else None
