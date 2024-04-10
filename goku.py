@@ -6,6 +6,7 @@ import uuid
 import json
 from typing import Union
 import time
+from datetime import timedelta as td
 
 import discord
 from discord.ext import commands
@@ -79,36 +80,40 @@ async def generate_pre_play_audio_file(video:vt.Video) -> Union[Path, None]:
 async def audio_player(bot):
     global playlist
     idle_seconds = 0
+    voice_client = None
 
     while True:
-        if len(playlist) > 0:
-            video = playlist.pop(0)
-            last_channel = video.channel
-            voice_client = bot.voice_clients[0] if bot.voice_clients else None
+        try:
+            if len(playlist) > 0:
+                video = playlist.pop(0)
+                last_channel = video.channel
+                voice_client = bot.voice_clients[0] if bot.voice_clients else None
 
-            if voice_client and voice_client.is_connected():
-                if video.path_pre_play != None:
-                    voice_client.play(discord.FFmpegPCMAudio(video.path_pre_play))
+                if voice_client and voice_client.is_connected():
+                    if video.path_pre_play != None:
+                        voice_client.play(discord.FFmpegPCMAudio(video.path_pre_play))
+                        
+                        while voice_client.is_playing():
+                            await asyncio.sleep(1)
+
+                    await video.channel.send(f"Now playing: {video.title} | Duration: {ct.convert_seconds_to_minutes_seconds(video.duration)} | Requester: {video.requester.screen_name} ({video.requester.real_name})")
+                    voice_client.play(discord.FFmpegPCMAudio(video.url, before_options=FFMPEG_BEFORE_OPTIONS, options=FFMEG_OPTIONS))
                     
                     while voice_client.is_playing():
                         await asyncio.sleep(1)
-
-                await video.channel.send(f"Now playing: {video.title} | Duration: {ct.convert_seconds_to_minutes_seconds(video.duration)} | Requester: {video.requester.screen_name} ({video.requester.real_name})")
-                voice_client.play(discord.FFmpegPCMAudio(video.url, before_options=FFMPEG_BEFORE_OPTIONS, options=FFMEG_OPTIONS))
+                        idle_seconds = 0
+                        
+            else:
+                # If the playlist is empty, wait for a short duration and check again
+                await asyncio.sleep(1)
+                idle_seconds += 1
                 
-                while voice_client.is_playing():
-                    await asyncio.sleep(1)
-                    idle_seconds = 0
-                    
-        else:
-            # If the playlist is empty, wait for a short duration and check again
-            await asyncio.sleep(1)
-            idle_seconds += 1
-            
-            if voice_client:
-                if voice_client.is_connected():
-                    if idle_seconds >= IDLE_SECONDS_MAX:
-                        await leave(last_channel)
+                if voice_client:
+                    if voice_client.is_connected():
+                        if idle_seconds >= IDLE_SECONDS_MAX:
+                            await leave(last_channel)
+        except Exception as e:
+            cfg.LOGGER.error(e)
 
 @BOT.event
 async def on_ready():
@@ -177,11 +182,11 @@ async def play(ctx, url: str):
     voice_client = ctx.guild.voice_client
     if not voice_client:
         await ctx.author.voice.channel.connect()
-        await channel_join_audio()
+        if not cfg.DEBUG: await channel_join_audio()
 
     # Start the audio player task if it's not already running
     if audio_player_task is None or audio_player_task.done():
-        audio_player_task = BOT.loop.create_task(audio_player(BOT))
+        audio_player_task = BOT.loop.create_task(audio_player(BOT), name='AudioPlayer')
         await ctx.send("Audio player started.")
 
     async for video in vt.extract_info(url, ctx.channel):
@@ -195,7 +200,7 @@ async def play(ctx, url: str):
                         video.path_pre_play = audio_file_path
                 
                 playlist.append(video)
-                await video.channel.send(f"Added to playlist: {video.title} | Duration: {ct.convert_seconds_to_minutes_seconds(video.duration)} | Requester: {video.requester.screen_name} ({video.requester.real_name})")
+                await ctx.send(f"Added to playlist: {video.title} | Duration: {td(seconds=video.duration)} | Requester: {video.requester.screen_name} ({video.requester.real_name})")
             except Exception as e:
                 cfg.LOGGER.error(f"Error processing video: {e}", exc_info=True)
                 await ctx.send(f"Error processing video: {e}")
