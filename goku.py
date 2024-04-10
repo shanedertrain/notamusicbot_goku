@@ -79,17 +79,14 @@ async def generate_pre_play_audio_file(video:vt.Video) -> Union[Path, None]:
 async def audio_player(bot):
     global playlist
     idle_seconds = 0
-    left_channel = True
 
     while True:
-        if playlist:
+        if len(playlist) > 0:
             video = playlist.pop(0)
             last_channel = video.channel
             voice_client = bot.voice_clients[0] if bot.voice_clients else None
 
             if voice_client and voice_client.is_connected():
-                left_channel = False
-                
                 if video.path_pre_play != None:
                     voice_client.play(discord.FFmpegPCMAudio(video.path_pre_play))
                     
@@ -107,9 +104,11 @@ async def audio_player(bot):
             # If the playlist is empty, wait for a short duration and check again
             await asyncio.sleep(1)
             idle_seconds += 1
-
-            if idle_seconds >= IDLE_SECONDS_MAX and not left_channel:
-                left_channel = await leave(last_channel)
+            
+            if voice_client:
+                if voice_client.is_connected():
+                    if idle_seconds >= IDLE_SECONDS_MAX:
+                        await leave(last_channel)
 
 @BOT.event
 async def on_ready():
