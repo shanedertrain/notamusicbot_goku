@@ -2,24 +2,25 @@ import os
 from dotenv import load_dotenv
 import asyncio
 from pathlib import Path
-import uuid
 import json
 from typing import Union
-import time
 from datetime import timedelta as td
+import random
+import uuid
 
 import discord
 from discord.ext import commands
 
 import convert_time as ct
 import configuration as cfg
-import video_types as vt
+import types_playlist_items as tpi
+import newsapi as na
 import users
 
 import sys
 sys.path.append(str(cfg.FOLDER_ROOT / 'rvc_cli'))
 
-from rvc_cli import song_comment_generator as scg
+from rvc_cli import comment_generator as scg
 from rvc_cli import tts
 from rvc_cli import audio_processor as ap
 from rvc_cli import voice_converter as vc
@@ -32,6 +33,7 @@ GUILD = os.getenv('DISCORD_GUILD')
 PTH_PATH = os.getenv('PTH_PATH')
 INDEX_PATH = os.getenv('INDEX_PATH')
 GENERATOR = os.getenv('GENERATOR')
+NEWS_API_KEY = os.getenv('NEWS_API_KEY')
 
 FILEPATH_START_SOUND = cfg.FOLDER_INPUT / os.getenv('FILENAME_START_SOUND')
 
@@ -46,24 +48,37 @@ intents.members = True
 BOT = commands.Bot(command_prefix='!g', intents=intents)
 
 VC_HANDLER = vc.VoiceConverterHandler(Path(PTH_PATH), Path(INDEX_PATH), generator=GENERATOR)
+NEWS_SCRAPER = na.NewsScraper(api_key=NEWS_API_KEY)
 
-playlist:list[vt.Video] = []
+playlist:list[Union[tpi.Video, tpi.Audio]] = []
 audio_player_task = None
 
-async def generate_pre_play_audio_file(video:vt.Video) -> Union[Path, None]:
-    user = users.get_user_by_id(video.requester.id)
-    if user.tts_type == 'gtts':
-        tts_module = tts.TextToSpeechConverter_gTTS()
-    elif user.tts_type == 'pyttsx3':
-        tts_module = tts.TextToSpeechConverter_Pyttsx3()
-    else:
-        tts_module = tts.TextToSpeechConverter_gTTS()
-    
+async def generate_pre_play_audio_file(tts_module:tts.TextToSpeechConverter, video:tpi.Video, output_name:str) -> Union[Path, None]: 
+    output_filepath = None
     try:
-        song_comment = await asyncio.to_thread(scg.generate_song_comment, video.requester.real_name, video.requester.background, video.title, video.uploader)
-        song_comment_without_quotes = song_comment.replace('"', '')
+        song_comment = await asyncio.to_thread(scg.generate_song_comment, video.requester.real_name, video.requester.background, video.video_info.title, video.video_info.uploader)
+        output_filepath = await generate_audio_from_text(tts_module, song_comment, output_name)
+    except Exception as e:
+        cfg.LOGGER.error(e, exc_info=True)
+
+    return output_filepath
+
+async def generate_news_article_audio_file(tts_module:tts.TextToSpeechConverter, output_name:str) -> Union[Path, None]:
+    output_filepath = None
+    try:
+        article = NEWS_SCRAPER.get_random_article()
+        article_text = NEWS_SCRAPER.get_article_text(article)
+        generated_comment = await asyncio.to_thread(scg.generate_news_comment, article_text)
+        output_filepath = await generate_audio_from_text(tts_module, generated_comment, output_name)
+    except Exception as e:
+        cfg.LOGGER.error(e, exc_info=True)
+
+    return output_filepath
+
+async def generate_audio_from_text(tts_module:tts.TextToSpeechConverter, text:str, output_name:str) -> Union[Path, None]:
+        text_without_quotes = text.replace('"', '')
         
-        tts_filepath = await asyncio.to_thread(tts_module.text_to_speech, song_comment_without_quotes, output_path=Path(cfg.FOLDER_TTS / f"{uuid.uuid4()}.wav"))
+        tts_filepath = await asyncio.to_thread(tts_module.text_to_speech, text_without_quotes, output_path=Path(cfg.FOLDER_TTS / f"{output_name}.wav"))
         tts_speedup_filepath = await asyncio.to_thread(ap.increase_speed, tts_filepath, speed_multiplier=1.0)
         
         cfg.LOGGER.debug("Starting voice conversion")
@@ -71,39 +86,37 @@ async def generate_pre_play_audio_file(video:vt.Video) -> Union[Path, None]:
         cfg.LOGGER.debug("Voice conversion complete!")
 
         output_filepath = await asyncio.to_thread(ap.increase_volume, vc_converted_filepath, volume_modifier_db=6)
-    except Exception as e:
-        cfg.LOGGER.error(e, exc_info=True)
-        output_filepath = None
-
-    return output_filepath
+        return output_filepath
 
 async def audio_player(bot):
     global playlist
     idle_seconds = 0
     voice_client = None
+    play_source:Union[str, Path] = None #can be url or filepath
 
     while True:
         try:
             if len(playlist) > 0:
-                video = playlist.pop(0)
-                cfg.LOGGER.debug(f"Playing: {video.title} | Requester: {video.requester.screen_name} ({video.requester.real_name}) | URL: {video.url}")
-                last_channel = video.channel
+                media = playlist.pop(0)
+                cfg.LOGGER.debug(f"Popped: {media}")
                 voice_client = bot.voice_clients[0] if bot.voice_clients else None
 
-                if voice_client and voice_client.is_connected():
-                    if video.path_pre_play != None:
-                        voice_client.play(discord.FFmpegPCMAudio(video.path_pre_play))
-                        
-                        while voice_client.is_playing():
-                            await asyncio.sleep(1)
+                if type(media) == tpi.Video:
+                    play_source = media.video_info.url
 
-                    await video.channel.send(f"Now playing: {video.title} | Duration: {ct.convert_seconds_to_minutes_seconds(video.duration)} | Requester: {video.requester.screen_name} ({video.requester.real_name})")
-                    voice_client.play(discord.FFmpegPCMAudio(video.url, before_options=FFMPEG_BEFORE_OPTIONS, options=FFMEG_OPTIONS))
-                    
-                    while voice_client.is_playing():
-                        await asyncio.sleep(1)
-                        idle_seconds = 0
-                        
+                    await media.requested_channel.send(f"Now playing: {media.video_info.title} | Duration: {ct.convert_seconds_to_minutes_seconds(media.video_info.duration)} | Requester: {media.requester.screen_name} ({media.requester.real_name})")
+                    if voice_client and voice_client.is_connected():
+                        voice_client.play(discord.FFmpegPCMAudio(play_source, before_options=FFMPEG_BEFORE_OPTIONS, options=FFMEG_OPTIONS))
+                
+                elif type(media) == tpi.Audio:
+                    play_source = media.filepath
+                    if voice_client and voice_client.is_connected():
+                        voice_client.play(discord.FFmpegPCMAudio(play_source))
+
+                while voice_client.is_playing():
+                    await asyncio.sleep(1)
+                    idle_seconds = 0
+
             else:
                 # If the playlist is empty, wait for a short duration and check again
                 await asyncio.sleep(1)
@@ -112,7 +125,7 @@ async def audio_player(bot):
                 if voice_client:
                     if voice_client.is_connected():
                         if idle_seconds >= IDLE_SECONDS_MAX:
-                            await leave(last_channel)
+                            await leave_current_voice_channel()
         except Exception as e:
             cfg.LOGGER.error(e)
 
@@ -190,22 +203,40 @@ async def play(ctx, url: str):
         audio_player_task = BOT.loop.create_task(audio_player(BOT), name='AudioPlayer')
         await ctx.send("Audio player started.")
 
-    async for video in vt.extract_info(url, ctx.channel):
-        video.requester = users.get_user_by_id(ctx.author.id)
-        if video:
+    async for video_info in tpi.extract_video_info(url):
+        if video_info:
+            requester = users.get_user_by_id(ctx.author.id)
+            tts_module = tts.get_tts_module(requester.tts_type)
+            media_uid = uuid.uuid4()
+
             try:
+                #randomly generate a news article for the bot
+                if random.choice([True] + ([False]*(6 if cfg.DEBUG == False else 0))):
+                    article_name = f"{media_uid}_article"
+                    article_audio_path = await generate_news_article_audio_file(tts_module, article_name)
+
+                    if article_audio_path != None:
+                        playlist.append(tpi.Audio(filepath=article_audio_path, id=media_uid))
+
+                video = tpi.Video(id=media_uid, 
+                                  requester=requester, 
+                                  video_info=video_info, 
+                                  requested_channel=ctx.channel)
+
                 # Generate audio file based on the real name of the requester
-                if video.requester is not None and video.requester.real_name is not None:
-                    audio_file_path = await generate_pre_play_audio_file(video)
+                if requester is not None and requester.real_name is not None:
+                    article_name = f"{media_uid}_preplay"
+                    audio_file_path = await generate_pre_play_audio_file(tts_module, video, media_uid)
                     if audio_file_path != None:
-                        video.path_pre_play = audio_file_path
+                        playlist.append(tpi.Audio(filepath=audio_file_path, id=media_uid))
                 
                 playlist.append(video)
-                await ctx.send(f"Added to playlist: {video.title} | Duration: {td(seconds=video.duration)} | Requester: {video.requester.screen_name} ({video.requester.real_name})")
+                await ctx.send(f"Added to playlist: {video.video_info.title} | Duration: {td(seconds=video.video_info.duration)} | Requester: {video.requester.screen_name} ({video.requester.real_name})")
                 cfg.LOGGER.debug(f"Playlist: {playlist}")
             except Exception as e:
                 cfg.LOGGER.error(f"Error processing video: {e}", exc_info=True)
                 await ctx.send(f"Error processing video: {e}")
+
 
 @BOT.command(name='stop', help='Stops playing the audio and disconnects from the voice channel')
 async def stop(ctx):

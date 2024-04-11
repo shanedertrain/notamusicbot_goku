@@ -56,6 +56,8 @@ OR
         Relative path from root to .index file for your model. ex: rvc_cli\models\Goku\added_IVF842_Flat_nprobe_7.index
     GENERATOR=<gpu_or_cpu>  
         GPU or CPU depending on what you want to use. If no CUDA cores (NVIDIA), then use CPU
+    NEWS_API_KEY=<news_api_key>
+        API key for newsapi: https://newsapi.org/
 
 4. Update the `.env` file in the rvc_cli directory of the project:  
     GEMENI_API_KEY=<your_api_key>
