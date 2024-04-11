@@ -53,24 +53,18 @@ NEWS_SCRAPER = na.NewsScraper(api_key=NEWS_API_KEY)
 playlist:list[Union[tpi.Video, tpi.Audio]] = []
 audio_player_task = None
 
-async def async_convert_voice(input_file: Path, output_dir: Path) -> Path:
-    # Assuming convert_voice is now a standalone script or executable
-    # Adjust "convert_voice_script.py" and arguments as needed
-    cmd = ["python", "convert_voice_script.py", str(input_file), str(output_dir)]
+# async def generate_audio_from_text(tts_module:tts.TextToSpeechConverter, text:str, output_name:str) -> Union[Path, None]:
+#     text_without_quotes = text.replace('"', '')
+    
+#     tts_filepath = await asyncio.to_thread(tts_module.text_to_speech, text_without_quotes, output_path=Path(cfg.FOLDER_TTS / f"{output_name}.wav"))
+#     tts_speedup_filepath = await asyncio.to_thread(ap.increase_speed, tts_filepath, speed_multiplier=1.0)
+    
+#     cfg.LOGGER.debug("Starting voice conversion")
+#     vc_converted_filepath = await asyncio.to_thread(VC_HANDLER.convert_voice, tts_speedup_filepath, cfg.FOLDER_OUTPUT)
+#     cfg.LOGGER.debug("Voice conversion complete!")
 
-    # Start the subprocess
-    process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-
-    # Wait for the subprocess to finish
-    stdout, stderr = await process.communicate()
-
-    if process.returncode == 0:
-        print(f"Conversion succeeded: {stdout}")
-        # Assuming the script outputs the path of the converted file
-        return Path(stdout.decode().strip())
-    else:
-        print(f"Conversion failed: {stderr}")
-        return None
+#     output_filepath = await asyncio.to_thread(ap.increase_volume, vc_converted_filepath, volume_modifier_db=8)
+#     return output_filepath
 
 async def generate_pre_play_audio_file(tts_module:tts.TextToSpeechConverter, video:tpi.Video, output_name:str) -> Union[Path, None]: 
     output_filepath = None
@@ -101,7 +95,7 @@ async def generate_audio_from_text(tts_module:tts.TextToSpeechConverter, text:st
         tts_speedup_filepath = await asyncio.to_thread(ap.increase_speed, tts_filepath, speed_multiplier=1.0)
         
         cfg.LOGGER.debug("Starting voice conversion")
-        vc_converted_filepath = await async_convert_voice(tts_speedup_filepath, cfg.FOLDER_OUTPUT)
+        vc_converted_filepath = await asyncio.to_thread(VC_HANDLER.convert_voice, tts_speedup_filepath, cfg.FOLDER_OUTPUT)
         cfg.LOGGER.debug("Voice conversion complete!")
 
         output_filepath = await asyncio.to_thread(ap.increase_volume, vc_converted_filepath, volume_modifier_db=8)
@@ -178,8 +172,8 @@ async def get_users(guild):
 
 def write_users_to_json(members):
     users_dict = {
-        member.id: {
-            "screen_name": member.display_name,
+        member.display_name: {
+            "id": member.id,
             "real_name": member.display_name,
             "background": "No Background",
             "tts_type": "gtts"
