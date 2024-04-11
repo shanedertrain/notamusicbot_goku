@@ -53,6 +53,25 @@ NEWS_SCRAPER = na.NewsScraper(api_key=NEWS_API_KEY)
 playlist:list[Union[tpi.Video, tpi.Audio]] = []
 audio_player_task = None
 
+async def async_convert_voice(input_file: Path, output_dir: Path) -> Path:
+    # Assuming convert_voice is now a standalone script or executable
+    # Adjust "convert_voice_script.py" and arguments as needed
+    cmd = ["python", "convert_voice_script.py", str(input_file), str(output_dir)]
+
+    # Start the subprocess
+    process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+
+    # Wait for the subprocess to finish
+    stdout, stderr = await process.communicate()
+
+    if process.returncode == 0:
+        print(f"Conversion succeeded: {stdout}")
+        # Assuming the script outputs the path of the converted file
+        return Path(stdout.decode().strip())
+    else:
+        print(f"Conversion failed: {stderr}")
+        return None
+
 async def generate_pre_play_audio_file(tts_module:tts.TextToSpeechConverter, video:tpi.Video, output_name:str) -> Union[Path, None]: 
     output_filepath = None
     try:
@@ -82,7 +101,7 @@ async def generate_audio_from_text(tts_module:tts.TextToSpeechConverter, text:st
         tts_speedup_filepath = await asyncio.to_thread(ap.increase_speed, tts_filepath, speed_multiplier=1.0)
         
         cfg.LOGGER.debug("Starting voice conversion")
-        vc_converted_filepath = await asyncio.to_thread(VC_HANDLER.convert_voice, tts_speedup_filepath, cfg.FOLDER_OUTPUT)
+        vc_converted_filepath = await async_convert_voice(tts_speedup_filepath, cfg.FOLDER_OUTPUT)
         cfg.LOGGER.debug("Voice conversion complete!")
 
         output_filepath = await asyncio.to_thread(ap.increase_volume, vc_converted_filepath, volume_modifier_db=8)
@@ -114,7 +133,7 @@ async def audio_player(bot):
                         voice_client.play(discord.FFmpegPCMAudio(play_source))
 
                 while voice_client.is_playing():
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(10)
                     idle_seconds = 0
 
             else:
