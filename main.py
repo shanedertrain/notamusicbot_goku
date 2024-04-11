@@ -7,6 +7,8 @@ from typing import Union
 from datetime import timedelta as td
 import random
 import uuid
+from multiprocessing import Pool
+from functools import partial
 
 import discord
 from discord.ext import commands
@@ -53,6 +55,17 @@ NEWS_SCRAPER = na.NewsScraper(api_key=NEWS_API_KEY)
 playlist:list[Union[tpi.Video, tpi.Audio]] = []
 audio_player_task = None
 
+async def run_in_process(fn, *args):
+    loop = asyncio.get_running_loop()
+    with Pool(processes=1) as pool:
+        result = await loop.run_in_executor(None, partial(fn, *args))
+    return result
+
+def convert_voice_wrapper(tts_speedup_filepath, output_folder):
+    # Assuming VC_HANDLER.convert_voice is the method you want to run in a separate process
+    return VC_HANDLER.convert_voice(tts_speedup_filepath, output_folder)
+
+
 async def generate_pre_play_audio_file(tts_module:tts.TextToSpeechConverter, video:tpi.Video, output_name:str) -> Union[Path, None]: 
     output_filepath = None
     try:
@@ -82,7 +95,7 @@ async def generate_audio_from_text(tts_module:tts.TextToSpeechConverter, text:st
         tts_speedup_filepath = await asyncio.to_thread(ap.increase_speed, tts_filepath, speed_multiplier=1.0)
         
         cfg.LOGGER.debug("Starting voice conversion")
-        vc_converted_filepath = await asyncio.to_thread(VC_HANDLER.convert_voice, tts_speedup_filepath, cfg.FOLDER_OUTPUT)
+        vc_converted_filepath = await run_in_process(convert_voice_wrapper, tts_speedup_filepath, cfg.FOLDER_OUTPUT)
         cfg.LOGGER.debug("Voice conversion complete!")
 
         output_filepath = await asyncio.to_thread(ap.increase_volume, vc_converted_filepath, volume_modifier_db=8)
