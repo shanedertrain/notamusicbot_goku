@@ -72,7 +72,7 @@ async def generate_pre_play_audio_file(video:vt.Video) -> Union[Path, None]:
 
         output_filepath = await asyncio.to_thread(ap.increase_volume, vc_converted_filepath, volume_modifier_db=6)
     except Exception as e:
-        cfg.LOGGER.error(e)
+        cfg.LOGGER.error(e, exc_info=True)
         output_filepath = None
 
     return output_filepath
@@ -86,6 +86,7 @@ async def audio_player(bot):
         try:
             if len(playlist) > 0:
                 video = playlist.pop(0)
+                cfg.LOGGER.debug(f"Playing: {video.title} | Requester: {video.requester.screen_name} ({video.requester.real_name}) | URL: {video.url}")
                 last_channel = video.channel
                 voice_client = bot.voice_clients[0] if bot.voice_clients else None
 
@@ -201,6 +202,7 @@ async def play(ctx, url: str):
                 
                 playlist.append(video)
                 await ctx.send(f"Added to playlist: {video.title} | Duration: {td(seconds=video.duration)} | Requester: {video.requester.screen_name} ({video.requester.real_name})")
+                cfg.LOGGER.debug(f"Playlist: {playlist}")
             except Exception as e:
                 cfg.LOGGER.error(f"Error processing video: {e}", exc_info=True)
                 await ctx.send(f"Error processing video: {e}")
