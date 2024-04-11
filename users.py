@@ -19,10 +19,11 @@ def read_users_from_json_file(file_path:Path) -> List[User]:
             json_data = json.load(file)
             for user_id, user_info in json_data.items():
                 user = User(
-                    id=user_info['id'],
+                    id=int(user_id),
+                    screen_name=user_info['screen_name'],
                     real_name=user_info['real_name'],
                     background=user_info['background'],
-                    tts_type=user_info['tts_type']
+                    tts_type=user_info['tts_type'],
                 )
                 users.append(user)
     except FileNotFoundError:

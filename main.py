@@ -178,8 +178,8 @@ async def get_users(guild):
 
 def write_users_to_json(members):
     users_dict = {
-        member.display_name: {
-            "id": member.id,
+        member.id: {
+            "screen_name": member.display_name,
             "real_name": member.display_name,
             "background": "No Background",
             "tts_type": "gtts"
