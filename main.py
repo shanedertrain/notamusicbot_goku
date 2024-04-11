@@ -38,7 +38,7 @@ NEWS_API_KEY = os.getenv('NEWS_API_KEY')
 FILEPATH_START_SOUND = cfg.FOLDER_INPUT / os.getenv('FILENAME_START_SOUND')
 
 FFMPEG_BEFORE_OPTIONS = "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -nostdin"
-FFMEG_OPTIONS = "-vn"
+FFMEG_OPTIONS = '-vn -filter:a "volume=0.5"'
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -66,7 +66,7 @@ async def generate_pre_play_audio_file(tts_module:tts.TextToSpeechConverter, vid
 async def generate_news_article_audio_file(tts_module:tts.TextToSpeechConverter, output_name:str) -> Union[Path, None]:
     output_filepath = None
     try:
-        article = NEWS_SCRAPER.get_random_article()
+        article = NEWS_SCRAPER.get_random_article(category=na.Category.TECHNOLOGY)
         article_text = NEWS_SCRAPER.get_article_text(article)
         generated_comment = await asyncio.to_thread(scg.generate_news_comment, article_text)
         output_filepath = await generate_audio_from_text(tts_module, generated_comment, output_name)
@@ -85,7 +85,7 @@ async def generate_audio_from_text(tts_module:tts.TextToSpeechConverter, text:st
         vc_converted_filepath = await asyncio.to_thread(VC_HANDLER.convert_voice, tts_speedup_filepath, cfg.FOLDER_OUTPUT)
         cfg.LOGGER.debug("Voice conversion complete!")
 
-        output_filepath = await asyncio.to_thread(ap.increase_volume, vc_converted_filepath, volume_modifier_db=6)
+        output_filepath = await asyncio.to_thread(ap.increase_volume, vc_converted_filepath, volume_modifier_db=8)
         return output_filepath
 
 async def audio_player(bot):
