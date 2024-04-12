@@ -7,6 +7,8 @@ from typing import Union
 from datetime import timedelta as td
 import random
 import uuid
+import multiprocessing
+from concurrent.futures import ProcessPoolExecutor
 
 import discord
 from discord.ext import commands
@@ -20,7 +22,7 @@ import users
 import sys
 sys.path.append(str(cfg.FOLDER_ROOT / 'rvc_cli'))
 
-from rvc_cli import comment_generator as scg
+from rvc_cli import comment_generator as cg
 from rvc_cli import tts
 from rvc_cli import audio_processor as ap
 from rvc_cli import voice_converter as vc
@@ -53,24 +55,47 @@ NEWS_SCRAPER = na.NewsScraper(api_key=NEWS_API_KEY)
 playlist:list[Union[tpi.Video, tpi.Audio]] = []
 audio_player_task = None
 
-# async def generate_audio_from_text(tts_module:tts.TextToSpeechConverter, text:str, output_name:str) -> Union[Path, None]:
-#     text_without_quotes = text.replace('"', '')
-    
-#     tts_filepath = await asyncio.to_thread(tts_module.text_to_speech, text_without_quotes, output_path=Path(cfg.FOLDER_TTS / f"{output_name}.wav"))
-#     tts_speedup_filepath = await asyncio.to_thread(ap.increase_speed, tts_filepath, speed_multiplier=1.0)
-    
-#     cfg.LOGGER.debug("Starting voice conversion")
-#     vc_converted_filepath = await asyncio.to_thread(VC_HANDLER.convert_voice, tts_speedup_filepath, cfg.FOLDER_OUTPUT)
-#     cfg.LOGGER.debug("Voice conversion complete!")
+executor = ProcessPoolExecutor(max_workers=multiprocessing.cpu_count())
 
-#     output_filepath = await asyncio.to_thread(ap.increase_volume, vc_converted_filepath, volume_modifier_db=8)
-#     return output_filepath
+async def run_in_process(fn, *args):
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(executor, fn, *args)
+
+def generate_tts_audio(tts_module:tts.TextToSpeechConverter, text:str, output_name:str) -> Path:
+    cfg.LOGGER.debug("Starting TTS audio generation")
+    text_without_quotes = text.replace('"', '')
+    
+    tts_filepath = tts_module.text_to_speech(text_without_quotes, output_path=Path(cfg.FOLDER_TTS / f"{output_name}.wav"))
+    tts_speedup_filepath = ap.increase_speed(tts_filepath, speed_multiplier=1.0)
+    cfg.LOGGER.debug("TTS audio generation complete!")
+    return tts_speedup_filepath
+
+def generate_voice_converter_audio_sync(tts_filepath:Path):
+    cfg.LOGGER.debug("Starting voice conversion")
+    vc_converted_filepath = VC_HANDLER.convert_voice(tts_filepath, cfg.FOLDER_OUTPUT)
+    cfg.LOGGER.debug("Voice conversion complete!")
+    return vc_converted_filepath
+
+async def generate_voice_converter_audio(tts_module:tts.TextToSpeechConverter, text:str, output_name:str) -> Union[Path, None]:
+    try:
+        # Run the synchronous TTS audio generation in a separate thread
+        tts_audio_filepath = await asyncio.to_thread(generate_tts_audio, tts_module, text, output_name)
+
+        # Run the synchronous voice conversion in a separate process
+        voice_converted_filepath = await run_in_process(generate_voice_converter_audio_sync, tts_audio_filepath)
+
+        # Run the synchronous volume increase in a separate thread
+        output_filepath = await asyncio.to_thread(ap.increase_volume, voice_converted_filepath, volume_modifier_db=8)
+
+        return output_filepath
+    except Exception as e:
+        cfg.LOGGER.error
 
 async def generate_pre_play_audio_file(tts_module:tts.TextToSpeechConverter, video:tpi.Video, output_name:str) -> Union[Path, None]: 
     output_filepath = None
     try:
-        song_comment = await asyncio.to_thread(scg.generate_song_comment, video.requester.real_name, video.requester.background, video.video_info.title, video.video_info.uploader)
-        output_filepath = await generate_audio_from_text(tts_module, song_comment, output_name)
+        generated_comment = await asyncio.to_thread(cg.generate_song_comment, video.requester.real_name, video.requester.background, video.video_info.title, video.video_info.uploader)
+        output_filepath = await generate_voice_converter_audio(tts_module, generated_comment, output_name)
     except Exception as e:
         cfg.LOGGER.error(e, exc_info=True)
 
@@ -81,25 +106,13 @@ async def generate_news_article_audio_file(tts_module:tts.TextToSpeechConverter,
     try:
         article = NEWS_SCRAPER.get_random_article(category=na.Category.TECHNOLOGY)
         article_text = NEWS_SCRAPER.get_article_text(article)
-        generated_comment = await asyncio.to_thread(scg.generate_news_comment, article_text)
-        output_filepath = await generate_audio_from_text(tts_module, generated_comment, output_name)
+        article_text_summarized = await asyncio.to_thread(cg.generate_news_comment, article_text)
+
+        output_filepath = await generate_voice_converter_audio(tts_module, article_text_summarized, output_name)
     except Exception as e:
         cfg.LOGGER.error(e, exc_info=True)
 
     return output_filepath
-
-async def generate_audio_from_text(tts_module:tts.TextToSpeechConverter, text:str, output_name:str) -> Union[Path, None]:
-        text_without_quotes = text.replace('"', '')
-        
-        tts_filepath = await asyncio.to_thread(tts_module.text_to_speech, text_without_quotes, output_path=Path(cfg.FOLDER_TTS / f"{output_name}.wav"))
-        tts_speedup_filepath = await asyncio.to_thread(ap.increase_speed, tts_filepath, speed_multiplier=1.0)
-        
-        cfg.LOGGER.debug("Starting voice conversion")
-        vc_converted_filepath = await asyncio.to_thread(VC_HANDLER.convert_voice, tts_speedup_filepath, cfg.FOLDER_OUTPUT)
-        cfg.LOGGER.debug("Voice conversion complete!")
-
-        output_filepath = await asyncio.to_thread(ap.increase_volume, vc_converted_filepath, volume_modifier_db=8)
-        return output_filepath
 
 async def audio_player(bot):
     global playlist
