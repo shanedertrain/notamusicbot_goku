@@ -154,14 +154,13 @@ async def play(ctx, url: str):
     async for video_info in tpi.extract_video_info(url):
         if video_info:
             requester = users.get_user_by_id(ctx.author.id)
-            vc_handler = ag.get_vc_handler(requester.model_name)
             media_uid = uuid.uuid4()
 
             try:
                 #randomly generate a news article for the bot
                 if random.choice([True] + ([False]*(6 if cfg.DEBUG == False else 0))):
                     article_name = f"{media_uid}_article"
-                    article_audio_path = await ag.generate_news_article_audio_file(vc_handler, article_name)
+                    article_audio_path = await ag.generate_news_article_audio_file(requester.model_name, article_name)
 
                     if article_audio_path != None:
                         playlist.append(tpi.Audio(filepath=article_audio_path, id=media_uid))
@@ -174,7 +173,7 @@ async def play(ctx, url: str):
                 # Generate audio file based on the real name of the requester
                 if requester is not None and requester.real_name is not None:
                     article_name = f"{media_uid}_preplay"
-                    audio_file_path = await ag.generate_pre_play_audio_file(vc_handler, video, media_uid)
+                    audio_file_path = await ag.generate_pre_play_audio_file(requester.model_name, video, media_uid)
                     if audio_file_path != None:
                         playlist.append(tpi.Audio(filepath=audio_file_path, id=media_uid))
                 

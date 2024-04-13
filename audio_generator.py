@@ -25,15 +25,27 @@ NEWS_API_KEY = os.getenv('NEWS_API_KEY')
 
 NEWS_SCRAPER = na.NewsScraper(api_key=NEWS_API_KEY)
 
-if 'VC_HANDLERS' not in globals():
-    VC_HANDLERS = {
+VC_HANDLERS = None
+
+def get_vc_handler(model_name:str) -> vc.VoiceConverterHandler:
+    global VC_HANDLERS
+    if VC_HANDLERS == None:
+        VC_HANDLERS = {
         'GOKU': vc.VoiceConverterHandler(model=models.get_model("GOKU"), generator=GENERATOR),
         'OBAMA': vc.VoiceConverterHandler(model=models.get_model("OBAMA"), generator=GENERATOR),
         'OBAMA_TRANS': vc.VoiceConverterHandler(model=models.get_model("OBAMA_TRANS"), generator=GENERATOR),
     }
-
-def get_vc_handler(model_name:str) -> vc.VoiceConverterHandler:
     return VC_HANDLERS.get(model_name, VC_HANDLERS['OBAMA'])
+
+if 'TTS_MODULES_FOR_MODELS' not in globals():
+    TTS_MODULES_FOR_MODELS = {
+        'GOKU': tts.get_tts_module("pyttsx3"),
+        'OBAMA': tts.get_tts_module("pyttsx3"),
+        'OBAMA_TRANS': tts.get_tts_module("gtts"),
+    }
+
+def get_tts_module_for_model(model_name:str) -> tts.TextToSpeechConverter:
+    return TTS_MODULES_FOR_MODELS.get(model_name, TTS_MODULES_FOR_MODELS['OBAMA'])
 
 executor = ProcessPoolExecutor(max_workers=multiprocessing.cpu_count())
 
@@ -54,13 +66,14 @@ def convert_voice_for_multiprocess(vc_handler_name:str, audio_filepath:Path) -> 
     vc_handler = get_vc_handler(vc_handler_name)
     return vc_handler.convert_voice(audio_filepath)
 
-async def generate_voice_converter_audio(vc_handler:vc.VoiceConverterHandler, text:str, output_name:str) -> Union[Path, None]:
+async def generate_voice_converter_audio(vc_handler_name:str, text:str, output_name:str) -> Union[Path, None]:
     try:
         # Run the synchronous TTS audio generation in a separate thread
-        tts_audio_filepath = await asyncio.to_thread(generate_tts_audio, vc_handler.tts_module, text, output_name)
+        tts_module = get_tts_module_for_model(vc_handler_name)
+        tts_audio_filepath = await asyncio.to_thread(generate_tts_audio, tts_module, text, output_name)
 
         # Run the synchronous voice conversion in a separate process
-        voice_converted_filepath = await run_in_process(convert_voice_for_multiprocess, vc_handler.model.model_name, tts_audio_filepath)
+        voice_converted_filepath = await run_in_process(convert_voice_for_multiprocess, vc_handler_name, tts_audio_filepath)
 
         # Run the synchronous volume increase in a separate thread
         output_filepath = await asyncio.to_thread(ap.increase_volume, voice_converted_filepath, volume_modifier_db=8)
@@ -69,24 +82,24 @@ async def generate_voice_converter_audio(vc_handler:vc.VoiceConverterHandler, te
     except Exception as e:
         cfg.LOGGER.error(e, exc_info=True)
 
-async def generate_pre_play_audio_file(vc_handler:vc.VoiceConverterHandler, video:tpi.Video, output_name:str) -> Union[Path, None]: 
+async def generate_pre_play_audio_file(vc_handler_name:str, video:tpi.Video, output_name:str) -> Union[Path, None]: 
     output_filepath = None
     try:
         generated_comment = await asyncio.to_thread(cg.generate_song_comment, video.requester.real_name, video.requester.background, video.video_info.title, video.video_info.uploader)
-        output_filepath = await generate_voice_converter_audio(vc_handler, generated_comment, output_name)
+        output_filepath = await generate_voice_converter_audio(vc_handler_name, generated_comment, output_name)
     except Exception as e:
         cfg.LOGGER.error(e, exc_info=True)
 
     return output_filepath
 
-async def generate_news_article_audio_file(vc_handler:vc.VoiceConverterHandler, output_name:str) -> Union[Path, None]:
+async def generate_news_article_audio_file(vc_handler_name:str, output_name:str) -> Union[Path, None]:
     output_filepath = None
     try:
         article = NEWS_SCRAPER.get_random_article(category=na.Category.TECHNOLOGY)
         article_text = NEWS_SCRAPER.get_article_text(article)
         article_text_summarized = await asyncio.to_thread(cg.generate_news_comment, article_text)
 
-        output_filepath = await generate_voice_converter_audio(vc_handler, article_text_summarized, output_name)
+        output_filepath = await generate_voice_converter_audio(vc_handler_name, article_text_summarized, output_name)
     except Exception as e:
         cfg.LOGGER.error(e, exc_info=True)
 
