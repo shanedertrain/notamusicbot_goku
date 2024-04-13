@@ -24,23 +24,24 @@ FOLDER_LOGS.mkdir(parents=True, exist_ok=True)
 FILEPATH_LOG = FOLDER_LOGS / 'log.log'
 
 def configure_logger(log_file) -> logging.Logger:
-    logger = logging.getLogger('logger_main')
+    logger = logging.getLogger('logger_rvc')
     logger.setLevel(logging.DEBUG)
 
     # Create file handler which logs only messages above INFO level to the file
     file_handler = logging.FileHandler(log_file)
-    file_handler.setLevel(logging.DEBUG)
+    file_handler.setLevel(logging.INFO)
 
     # Create stream handler to log messages to the console
     console_handler = logging.StreamHandler()
     console_handler.setLevel(logging.INFO)  # Change the level as needed
 
     # Create a formatter and set it to the handler
-    formatter = logging.Formatter('[%(levelname)s] %(asctime)s: %(filename)s | %(message)s', '%H:%M:%S')
+    # Include filename and line number
+    formatter = logging.Formatter('[%(levelname)s] %(asctime)s: %(filename)s:%(lineno)d | %(message)s', '%H:%M:%S')
     file_handler.setFormatter(formatter)
     console_handler.setFormatter(formatter)
 
-    # Add the file handler to the logger
+    # Add the handlers to the logger
     logger.addHandler(file_handler)
     logger.addHandler(console_handler)
     

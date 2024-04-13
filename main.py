@@ -17,8 +17,6 @@ import types_playlist_items as tpi
 import users
 import audio_generator as ag
 
-from rvc_cli import tts
-
 IDLE_SECONDS_MAX = 15*60
 
 load_dotenv()
@@ -56,7 +54,7 @@ async def audio_player(bot):
                 if type(media) == tpi.Video:
                     play_source = media.video_info.url
 
-                    await media.requested_channel.send(f"Now playing: {media.video_info.title} | Duration: {td(media.video_info.duration)} | Requester: {media.requester.screen_name} ({media.requester.real_name})")
+                    await media.requested_channel.send(f"Now playing: {media.video_info.title} | Duration: {td(seconds=media.video_info.duration)} | Requester: {media.requester.screen_name} ({media.requester.real_name})")
                     if voice_client and voice_client.is_connected():
                         voice_client.play(discord.FFmpegPCMAudio(play_source, before_options=FFMPEG_BEFORE_OPTIONS, options=FFMEG_OPTIONS))
                 
@@ -91,37 +89,35 @@ async def on_ready():
     cfg.LOGGER.info("Ready...")
     
     # Fetch users asynchronously
-    users_dict = await get_users(guild)
+    users_dict = await get_users_from_guild(guild)
     for user in users.USERS:
         user.screen_name = users_dict.get(user.id, 'Unknown')
 
-async def get_users(guild):
+async def get_users_from_guild(guild) -> list[users.User]:
     # Fetch all members in the guild
     members = []
     async for member in guild.fetch_members(limit=None):
         members.append(member)
 
     if not cfg.FILEPATH_USERS.exists():
-        write_users_to_json(members)
-        users.USERS = users.read_users_from_json_file(cfg.FILEPATH_USERS) 
+        users = create_users_from_members(members)
+        users.write_users_to_json(users.USERS, cfg.FILEPATH_USERS)
 
     users_dict = {member.id: member.name for member in members}
     
     return users_dict
 
-def write_users_to_json(members):
-    users_dict = {
-        member.display_name: {
-            "id": member.id,
-            "real_name": member.display_name,
-            "background": "No Background",
-            "tts_type": "gtts"
-        }
-        for member in members
-    }
+def create_users_from_members(members) -> list[users.User]:
+    user_list:list[users.User] = []
+    for member in members:
+        user_list.append(users.User(
+                            id = member.id,
+                            screen_name=member.name,
+                            model_name = "OBAMA"
+                        )
+                    )
 
-    with open(cfg.FILEPATH_USERS, 'w') as f:
-        json.dump(users_dict, f, indent=2)
+    return user_list
 
 @BOT.event
 async def on_error(event, *args, **kwargs):
@@ -148,7 +144,7 @@ async def play(ctx, url: str):
     voice_client = ctx.guild.voice_client
     if not voice_client:
         await ctx.author.voice.channel.connect()
-        if not cfg.DEBUG: await channel_join_audio()
+        if not cfg.DEBUG: await play_channel_join_audio()
 
     # Start the audio player task if it's not already running
     if audio_player_task is None or audio_player_task.done():
@@ -158,14 +154,14 @@ async def play(ctx, url: str):
     async for video_info in tpi.extract_video_info(url):
         if video_info:
             requester = users.get_user_by_id(ctx.author.id)
-            tts_module = tts.get_tts_module(requester.tts_type)
+            vc_handler = ag.get_vc_handler(requester.model_name)
             media_uid = uuid.uuid4()
 
             try:
                 #randomly generate a news article for the bot
                 if random.choice([True] + ([False]*(6 if cfg.DEBUG == False else 0))):
                     article_name = f"{media_uid}_article"
-                    article_audio_path = await ag.generate_news_article_audio_file(tts_module, article_name)
+                    article_audio_path = await ag.generate_news_article_audio_file(vc_handler, article_name)
 
                     if article_audio_path != None:
                         playlist.append(tpi.Audio(filepath=article_audio_path, id=media_uid))
@@ -178,7 +174,7 @@ async def play(ctx, url: str):
                 # Generate audio file based on the real name of the requester
                 if requester is not None and requester.real_name is not None:
                     article_name = f"{media_uid}_preplay"
-                    audio_file_path = await ag.generate_pre_play_audio_file(tts_module, video, media_uid)
+                    audio_file_path = await ag.generate_pre_play_audio_file(vc_handler, video, media_uid)
                     if audio_file_path != None:
                         playlist.append(tpi.Audio(filepath=audio_file_path, id=media_uid))
                 
@@ -235,7 +231,7 @@ async def delete_bot_messages(ctx):
                 await message.delete()
                 await asyncio.sleep(1)  # Adjust the time as needed
 
-async def channel_join_audio():
+async def play_channel_join_audio():
     voice_client = BOT.voice_clients[0] if BOT.voice_clients else None
 
     if voice_client and voice_client.is_connected():
@@ -256,7 +252,6 @@ async def leave(ctx):
         await ctx.send("The bot is not connected to a voice channel.")
 
 async def leave_current_voice_channel() -> bool:
-    # Get the bot's voice client
     voice_client = discord.utils.get(BOT.voice_clients)
     if voice_client:
         await voice_client.disconnect()
