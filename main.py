@@ -2,8 +2,6 @@
 import os
 import asyncio
 from pathlib import Path
-import json
-from typing import Union
 from datetime import timedelta as td
 import random
 import uuid
@@ -16,8 +14,7 @@ import configuration as cfg
 import types_playlist_items as tpi
 import users
 import audio_generator as ag
-
-IDLE_SECONDS_MAX = 15*60
+import audio_player
 
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
@@ -25,59 +22,15 @@ GUILD = os.getenv('DISCORD_GUILD')
 
 FILEPATH_START_SOUND = cfg.FOLDER_INPUT / os.getenv('FILENAME_START_SOUND')
 
-FFMPEG_BEFORE_OPTIONS = "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -nostdin"
-FFMEG_OPTIONS = '-vn -filter:a "volume=0.5"'
-
 intents = discord.Intents.default()
 intents.message_content = True
 intents.typing = False
 intents.presences = False
 intents.members = True
+
 BOT = commands.Bot(command_prefix='!g', intents=intents)
-
-playlist:list[Union[tpi.Video, tpi.Audio]] = []
+audio_player_instance = audio_player.AudioPlayer(BOT)
 audio_player_task = None
-
-async def audio_player(bot):
-    global playlist
-    idle_seconds = 0
-    voice_client = None
-    play_source:Union[str, Path] = None #can be url or filepath
-
-    while True:
-        try:
-            if len(playlist) > 0:
-                media = playlist.pop(0)
-                cfg.LOGGER.debug(f"Popped: {media}")
-                voice_client = bot.voice_clients[0] if bot.voice_clients else None
-
-                if type(media) == tpi.Video:
-                    play_source = media.video_info.url
-
-                    await media.requested_channel.send(f"Now playing: {media.video_info.title} | Duration: {td(seconds=media.video_info.duration)} | Requester: {media.requester.screen_name} ({media.requester.real_name})")
-                    if voice_client and voice_client.is_connected():
-                        voice_client.play(discord.FFmpegPCMAudio(play_source, before_options=FFMPEG_BEFORE_OPTIONS, options=FFMEG_OPTIONS))
-                
-                elif type(media) == tpi.Audio:
-                    play_source = media.filepath
-                    if voice_client and voice_client.is_connected():
-                        voice_client.play(discord.FFmpegPCMAudio(play_source))
-
-                while voice_client.is_playing():
-                    await asyncio.sleep(10)
-                    idle_seconds = 0
-
-            else:
-                # If the playlist is empty, wait for a short duration and check again
-                await asyncio.sleep(1)
-                idle_seconds += 1
-                
-                if voice_client:
-                    if voice_client.is_connected():
-                        if idle_seconds >= IDLE_SECONDS_MAX:
-                            await leave_current_voice_channel()
-        except Exception as e:
-            cfg.LOGGER.error(e)
 
 @BOT.event
 async def on_ready():
@@ -130,12 +83,12 @@ async def on_error(event, *args, **kwargs):
 @BOT.command(name='play', help='Add a video or playlist to the queue and start playing')
 async def play(ctx, url: str):
     """
-    Adds the provided link to the playlist queue and starts playing.
+        Adds the provided link to the playlist queue and starts playing.
 
-    Arguments:
-    - url: The URL of the video or playlist to add to the queue.
+        Arguments:
+        - url: The URL of the video or playlist to add to the queue.
     """
-    global playlist
+    global audio_player_instance
     global audio_player_task
 
     users.USERS = users.read_users_from_json_file(cfg.FILEPATH_USERS) 
@@ -148,7 +101,7 @@ async def play(ctx, url: str):
 
     # Start the audio player task if it's not already running
     if audio_player_task is None or audio_player_task.done():
-        audio_player_task = BOT.loop.create_task(audio_player(BOT), name='AudioPlayer')
+        audio_player_task = BOT.loop.create_task(audio_player_instance.run(), name='AudioPlayer')
         await ctx.send("Audio player started.")
 
     async for video_info in tpi.extract_video_info(url):
@@ -163,7 +116,7 @@ async def play(ctx, url: str):
                     article_audio_path = await ag.generate_news_article_audio_file(requester.model_name, article_name)
 
                     if article_audio_path != None:
-                        playlist.append(tpi.Audio(filepath=article_audio_path, id=media_uid))
+                        audio_player_instance.add_to_playlist(tpi.Audio(filepath=article_audio_path, id=media_uid))
 
                 video = tpi.Video(id=media_uid, 
                                   requester=requester, 
@@ -175,25 +128,23 @@ async def play(ctx, url: str):
                     article_name = f"{media_uid}_preplay"
                     audio_file_path = await ag.generate_song_comment_audio_file(requester.model_name, video, media_uid)
                     if audio_file_path != None:
-                        playlist.append(tpi.Audio(filepath=audio_file_path, id=media_uid))
+                        audio_player_instance.add_to_playlist(tpi.Audio(filepath=audio_file_path, id=media_uid))
                 
-                playlist.append(video)
+                audio_player_instance.add_to_playlist(video)
                 await ctx.send(f"Added to playlist: {video.video_info.title} | Duration: {td(seconds=video.video_info.duration)} | Requester: {video.requester.screen_name} ({video.requester.real_name})")
-                cfg.LOGGER.debug(f"Playlist: {playlist}")
+                cfg.LOGGER.debug(f"Playlist: {audio_player_instance.playlist}")
             except Exception as e:
                 cfg.LOGGER.error(f"Error processing video: {e}", exc_info=True)
                 await ctx.send(f"Error processing video: {e}")
-
 
 @BOT.command(name='stop', help='Stops playing the audio and disconnects from the voice channel')
 async def stop(ctx):
     """
     Stops the audio player task and disconnects the bot from the voice channel.
     """
-    global playlist
     global audio_player_task
 
-    playlist.clear()
+    audio_player_instance.clear_playlist()
     if audio_player_task and not audio_player_task.done():
         await audio_player_task
     if audio_player_task and not audio_player_task.done():
@@ -205,14 +156,14 @@ async def skip(ctx):
     """
         Skips the current song and moves to the next in the playlist.
     """
-    global playlist
+    global audio_player_instance
 
     voice_client = BOT.voice_clients[0] if BOT.voice_clients else None
     if voice_client and voice_client.is_playing():
         voice_client.stop()
         await ctx.send("Skipping current song.")
-        if len(playlist) == 0:
-            leave(ctx)
+        if len(audio_player_instance.playlist) == 0:
+            await ctx.send("No more songs in queue!")
     else:
         await ctx.send("No song is currently playing.")
 
@@ -249,16 +200,6 @@ async def leave(ctx):
         await ctx.send("Disconnected from voice channel.")
     else:
         await ctx.send("The bot is not connected to a voice channel.")
-
-async def leave_current_voice_channel() -> bool:
-    voice_client = discord.utils.get(BOT.voice_clients)
-    if voice_client:
-        await voice_client.disconnect()
-        cfg.LOGGER.info(f'Idle for too long, left voice channel: {voice_client.channel.name}')
-        return True
-    else:
-        cfg.LOGGER.error('Error: Bot is not connected to any voice channel.')
-        return False
 
 def clear_folder_contents(folder:Path):
     for file in folder.iterdir():
