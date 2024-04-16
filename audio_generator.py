@@ -25,28 +25,6 @@ NEWS_API_KEY = os.getenv('NEWS_API_KEY')
 
 NEWS_SCRAPER = na.NewsScraper(api_key=NEWS_API_KEY)
 
-VC_HANDLERS = None
-
-def get_vc_handler(model_name:str) -> vc.VoiceConverterHandler:
-    global VC_HANDLERS
-    if VC_HANDLERS == None:
-        VC_HANDLERS = {
-        'GOKU': vc.VoiceConverterHandler(model=models.get_model("GOKU"), generator=GENERATOR),
-        'OBAMA': vc.VoiceConverterHandler(model=models.get_model("OBAMA"), generator=GENERATOR),
-        'OBAMA_TRANS': vc.VoiceConverterHandler(model=models.get_model("OBAMA_TRANS"), generator=GENERATOR),
-    }
-    return VC_HANDLERS.get(model_name, VC_HANDLERS['OBAMA'])
-
-if 'TTS_MODULES_FOR_MODELS' not in globals():
-    TTS_MODULES_FOR_MODELS = {
-        'GOKU': tts.get_tts_module("pyttsx3"),
-        'OBAMA': tts.get_tts_module("pyttsx3"),
-        'OBAMA_TRANS': tts.get_tts_module("gtts"),
-    }
-
-def get_tts_module_for_model(model_name:str) -> tts.TextToSpeechConverter:
-    return TTS_MODULES_FOR_MODELS.get(model_name, TTS_MODULES_FOR_MODELS['OBAMA'])
-
 executor = ProcessPoolExecutor(max_workers=multiprocessing.cpu_count())
 
 async def run_in_process(fn, *args):
@@ -62,31 +40,36 @@ def generate_tts_audio(tts_module:tts.TextToSpeechConverter, text:str, output_na
     cfg.LOGGER.debug("TTS audio generation complete!")
     return tts_speedup_filepath
 
-def convert_voice_for_multiprocess(vc_handler_name:str, audio_filepath:Path) -> Path:
-    vc_handler = get_vc_handler(vc_handler_name)
+def convert_voice_for_multiprocess(model:models.Model, audio_filepath:Path) -> Path:
+    vc_handler = vc.VoiceConverterHandler(model=model, generator=GENERATOR)
     return vc_handler.convert_voice(audio_filepath)
 
 async def generate_voice_converter_audio(vc_handler_name:str, text:str, output_name:str) -> Union[Path, None]:
     try:
-        # Run the synchronous TTS audio generation in a separate thread
-        tts_module = get_tts_module_for_model(vc_handler_name)
+        model = models.get_model(vc_handler_name)
+        tts_module = tts.get_tts_module(model.tts_type)
+
         tts_audio_filepath = await asyncio.to_thread(generate_tts_audio, tts_module, text, output_name)
 
         # Run the synchronous voice conversion in a separate process
-        voice_converted_filepath = await run_in_process(convert_voice_for_multiprocess, vc_handler_name, tts_audio_filepath)
+        voice_converted_filepath = await run_in_process(convert_voice_for_multiprocess, model, tts_audio_filepath)
 
-        # Run the synchronous volume increase in a separate thread
         output_filepath = await asyncio.to_thread(ap.increase_volume, voice_converted_filepath, volume_modifier_db=8)
 
         return output_filepath
     except Exception as e:
         cfg.LOGGER.error(e, exc_info=True)
 
-async def generate_pre_play_audio_file(vc_handler_name:str, video:tpi.Video, output_name:str) -> Union[Path, None]: 
+async def generate_song_comment_audio_file(vc_handler_name:str, video:tpi.Video, output_name:str) -> Union[Path, None]: 
     output_filepath = None
     try:
         generated_comment = await asyncio.to_thread(cg.generate_song_comment, video.requester.real_name, video.requester.background, video.video_info.title, video.video_info.uploader)
-        output_filepath = await generate_voice_converter_audio(vc_handler_name, generated_comment, output_name)
+        
+        if generated_comment is not False:
+            output_filepath = await generate_voice_converter_audio(vc_handler_name, generated_comment, output_name)
+        else:
+            raise ValueError("cg.generate_song_comment returned False instead of a comment string")
+        
     except Exception as e:
         cfg.LOGGER.error(e, exc_info=True)
 
@@ -99,7 +82,11 @@ async def generate_news_article_audio_file(vc_handler_name:str, output_name:str)
         article_text = NEWS_SCRAPER.get_article_text(article)
         article_text_summarized = await asyncio.to_thread(cg.generate_news_comment, article_text)
 
-        output_filepath = await generate_voice_converter_audio(vc_handler_name, article_text_summarized, output_name)
+        if article_text_summarized is not False:
+            output_filepath = await generate_voice_converter_audio(vc_handler_name, article_text_summarized, output_name)
+        else:
+            raise ValueError("cg.generate_song_comment returned False instead of a comment string")
+        
     except Exception as e:
         cfg.LOGGER.error(e, exc_info=True)
 

@@ -173,7 +173,7 @@ async def play(ctx, url: str):
                 # Generate audio file based on the real name of the requester
                 if requester is not None and requester.real_name is not None:
                     article_name = f"{media_uid}_preplay"
-                    audio_file_path = await ag.generate_pre_play_audio_file(requester.model_name, video, media_uid)
+                    audio_file_path = await ag.generate_song_comment_audio_file(requester.model_name, video, media_uid)
                     if audio_file_path != None:
                         playlist.append(tpi.Audio(filepath=audio_file_path, id=media_uid))
                 
