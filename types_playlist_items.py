@@ -23,10 +23,6 @@ class VideoInfo:
 class Media:
     id:str
 
-    def __post_init__(self):
-        if self.id is None:
-            self.id = str(uuid.uuid4())
-
 @dataclass
 class Video(Media):
     requester: User

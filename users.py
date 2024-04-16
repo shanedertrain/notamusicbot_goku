@@ -1,10 +1,8 @@
-import sys
 import configuration as cfg
 import json
 from pathlib import Path
 from dataclasses import dataclass, asdict, field
 from typing import List
-
 
 @dataclass
 class User:
@@ -47,6 +45,30 @@ def get_user_by_id(user_id: int) -> User:
     for user in USERS:
         if user.id == user_id:
             return user
+
+def generate_users_from_guild_members(members) -> list[User]:
+    user_list:list[User] = []
+    for member in members:
+        user_list.append(User(
+                            id = member.id,
+                            screen_name=member.name,
+                            model_name = "OBAMA"
+                        )
+                    )
+
+    return user_list
+
+async def get_users_from_guild(guild) -> list[User]:
+    members = []
+    async for member in guild.fetch_members(limit=None):
+        members.append(member)
+
+    USERS = generate_users_from_guild_members(members)
+
+    if not cfg.FILEPATH_USERS.exists():
+        write_users_to_json(USERS, cfg.FILEPATH_USERS)
+    
+    return USERS
 
 USERS = read_users_from_json_file(cfg.FILEPATH_USERS)
 

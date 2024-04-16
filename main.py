@@ -1,26 +1,13 @@
-# main.py
 import os
-import asyncio
-from pathlib import Path
-from datetime import timedelta as td
-import random
-import uuid
 
 from dotenv import load_dotenv
 import discord
-from discord.ext import commands
 
 import configuration as cfg
-import types_playlist_items as tpi
-import users
-import audio_generator as ag
-import audio_player
+from bot_manager import BotManager
 
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
-GUILD = os.getenv('DISCORD_GUILD')
-
-FILEPATH_START_SOUND = cfg.FOLDER_INPUT / os.getenv('FILENAME_START_SOUND')
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -28,189 +15,19 @@ intents.typing = False
 intents.presences = False
 intents.members = True
 
-BOT = commands.Bot(command_prefix='!g', intents=intents)
-audio_player_instance = audio_player.AudioPlayer(BOT)
-audio_player_task = None
-
-@BOT.event
-async def on_ready():
-    guild = discord.utils.find(lambda g: g.name == GUILD, BOT.guilds)
-    cfg.LOGGER.info(
-        f'{BOT.user} is connected to the following guild:\n'
-        f'{guild.name}(id: {guild.id})'
-    )
-    cfg.LOGGER.info("Ready...")
-    
-    # Fetch users asynchronously
-    users_dict = await get_users_from_guild(guild)
-    for user in users.USERS:
-        user.screen_name = users_dict.get(user.id, 'Unknown')
-
-async def get_users_from_guild(guild) -> list[users.User]:
-    # Fetch all members in the guild
-    members = []
-    async for member in guild.fetch_members(limit=None):
-        members.append(member)
-
-    if not cfg.FILEPATH_USERS.exists():
-        users = create_users_from_members(members)
-        users.write_users_to_json(users.USERS, cfg.FILEPATH_USERS)
-
-    users_dict = {member.id: member.name for member in members}
-    
-    return users_dict
-
-def create_users_from_members(members) -> list[users.User]:
-    user_list:list[users.User] = []
-    for member in members:
-        user_list.append(users.User(
-                            id = member.id,
-                            screen_name=member.name,
-                            model_name = "OBAMA"
-                        )
-                    )
-
-    return user_list
-
-@BOT.event
-async def on_error(event, *args, **kwargs):
-    with open(cfg.FOLDER_LOGS / 'bot_errors.log', 'a') as f:
-        if event == 'on_message':
-            f.write(f'Unhandled message: {args[0]}\n')
-        else:
-            raise
-
-@BOT.command(name='play', help='Add a video or playlist to the queue and start playing')
-async def play(ctx, url: str):
-    """
-        Adds the provided link to the playlist queue and starts playing.
-
-        Arguments:
-        - url: The URL of the video or playlist to add to the queue.
-    """
-    global audio_player_instance
-    global audio_player_task
-
-    users.USERS = users.read_users_from_json_file(cfg.FILEPATH_USERS) 
-
-    # Join the voice channel if the bot is not already connected
-    voice_client = ctx.guild.voice_client
-    if not voice_client:
-        await ctx.author.voice.channel.connect()
-        if not cfg.DEBUG: await play_channel_join_audio()
-
-    # Start the audio player task if it's not already running
-    if audio_player_task is None or audio_player_task.done():
-        audio_player_task = BOT.loop.create_task(audio_player_instance.run(), name='AudioPlayer')
-        await ctx.send("Audio player started.")
-
-    async for video_info in tpi.extract_video_info(url):
-        if video_info:
-            requester = users.get_user_by_id(ctx.author.id)
-            media_uid = uuid.uuid4()
-
-            try:
-                #randomly generate a news article for the bot
-                if random.choice([True] + ([False]*(6 if cfg.DEBUG == False else 0))):
-                    article_name = f"{media_uid}_article"
-                    article_audio_path = await ag.generate_news_article_audio_file(requester.model_name, article_name)
-
-                    if article_audio_path != None:
-                        audio_player_instance.add_to_playlist(tpi.Audio(filepath=article_audio_path, id=media_uid))
-
-                video = tpi.Video(id=media_uid, 
-                                  requester=requester, 
-                                  video_info=video_info, 
-                                  requested_channel=ctx.channel)
-
-                # Generate audio file based on the real name of the requester
-                if requester is not None and requester.real_name is not None:
-                    article_name = f"{media_uid}_preplay"
-                    audio_file_path = await ag.generate_song_comment_audio_file(requester.model_name, video, media_uid)
-                    if audio_file_path != None:
-                        audio_player_instance.add_to_playlist(tpi.Audio(filepath=audio_file_path, id=media_uid))
-                
-                audio_player_instance.add_to_playlist(video)
-                await ctx.send(f"Added to playlist: {video.video_info.title} | Duration: {td(seconds=video.video_info.duration)} | Requester: {video.requester.screen_name} ({video.requester.real_name})")
-                cfg.LOGGER.debug(f"Playlist: {audio_player_instance.playlist}")
-            except Exception as e:
-                cfg.LOGGER.error(f"Error processing video: {e}", exc_info=True)
-                await ctx.send(f"Error processing video: {e}")
-
-@BOT.command(name='stop', help='Stops playing the audio and disconnects from the voice channel')
-async def stop(ctx):
-    """
-    Stops the audio player task and disconnects the bot from the voice channel.
-    """
-    global audio_player_task
-
-    audio_player_instance.clear_playlist()
-    if audio_player_task and not audio_player_task.done():
-        await audio_player_task
-    if audio_player_task and not audio_player_task.done():
-        audio_player_task.cancel()
-    await leave(ctx)
-
-@BOT.command(name='skip', help='Skip the current song and move to the next in the playlist')
-async def skip(ctx):
-    """
-        Skips the current song and moves to the next in the playlist.
-    """
-    global audio_player_instance
-
-    voice_client = BOT.voice_clients[0] if BOT.voice_clients else None
-    if voice_client and voice_client.is_playing():
-        voice_client.stop()
-        await ctx.send("Skipping current song.")
-        if len(audio_player_instance.playlist) == 0:
-            await ctx.send("No more songs in queue!")
-    else:
-        await ctx.send("No song is currently playing.")
-
-# Command to delete all messages in the channel where the command is executed
-@BOT.command(name='deleteallmessages', help='Deletes all messages posted by this bot in the current channel')
-async def delete_bot_messages(ctx):
-    # Check if the user is an admin
-    if ctx.author.guild_permissions.administrator:
-        # Fetches the channel where the command was executed
-        channel = ctx.channel
-        # Fetches all messages in the channel
-        async for message in channel.history(limit=None):
-            # Check if the message author is the bot itself
-            if message.author == ctx.bot.user:
-                await message.delete()
-                await asyncio.sleep(1)  # Adjust the time as needed
-
-async def play_channel_join_audio():
-    voice_client = BOT.voice_clients[0] if BOT.voice_clients else None
-
-    if voice_client and voice_client.is_connected():
-        audio_file = discord.FFmpegPCMAudio(FILEPATH_START_SOUND)
-        voice_client.play(audio_file)
-        while voice_client.is_playing():
-            await asyncio.sleep(1)
-
-async def leave(ctx):
-    """
-    Disconnects the bot from the voice channel if connected.
-    """
-    voice_client = ctx.guild.voice_client
-    if voice_client and voice_client.is_connected():
-        await voice_client.disconnect()
-        await ctx.send("Disconnected from voice channel.")
-    else:
-        await ctx.send("The bot is not connected to a voice channel.")
-
-def clear_folder_contents(folder:Path):
-    for file in folder.iterdir():
-        if file.is_file():
-            try:
-                file.unlink()
-                cfg.LOGGER.debug(f"Deleted file: {file}")
-            except Exception as e:
-                cfg.LOGGER.debug(f"Error deleting file: {file} - {e}")
+def clear_folder_contents(folder: str):
+    for filename in os.listdir(folder):
+        file_path = os.path.join(folder, filename)
+        try:
+            if os.path.isfile(file_path) or os.path.islink(file_path):
+                os.unlink(file_path)  # Deletes a file or symbolic link
+        except Exception as e:
+            cfg.LOGGER.error(f'Failed to delete {file_path}. Reason: {e}')
 
 if __name__ == '__main__':
     clear_folder_contents(cfg.FOLDER_TTS)
     clear_folder_contents(cfg.FOLDER_OUTPUT)
-    BOT.run(TOKEN)
+
+    bot_manager = BotManager(command_prefix='!g', intents=intents)
+
+    bot_manager.run(TOKEN)
