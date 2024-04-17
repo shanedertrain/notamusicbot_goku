@@ -60,9 +60,14 @@ OR
     ESTIMATE_MULTIPLIER=<estimate_multiplier>
         Time it takes times the length of the file. Ex. 4.22 = 422% longer than length of file.
 
-5. Run `goku.py` and then update the `users.json` file with the backgrounds of the users in your Discord server. 
+5. Add your models into the rvc_cli/models folder. 
+    1. Each model you are using is placed into its own folder 
+    2. You can set up different models with differing parameters by supplying multiple .yaml files.
+    3. Specify the .yaml file's name for users in the `users.json`. ex: dat_boi123 for dat_boi123.yaml
 
-6. Restart `goku.py` for the changes to take effect. 
+6. Run `main.py` and then update the `users.json` file with the backgrounds of the users in your Discord server. 
+
+7. Restart `main.py` for the changes to take effect. 
 
 ## Adding models 
 
