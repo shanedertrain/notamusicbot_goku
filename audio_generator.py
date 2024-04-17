@@ -36,9 +36,9 @@ def generate_tts_audio(tts_module:tts.TextToSpeechConverter, text:str, output_na
     text_without_quotes = text.replace('"', '')
     
     tts_filepath = tts_module.text_to_speech(text_without_quotes, output_path=Path(cfg.FOLDER_TTS / f"{output_name}.wav"))
-    tts_speedup_filepath = ap.increase_speed(tts_filepath, speed_multiplier=1.0)
+    # tts_filepath = ap.increase_speed(tts_filepath, speed_multiplier=1.0)
     cfg.LOGGER.debug("TTS audio generation complete!")
-    return tts_speedup_filepath
+    return tts_filepath
 
 def convert_voice_for_multiprocess(model:models.Model, audio_filepath:Path) -> Path:
     vc_handler = vc.VoiceConverterHandler(model=model, generator=GENERATOR)
@@ -52,9 +52,9 @@ async def generate_voice_converter_audio(vc_handler_name:str, text:str, output_n
         tts_audio_filepath = await asyncio.to_thread(generate_tts_audio, tts_module, text, output_name)
 
         # Run the synchronous voice conversion in a separate process
-        voice_converted_filepath = await run_in_process(convert_voice_for_multiprocess, model, tts_audio_filepath)
+        output_filepath = await run_in_process(convert_voice_for_multiprocess, model, tts_audio_filepath)
 
-        output_filepath = await asyncio.to_thread(ap.increase_volume, voice_converted_filepath, volume_modifier_db=8)
+        # output_filepath = await asyncio.to_thread(ap.increase_volume, output_filepath, volume_modifier_db=8)
 
         return output_filepath
     except Exception as e:
