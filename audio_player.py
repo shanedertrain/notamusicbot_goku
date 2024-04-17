@@ -21,6 +21,7 @@ class AudioPlayer:
     async def run(self):
         while True:
             await self.play_audio()
+            await asyncio.sleep(1)  # Check the playlist again after a short delay
 
     async def play_audio(self):
         try:
@@ -43,10 +44,7 @@ class AudioPlayer:
                         self.voice_client.play(discord.FFmpegPCMAudio(play_source))
 
                 while self.voice_client.is_playing():
-                    await asyncio.sleep(10)
-
-            else:
-                await asyncio.sleep(1)  # Check the playlist again after a short delay
+                    await asyncio.sleep(1)
 
         except Exception as e:
             cfg.LOGGER.error(e)
