@@ -1,9 +1,13 @@
+import os
 from enum import Enum, auto
 import requests
 from bs4 import BeautifulSoup
 from dataclasses import dataclass
 import random
 from typing import List, Optional, Union
+
+from dotenv import load_dotenv
+load_dotenv()
 
 @dataclass
 class Article:
@@ -32,8 +36,8 @@ class CountryCode(Enum):
     FRANCE = 'fr'
 
 class NewsScraper:
-    def __init__(self, api_key: str):
-        self.api_key = api_key
+    def __init__(self):
+        self.api_key = os.getenv('NEWS_API_KEY')
 
     def get_articles(self, country_code: CountryCode = CountryCode.US, category: Optional[Category] = None) -> List[Article]:
         if isinstance(country_code, CountryCode):
@@ -66,12 +70,7 @@ class NewsScraper:
     
 
 if __name__ == "__main__":
-    from dotenv import load_dotenv
-    import os
-
-    load_dotenv()
-
-    news_scraper = NewsScraper(os.getenv('NEWS_API_KEY'))
+    news_scraper = NewsScraper()
     article = news_scraper.get_random_article(country_code=CountryCode.UK, category=Category.TECHNOLOGY)
     article_text = news_scraper.get_article_text(article)
     print("Article Text:", article_text)

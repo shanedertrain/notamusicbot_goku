@@ -1,7 +1,7 @@
 from pathlib import Path
 import logging
 
-DEBUG = False #mostly just disabled the opening message to not be annoying
+DEBUG = True #mostly just disabled the opening message to not be annoying
 
 DATETIME_FORMAT = '%Y-%m-%d %H:%M:%S.%f'
 

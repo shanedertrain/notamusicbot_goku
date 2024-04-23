@@ -54,9 +54,14 @@ OR
         GPU or CPU depending on what you want to use. If no CUDA cores (NVIDIA), then use CPU
     NEWS_API_KEY=<news_api_key>
         API key for newsapi: https://newsapi.org/
+    REDDIT_CLIENT_ID=<reddit_client_id>
+        Client ID for reddit bot: https://www.reddit.com/prefs/apps/
+    REDDIT_CLIENT_SECRET=<reddit_client_secret>
+        Client secret for reddit bot: https://www.reddit.com/prefs/apps/
+    GEMENI_API_KEY=<your_api_key>
+        API Key for Gemeni
 
 4. Update the `.env` file in the rvc_cli directory of the project:  
-    GEMENI_API_KEY=<your_api_key>
     ESTIMATE_MULTIPLIER=<estimate_multiplier>
         Time it takes times the length of the file. Ex. 4.22 = 422% longer than length of file.
 

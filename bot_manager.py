@@ -61,20 +61,33 @@ class BotManager:
                 if video_info:
                     requester = users.get_user_by_id(ctx.author.id)
                     media_uid = uuid.uuid4()
+
                     try:
                         if random.choice([True] + ([False] * (3 if not cfg.DEBUG else 0))):
-                            article_name = f"{media_uid}_article"
-                            article_audio_path = await ag.generate_news_article_audio_file(requester.model_name, article_name)
-                            if article_audio_path:
-                                self.audio_player.add_to_playlist(tpi.Audio(filepath=article_audio_path, id=media_uid))
+
+                            #Select between reddit or news article
+                            if random.choice([True] + ([False] * (1 if not cfg.DEBUG else 0))): 
+                                #reddit
+                                media_name = f"{media_uid}_reddit"
+                                media_audio_path = await ag.generate_reddit_article_audio_file(requester.model_name, media_name)
+                            else:
+                                #news article
+                                media_name = f"{media_uid}_article"
+                                media_audio_path = await ag.generate_news_article_audio_file(requester.model_name, media_name)
+                            
+                            if media_audio_path:
+                                self.audio_player.add_to_playlist(tpi.Audio(filepath=media_audio_path, id=media_uid))
+                        
                         video = tpi.Video(id=media_uid, requester=requester, video_info=video_info, requested_channel=ctx.channel)
+                        
                         if requester.real_name:
-                            article_name = f"{media_uid}_preplay"
+                            media_name = f"{media_uid}_preplay"
                             audio_file_path = await ag.generate_song_comment_audio_file(requester.model_name, video, media_uid)
                             if audio_file_path:
                                 self.audio_player.add_to_playlist(tpi.Audio(filepath=audio_file_path, id=media_uid))
                         self.audio_player.add_to_playlist(video)
-                        await ctx.send(f"Added to playlist: {video.video_info.title} | Duration: {td(seconds=video.video_info.duration)} | Requester: {video.requester.screen_name} ({video.requester.real_name})")
+                        # await ctx.send(f"Added to playlist: {video.video_info.title} | Duration: {td(seconds=video.video_info.duration)} | Requester: {video.requester.screen_name} ({video.requester.real_name})")
+                    
                     except Exception as e:
                         cfg.LOGGER.error(f"Error processing video: {e}", exc_info=True)
                         await ctx.send(f"Error processing video: {e}")

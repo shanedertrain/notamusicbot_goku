@@ -10,20 +10,21 @@ from dotenv import load_dotenv
 
 import configuration as cfg
 import newsapi as na
+import reddit_scraper as rs
 import types_playlist_items as tpi
+import comment_generator as cg
+import tts
 
 sys.path.append(str(cfg.FOLDER_ROOT / 'rvc_cli'))
-from rvc_cli import comment_generator as cg
-from rvc_cli import tts
 from rvc_cli import audio_processor as ap
 from rvc_cli import voice_converter as vc
 from rvc_cli import models
 
 load_dotenv()
 GENERATOR = os.getenv('GENERATOR')
-NEWS_API_KEY = os.getenv('NEWS_API_KEY')
 
-NEWS_SCRAPER = na.NewsScraper(api_key=NEWS_API_KEY)
+NEWS_SCRAPER = na.NewsScraper()
+REDDIT_SCRAPER = rs.RedditPostFetcher()
 
 executor = ProcessPoolExecutor(max_workers=multiprocessing.cpu_count())
 
@@ -87,6 +88,23 @@ async def generate_news_article_audio_file(vc_handler_name:str, output_name:str)
         else:
             raise ValueError("cg.generate_song_comment returned False instead of a comment string")
         
+    except Exception as e:
+        cfg.LOGGER.error(e, exc_info=True)
+
+    return output_filepath
+
+async def generate_reddit_article_audio_file(vc_handler_name: str, output_name: str) -> Union[Path, None]:
+    output_filepath = None
+    article_text_summarized = None
+    try:
+        while article_text_summarized is None: #we do this because reddit can have posts gemini doesnt like
+            reddit_post = await asyncio.to_thread(REDDIT_SCRAPER.get_random_reddit_post)
+            article_text_summarized = await asyncio.to_thread(cg.generate_reddit_post_comment, reddit_post.title, reddit_post.post_text, reddit_post.poster_name)
+
+        output_filepath = await generate_voice_converter_audio(vc_handler_name, article_text_summarized, output_name)
+        
+    except asyncio.TimeoutError:
+        cfg.LOGGER.error("Timeout occurred while fetching Reddit post")
     except Exception as e:
         cfg.LOGGER.error(e, exc_info=True)
 
