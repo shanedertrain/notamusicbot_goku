@@ -45,9 +45,8 @@ def convert_voice_for_multiprocess(model:models.Model, audio_filepath:Path) -> P
     vc_handler = vc.VoiceConverterHandler(model=model, generator=GENERATOR)
     return vc_handler.convert_voice(audio_filepath)
 
-async def generate_voice_converter_audio(vc_handler_name:str, text:str, output_name:str) -> Union[Path, None]:
+async def generate_voice_converter_audio(model:models.Model, text:str, output_name:str) -> Union[Path, None]:
     try:
-        model = models.get_model(vc_handler_name)
         tts_module = tts.get_tts_module(model.tts_type)
 
         tts_audio_filepath = await asyncio.to_thread(generate_tts_audio, tts_module, text, output_name)
@@ -55,7 +54,7 @@ async def generate_voice_converter_audio(vc_handler_name:str, text:str, output_n
         # Run the synchronous voice conversion in a separate process
         output_filepath = await run_in_process(convert_voice_for_multiprocess, model, tts_audio_filepath)
 
-        # output_filepath = await asyncio.to_thread(ap.increase_volume, output_filepath, volume_modifier_db=8)
+        output_filepath = await asyncio.to_thread(ap.modify_speed, output_filepath, speed_multiplier=model.speed_multiplier)
 
         return output_filepath
     except Exception as e:
@@ -63,11 +62,12 @@ async def generate_voice_converter_audio(vc_handler_name:str, text:str, output_n
 
 async def generate_song_comment_audio_file(vc_handler_name:str, video:tpi.Video, output_name:str) -> Union[Path, None]: 
     output_filepath = None
+    model = models.get_model(vc_handler_name)
     try:
-        generated_comment = await asyncio.to_thread(cg.generate_song_comment, video.requester.real_name, video.requester.background, video.video_info.title, video.video_info.uploader)
+        generated_comment = await asyncio.to_thread(cg.generate_song_comment, model.description, video.requester.real_name, video.requester.background, video.video_info.title, video.video_info.uploader)
         
         if generated_comment is not False:
-            output_filepath = await generate_voice_converter_audio(vc_handler_name, generated_comment, output_name)
+            output_filepath = await generate_voice_converter_audio(model, generated_comment, output_name)
         else:
             raise ValueError("cg.generate_song_comment returned False instead of a comment string")
         
@@ -78,13 +78,14 @@ async def generate_song_comment_audio_file(vc_handler_name:str, video:tpi.Video,
 
 async def generate_news_article_audio_file(vc_handler_name:str, output_name:str) -> Union[Path, None]:
     output_filepath = None
+    model = models.get_model(vc_handler_name)
     try:
         article = NEWS_SCRAPER.get_random_article(category=na.Category.TECHNOLOGY)
         article_text = NEWS_SCRAPER.get_article_text(article)
-        article_text_summarized = await asyncio.to_thread(cg.generate_news_comment, article_text)
+        article_text_summarized = await asyncio.to_thread(cg.generate_news_comment, model.description, article_text)
 
         if article_text_summarized is not False:
-            output_filepath = await generate_voice_converter_audio(vc_handler_name, article_text_summarized, output_name)
+            output_filepath = await generate_voice_converter_audio(model, article_text_summarized, output_name)
         else:
             raise ValueError("cg.generate_song_comment returned False instead of a comment string")
         
@@ -96,12 +97,13 @@ async def generate_news_article_audio_file(vc_handler_name:str, output_name:str)
 async def generate_reddit_article_audio_file(vc_handler_name: str, output_name: str) -> Union[Path, None]:
     output_filepath = None
     article_text_summarized = None
+    model = models.get_model(vc_handler_name)
     try:
         while article_text_summarized is None: #we do this because reddit can have posts gemini doesnt like
             reddit_post = await asyncio.to_thread(REDDIT_SCRAPER.get_random_reddit_post)
-            article_text_summarized = await asyncio.to_thread(cg.generate_reddit_post_comment, reddit_post.title, reddit_post.post_text, reddit_post.poster_name)
+            article_text_summarized = await asyncio.to_thread(cg.generate_reddit_post_comment, model.description, reddit_post.title, reddit_post.post_text, reddit_post.poster_name)
 
-        output_filepath = await generate_voice_converter_audio(vc_handler_name, article_text_summarized, output_name)
+        output_filepath = await generate_voice_converter_audio(model, article_text_summarized, output_name)
         
     except asyncio.TimeoutError:
         cfg.LOGGER.error("Timeout occurred while fetching Reddit post")

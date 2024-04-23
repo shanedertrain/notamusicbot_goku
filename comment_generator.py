@@ -19,16 +19,14 @@ genai.configure(api_key=GEMENI_API_KEY)
 model = genai.GenerativeModel('gemini-pro')
 chat = model.start_chat(history=[])
 
-def generate_reddit_post_comment(post_title:str, post_text:str, post_submitter:str) -> Union[str, bool]:
+def generate_reddit_post_comment(vc_description:str, post_title:str, post_text:str, post_submitter:str) -> Union[str, bool]:
     # Creating a scenario where Goku comments on the requester's personality and introduces the song
     prompt = f"""
-        You're former president of the United States Barack Obama. 
-        Remember to speak in the first person as Obama.
+        You are {vc_description} and remember to speak in first person.
         Limit your response to maximum 3 paragraphs.
-        You are summarizing a reddit post as the host of the Galactic Beats radio show. 
-        The submitter is: {post_submitter}.
+        You are summarizing a reddit post by {post_submitter} as the host of the Galactic Beats radio show. 
         Announce the title of the post: {post_title}.
-        The post to be summarized is: {post_text}.
+        The post content to be summarized is: {post_text}.
     """
     # Sending the scenario as a message to the AI model
     try:
@@ -45,15 +43,14 @@ def generate_reddit_post_comment(post_title:str, post_text:str, post_submitter:s
 
     return response.text
 
-def generate_news_comment(article_text:str) -> Union[str, bool]:
+def generate_news_comment(vc_description:str, article_text:str) -> Union[str, bool]:
     # Creating a scenario where Goku comments on the requester's personality and introduces the song
     prompt = f"""
+        You are {vc_description} and remember to speak in first person.
         Your response must be 2 - 3 sentences. 
-        You're former president of the United States Barack Obama. 
-        Remember to speak in the first person as Obama.
-        You are reading a news story for the Galactic Beats radioshow. 
+        You are reading a news story as the host of the Galactic Beats radio show. 
         What you will say is a summary of the following article text:
-        {article_text}
+        {article_text}.
     """
     # Sending the scenario as a message to the AI model
     try:
@@ -70,14 +67,12 @@ def generate_news_comment(article_text:str) -> Union[str, bool]:
 
     return response.text
 
-def generate_song_comment(requester_name:str, requester_background:str, song_name:str, artist_name:str) -> Union[str, bool]:
+def generate_song_comment(vc_description:str, requester_name:str, requester_background:str, song_name:str, artist_name:str) -> Union[str, bool]:
     # Creating a scenario where Goku comments on the requester's personality and introduces the song
     prompt = f"""
+        You are {vc_description} and remember to speak in first person.
         Your response must be 2 - 3 sentences. 
-        You're former president of the United States Barack Obama. 
-        Remember to speak in the first person as Obama.
-        You are the host of the 'Galactic Beats' radio show.
-        The next song to be played is '{song_name}' by {artist_name}.
+        You are announcing the song {song_name} by {artist_name} as the host of the 'Galactic Beats' radio show.
         The requester is {requester_name}, who's known for being {requester_background}. 
         Make a light-hearted joke about the requestor's background that ties into the song or its topic.
         Do not repeat jokes about the requestor's background across prompts.
