@@ -12,6 +12,7 @@ import configuration as cfg
 import types_playlist_items as tpi
 import audio_generator as ag
 import users
+from rvc_cli import models
 
 from dotenv import load_dotenv
 
@@ -21,7 +22,7 @@ FILEPATH_START_SOUND = cfg.FOLDER_INPUT / os.getenv('FILENAME_START_SOUND')
 
 class BotManager:
     audio_player_task:asyncio.Task = None
-    def __init__(self, command_prefix: str, intents: discord.Intents):
+    def __init__(self, command_prefix: str, intents: discord.Intents=discord.Intents.default()):
         self.bot = commands.Bot(command_prefix=command_prefix, intents=intents)
         self.audio_player = AudioPlayer(self.bot)
         self.register_events()
@@ -46,7 +47,9 @@ class BotManager:
     def register_commands(self):
         @self.bot.command(name='play', help='Add a video or playlist to the queue and start playing')
         async def play(ctx, url: str):
-            users.USERS = users.read_users_from_json_file(cfg.FILEPATH_USERS)
+            users.USERS = users.read_users_from_json_file(cfg.FILEPATH_USERS) #reload users from file
+            models.MODELS = models.collect_models_from_folders() #reload models 
+
             voice_client = ctx.guild.voice_client
             if not voice_client:
                 await ctx.author.voice.channel.connect()
@@ -142,3 +145,16 @@ class BotManager:
 
     def run(self, token: str):
         self.bot.run(token)
+
+if __name__ == '__main__':
+    load_dotenv()
+    TOKEN = os.getenv('DISCORD_TOKEN')
+
+    intents = discord.Intents.default()
+    intents.message_content = True
+    intents.typing = False
+    intents.presences = False
+    intents.members = True
+
+    bot_manager = BotManager(command_prefix='!g', intents=intents)
+    bot_manager.run(TOKEN)
