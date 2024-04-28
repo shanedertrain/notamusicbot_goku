@@ -7,8 +7,8 @@ import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
 
 load_dotenv()
-client_id = os.getenv("CLIENT_ID")
-client_secret = os.getenv("CLIENT_SECRET")
+client_id = os.getenv("SPOTIFY_CLIENT_ID")
+client_secret = os.getenv("SPOTIFY_CLIENT_SECRET")
 
 @dataclass
 class SpotifyTrack:
@@ -47,6 +47,6 @@ class SpotifyHandler:
 
 if __name__ == "__main__":
     spotify_handler = SpotifyHandler()
-    track = spotify_handler.search_track("Your song query")
+    track = spotify_handler.search_track("Total Eclipse of the Heart")
     if track:
         spotify_handler.play_track(track)
