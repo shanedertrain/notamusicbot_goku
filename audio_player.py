@@ -1,21 +1,17 @@
-from typing import Union, List
-from datetime import timedelta as td
-import asyncio
-
 import discord
 from discord.ext import commands
-
-import configuration as cfg
-import types_playlist_items as tpi
+from types_playlist_items import Video, Audio, SpotifyMedia
+from configuration import LOGGER
+import asyncio
+from datetime import timedelta as td
 
 FFMPEG_BEFORE_OPTIONS = "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -nostdin"
 FFMEG_OPTIONS = '-vn -filter:a "volume=0.5"'
-IDLE_SECONDS_MAX = 15*60  # 15 minutes
 
 class AudioPlayer:
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.playlist: List[Union[tpi.Video, tpi.Audio]] = []
+        self.playlist = []
         self.voice_client = None
 
     async def run(self):
@@ -25,31 +21,34 @@ class AudioPlayer:
 
     async def play_audio(self):
         try:
-            if len(self.playlist) > 0:
-                media = self.playlist.pop(0)
-                cfg.LOGGER.debug(f"Popped: {media}")
-                self.voice_client = self.bot.voice_clients[0] if self.bot.voice_clients else None
+            if self.voice_client and self.voice_client.is_connected():
+                if len(self.playlist) > 0:
+                    media = self.playlist.pop(0)
+                    LOGGER.debug(f"Popped: {media}")
+                    self.voice_client = self.bot.voice_clients[0] if self.bot.voice_clients else None
 
-                if isinstance(media, tpi.Video):
-                    play_source = media.video_info.url
-                    await media.requested_channel.send(
-                        f"Now playing: {media.video_info.title} | Duration: {str(td(seconds=media.video_info.duration))} | Requester: {media.requester.screen_name} ({media.requester.real_name})"
-                    )
-                    if self.voice_client and self.voice_client.is_connected():
+                    if isinstance(media, Video):
+                        play_source = media.video_info.url
+                        await media.requested_channel.send(
+                            f"Now playing: {media.video_info.title} | Duration: {str(td(seconds=media.video_info.duration))} | Requester: {media.requester.screen_name} ({media.requester.real_name})"
+                        )
                         self.voice_client.play(discord.FFmpegPCMAudio(play_source, before_options=FFMPEG_BEFORE_OPTIONS, options=FFMEG_OPTIONS))
                 
-                elif isinstance(media, tpi.Audio):
-                    play_source = media.filepath
-                    if self.voice_client and self.voice_client.is_connected():
+                    elif isinstance(media, Audio):
+                        play_source = media.filepath
+                        self.voice_client.play(discord.FFmpegPCMAudio(play_source))
+
+                    elif isinstance(media, SpotifyMedia):
+                        play_source = media.spotify_info.uri
                         self.voice_client.play(discord.FFmpegPCMAudio(play_source))
 
                 while self.voice_client.is_playing():
                     await asyncio.sleep(1)
 
         except Exception as e:
-            cfg.LOGGER.error(e)
+            LOGGER.error(e)
 
-    def add_to_playlist(self, media_item: Union[tpi.Video, tpi.Audio]):
+    def add_to_playlist(self, media_item):
         self.playlist.append(media_item)
 
     async def clear_playlist(self):

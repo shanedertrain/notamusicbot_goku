@@ -5,11 +5,11 @@ import json
 import subprocess
 from pathlib import Path
 import youtube_dlc
-import uuid
 
 import discord
 
 from users import User
+from spotify_handler import SpotifyTrack
 
 @dataclass
 class VideoInfo:
@@ -37,7 +37,12 @@ class Video(Media):
 class Audio(Media):
     filepath: Path
 
-async def extract_video_info(url:str) -> AsyncIterator[VideoInfo]:
+@dataclass
+class SpotifyMedia(Media):
+    spotify_info: SpotifyTrack
+    requester: User
+
+async def extract_youtube_video_info(url:str) -> AsyncIterator[VideoInfo]:
     process = await asyncio.create_subprocess_exec(
         'youtube-dlc', '--skip-download', '--dump-json', '--format', 'bestaudio', url,
         stdout=subprocess.PIPE,

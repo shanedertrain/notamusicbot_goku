@@ -60,12 +60,15 @@ async def generate_voice_converter_audio(model:models.Model, text:str, output_na
     except Exception as e:
         cfg.LOGGER.error(e, exc_info=True)
 
-async def generate_song_comment_audio_file(vc_handler_name:str, video:tpi.Video, output_name:str) -> Union[Path, None]: 
+async def generate_song_comment_audio_file(vc_handler_name:str, media:Union[tpi.Video, tpi.SpotifyMedia], output_name:str) -> Union[Path, None]: 
     output_filepath = None
     model = models.get_model(vc_handler_name)
     try:
-        generated_comment = await asyncio.to_thread(cg.generate_song_comment, model.description, video.requester.real_name, video.requester.background, video.video_info.title, video.video_info.uploader)
-        
+        if isinstance(media, tpi.Video):
+            generated_comment = await asyncio.to_thread(cg.generate_song_comment, model.description, media.requester.real_name, media.requester.background, media.video_info.title, media.video_info.uploader)
+        elif isinstance(media, tpi.SpotifyMedia):
+            generated_comment = await asyncio.to_thread(cg.generate_song_comment, model.description, media.requester.real_name, media.requester.background, media.spotify_info.name, media.spotify_info.artists[0])
+
         if generated_comment is not False:
             output_filepath = await generate_voice_converter_audio(model, generated_comment, output_name)
         else:
@@ -115,3 +118,4 @@ async def generate_reddit_article_audio_file(vc_handler_name: str, output_name: 
         cfg.LOGGER.error(e, exc_info=True)
 
     return output_filepath
+    

@@ -2,7 +2,8 @@ import os
 import asyncio
 import random
 import uuid
-from datetime import timedelta as td
+from typing import Optional
+from pathlib import Path
 
 import discord
 from discord.ext import commands
@@ -47,53 +48,27 @@ class BotManager:
     def register_commands(self):
         @self.bot.command(name='play', help='Add a video or playlist to the queue and start playing')
         async def play(ctx, url: str):
-            users.USERS = users.read_users_from_json_file(cfg.FILEPATH_USERS) #reload users from file
-            models.MODELS = models.collect_models_from_folders() #reload models 
-
-            voice_client = ctx.guild.voice_client
-            if not voice_client:
-                await ctx.author.voice.channel.connect()
-                if not cfg.DEBUG: self.audio_player.add_to_playlist(tpi.Audio(filepath=FILEPATH_START_SOUND, id=0))
-            
-            # Start the audio player task if it's not already running
-            if self.audio_player_task is None or self.audio_player_task.done():
-                self.audio_player_task = self.bot.loop.create_task(self.audio_player.run(), name='AudioPlayer')
-                await ctx.send("Audio player started.")
-
-            async for video_info in tpi.extract_video_info(url):
-                if video_info:
-                    requester = users.get_user_by_id(ctx.author.id)
-                    media_uid = uuid.uuid4()
-
-                    try:
-                        if random.choice([True] + ([False] * (3 if not cfg.DEBUG else 0))):
-
-                            #Select between reddit or news article
-                            if random.choice([True] + ([False] * (1 if not cfg.DEBUG else 0))): 
-                                #reddit
-                                media_name = f"{media_uid}_reddit"
-                                media_audio_path = await ag.generate_reddit_article_audio_file(requester.model_name, media_name)
-                            else:
-                                #news article
-                                media_name = f"{media_uid}_article"
-                                media_audio_path = await ag.generate_news_article_audio_file(requester.model_name, media_name)
-                            
-                            if media_audio_path:
-                                self.audio_player.add_to_playlist(tpi.Audio(filepath=media_audio_path, id=media_uid))
-                        
-                        video = tpi.Video(id=media_uid, requester=requester, video_info=video_info, requested_channel=ctx.channel)
-                        
-                        if requester.real_name:
-                            media_name = f"{media_uid}_preplay"
-                            audio_file_path = await ag.generate_song_comment_audio_file(requester.model_name, video, media_uid)
-                            if audio_file_path:
-                                self.audio_player.add_to_playlist(tpi.Audio(filepath=audio_file_path, id=media_uid))
-                        self.audio_player.add_to_playlist(video)
-                        # await ctx.send(f"Added to playlist: {video.video_info.title} | Duration: {td(seconds=video.video_info.duration)} | Requester: {video.requester.screen_name} ({video.requester.real_name})")
+            try:
+                play_init_funcs(ctx)
+                requester = users.get_user_by_id(ctx.author.id)
+                media_uid = uuid.uuid4()
+                await self.queue_music_youtube(url, ctx, requester, media_uid)
                     
-                    except Exception as e:
-                        cfg.LOGGER.error(f"Error processing video: {e}", exc_info=True)
-                        await ctx.send(f"Error processing video: {e}")
+            except Exception as e:
+                cfg.LOGGER.error(f"Error processing video: {e}", exc_info=True)
+                await ctx.send(f"Error processing video: {e}")
+
+        @self.bot.command(name='play_spotify', help='Add spotify song to the queue and start playing')
+        async def play_spotify(ctx, url: str):
+            try:
+                play_init_funcs(ctx)
+                requester = users.get_user_by_id(ctx.author.id)
+                media_uid = uuid.uuid4()
+                await self.queue_music_spotify(url, ctx, requester, media_uid)
+                    
+            except Exception as e:
+                cfg.LOGGER.error(f"Error processing spotify track: {e}", exc_info=True)
+                await ctx.send(f"Error processing spotify track: {e}")
 
         @self.bot.command(name='stop', help='Stops playing the audio and disconnects from the voice channel')
         async def stop(ctx):
@@ -131,6 +106,79 @@ class BotManager:
                         await message.delete()
                         await asyncio.sleep(1)
 
+        async def play_init_funcs(self, ctx):
+            users.USERS = users.read_users_from_json_file(cfg.FILEPATH_USERS) #reload users from file
+            models.MODELS = models.collect_models_from_folders() #reload models 
+
+            voice_client = ctx.guild.voice_client
+            if not voice_client:
+                await ctx.author.voice.channel.connect()
+                if not cfg.DEBUG: self.audio_player.add_to_playlist(tpi.Audio(filepath=FILEPATH_START_SOUND, id=0))
+            
+            # Start the audio player task if it's not already running
+            if self.audio_player_task is None or self.audio_player_task.done():
+                self.audio_player_task = self.bot.loop.create_task(self.audio_player.run(), name='AudioPlayer')
+                await ctx.send("Audio player started.")
+
+    async def generate_article_audio(self, requester:users.User, media_uid) -> Optional[Path]:
+        #Select between reddit or news article
+        if random.choice([True] + ([False] * (1 if not cfg.DEBUG else 0))): 
+            #reddit
+            media_name = f"{media_uid}_reddit"
+            media_audio_path = await ag.generate_reddit_article_audio_file(requester.model_name, media_name)
+        else:
+            #news article
+            media_name = f"{media_uid}_article"
+            media_audio_path = await ag.generate_news_article_audio_file(requester.model_name, media_name)
+        
+        return media_audio_path
+
+    async def queue_music_youtube(self, url: str, ctx, requester:users.User, media_uid:str):
+        if 'youtube.com' in url:
+            async for video_info in tpi.extract_youtube_video_info(url):
+                if video_info:
+                    try:
+                        video = tpi.Video(id=media_uid, requester=requester, video_info=video_info, requested_channel=ctx.channel)
+                        
+                        if random.choice([True] + ([False] * (3 if not cfg.DEBUG else 0))):
+                            media_audio_path = await self.generate_article_audio()
+                            
+                            if media_audio_path:
+                                self.audio_player.add_to_playlist(tpi.Audio(filepath=media_audio_path, id=media_uid))
+                        
+                        if requester.real_name:
+                            audio_file_path = await ag.generate_song_comment_audio_file(requester.model_name, video, media_uid)
+                            if audio_file_path:
+                                self.audio_player.add_to_playlist(tpi.Audio(filepath=audio_file_path, id=media_uid))
+
+                        self.audio_player.add_to_playlist(video)
+                        # await ctx.send(f"Added to playlist: {video.video_info.title} | Duration: {td(seconds=video.video_info.duration)} | Requester: {video.requester.screen_name} ({video.requester.real_name})")
+                    except Exception as e:
+                        cfg.LOGGER.error(f"Error processing video: {e}", exc_info=True)
+                        await ctx.send(f"Error processing video: {e}")
+        else:
+            await ctx.send("Invalid YouTube URL.")
+
+    async def queue_music_spotify(self, title: str, ctx, requester:users.User, media_uid:str):
+        import spotify_handler as sh
+        spotify_handler = sh.SpotifyHandler()
+
+        track = spotify_handler.search_track(title)
+        if track:
+            track_wrapped = tpi.SpotifyMedia(spotify_info=track, requester=requester, id=media_uid)
+
+            if random.choice([True] + ([False] * (3 if not cfg.DEBUG else 0))):
+                media_audio_path = await self.generate_article_audio()
+
+            if requester.real_name:
+                audio_file_path = await ag.generate_song_comment_audio_file(requester.model_name, track_wrapped, media_uid)
+                if audio_file_path:
+                    self.audio_player.add_to_playlist(tpi.Audio(filepath=audio_file_path, id=media_uid))
+                            
+            if media_audio_path:
+                self.audio_player.add_to_playlist(track_wrapped)
+        else:
+            await ctx.send("Track not found on Spotify.")
 
     async def leave(self, ctx):
         """
