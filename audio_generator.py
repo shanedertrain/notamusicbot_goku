@@ -98,13 +98,17 @@ async def generate_reddit_article_audio_file(vc_handler_name: str, output_name: 
     output_filepath = None
     article_text_summarized = None
     model = models.get_model(vc_handler_name)
+
     try:
+        posts_traverser = REDDIT_SCRAPER.posts_traverser()
         while article_text_summarized is None: #we do this because reddit can have posts gemini doesnt like
-            reddit_post = await asyncio.to_thread(REDDIT_SCRAPER.get_random_reddit_post)
+            reddit_post = next(posts_traverser)
             article_text_summarized = await asyncio.to_thread(cg.generate_reddit_post_comment, model.description, reddit_post.title, reddit_post.post_text, reddit_post.poster_name)
 
         output_filepath = await generate_voice_converter_audio(model, article_text_summarized, output_name)
         
+    except StopIteration:
+        cfg.LOGGER.error("No more Reddit posts available")
     except asyncio.TimeoutError:
         cfg.LOGGER.error("Timeout occurred while fetching Reddit post")
     except Exception as e:

@@ -18,7 +18,7 @@ class RedditPost:
         return f"Title: {self.title}, URL: {self.url}, Poster Name: {self.poster_name}"
 
 class RedditPostFetcher:
-    def __init__(self):
+    def __init__(self, post_limit=300):
         load_dotenv()  # Load environment variables from .env file
         client_id = os.getenv('REDDIT_CLIENT_ID')
         client_secret = os.getenv('REDDIT_CLIENT_SECRET')
@@ -30,8 +30,9 @@ class RedditPostFetcher:
             user_agent=user_agent,
             check_for_async=False
         )
+        self.posts = self.fetch_text_posts_from_front_page(limit=post_limit)
 
-    def fetch_text_posts_from_front_page(self, limit=10) -> List[RedditPost]:
+    def fetch_text_posts_from_front_page(self, limit=100) -> List[RedditPost]:
         results: List[RedditPost] = []
 
         for post in self.reddit.front.hot(limit=limit):
@@ -46,26 +47,16 @@ class RedditPostFetcher:
 
         return results
 
-    def get_random_reddit_post(self, limit=100) -> RedditPost:
-        posts = []
-        
-        for post in self.reddit.front.hot(limit=limit):
-            if post.is_self:
-                posts.append(RedditPost(
-                    post_id=post.id,
-                    title=post.title.encode("utf-8", "ignore").decode("utf-8"),
-                    url=post.url,
-                    poster_name=post.author.name,
-                    post_text=post.selftext
-                ))
-        
-        return random.choice(posts) if posts else None
+    def posts_traverser(self):
+        for post in self.posts:
+            yield post
+
+    def get_random_reddit_post(self) -> RedditPost:
+        return random.choice(self.posts) if self.posts else None
 
 if __name__ == "__main__":
     reddit_fetcher = RedditPostFetcher()
-    result = reddit_fetcher.get_random_reddit_post()
 
-    if result:
-        print(result)
-    else:
-        print("No self-posts found.")
+    # Example of using the generator with enumerate
+    for idx, post in enumerate(reddit_fetcher.posts_traverser()):
+        print(f"Post {idx + 1}: {post}")
