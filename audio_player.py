@@ -21,11 +21,11 @@ class AudioPlayer:
 
     async def play_audio(self):
         try:
-            if self.voice_client and self.voice_client.is_connected():
-                if len(self.playlist) > 0:
+            if len(self.playlist) > 0:
+                self.voice_client = self.bot.voice_clients[0] if self.bot.voice_clients else None
+                if self.voice_client and self.voice_client.is_connected():
                     media = self.playlist.pop(0)
                     LOGGER.debug(f"Popped: {media}")
-                    self.voice_client = self.bot.voice_clients[0] if self.bot.voice_clients else None
 
                     if isinstance(media, Video):
                         play_source = media.video_info.url
