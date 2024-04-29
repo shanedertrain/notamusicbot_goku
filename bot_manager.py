@@ -49,7 +49,7 @@ class BotManager:
         @self.bot.command(name='play', help='Add a video or playlist to the queue and start playing')
         async def play(ctx, url: str):
             try:
-                self.play_init_funcs(ctx)
+                await self.play_init_funcs(ctx)
                 requester = users.get_user_by_id(ctx.author.id)
                 media_uid = uuid.uuid4()
                 await self.queue_music_youtube(url, ctx, requester, media_uid)
@@ -61,7 +61,7 @@ class BotManager:
         @self.bot.command(name='play_spotify', help='Add spotify song to the queue and start playing')
         async def play_spotify(ctx, url: str):
             try:
-                self.play_init_funcs(ctx)
+                await self.play_init_funcs(ctx)
                 requester = users.get_user_by_id(ctx.author.id)
                 media_uid = uuid.uuid4()
                 await self.queue_music_spotify(url, ctx, requester, media_uid)
