@@ -118,7 +118,7 @@ class BotManager:
         # Start the audio player task if it's not already running
         if self.audio_player_task is None or self.audio_player_task.done():
             self.audio_player_task = self.bot.loop.create_task(self.audio_player.run(), name='AudioPlayer')
-                await ctx.send("Audio player started.")
+            await ctx.send("Audio player started.")
 
     async def generate_article_audio(self, requester:users.User, media_uid) -> Optional[Path]:
         #Select between reddit or news article
