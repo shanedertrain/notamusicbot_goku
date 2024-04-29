@@ -141,7 +141,7 @@ class BotManager:
                         video = tpi.Video(id=media_uid, requester=requester, video_info=video_info, requested_channel=ctx.channel)
                         
                         if random.choice([True] + ([False] * (3 if not cfg.DEBUG else 0))):
-                            media_audio_path = await self.generate_article_audio()
+                            media_audio_path = await self.generate_article_audio(requester, media_uid)
                             
                             if media_audio_path:
                                 self.audio_player.add_to_playlist(tpi.Audio(filepath=media_audio_path, id=media_uid))
@@ -168,7 +168,7 @@ class BotManager:
             track_wrapped = tpi.SpotifyMedia(spotify_info=track, requester=requester, id=media_uid)
 
             if random.choice([True] + ([False] * (3 if not cfg.DEBUG else 0))):
-                media_audio_path = await self.generate_article_audio()
+                media_audio_path = await self.generate_article_audio(requester, media_uid)
 
             if requester.real_name:
                 audio_file_path = await ag.generate_song_comment_audio_file(requester.model_name, track_wrapped, media_uid)
