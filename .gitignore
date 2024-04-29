@@ -4,3 +4,4 @@ logs/*
 output/*
 hubert_base.pt
 .env
+.cache

@@ -49,7 +49,7 @@ class BotManager:
         @self.bot.command(name='play', help='Add a video or playlist to the queue and start playing')
         async def play(ctx, url: str):
             try:
-                play_init_funcs(ctx)
+                self.play_init_funcs(ctx)
                 requester = users.get_user_by_id(ctx.author.id)
                 media_uid = uuid.uuid4()
                 await self.queue_music_youtube(url, ctx, requester, media_uid)
@@ -61,7 +61,7 @@ class BotManager:
         @self.bot.command(name='play_spotify', help='Add spotify song to the queue and start playing')
         async def play_spotify(ctx, url: str):
             try:
-                play_init_funcs(ctx)
+                self.play_init_funcs(ctx)
                 requester = users.get_user_by_id(ctx.author.id)
                 media_uid = uuid.uuid4()
                 await self.queue_music_spotify(url, ctx, requester, media_uid)
@@ -106,18 +106,18 @@ class BotManager:
                         await message.delete()
                         await asyncio.sleep(1)
 
-        async def play_init_funcs(self, ctx):
-            users.USERS = users.read_users_from_json_file(cfg.FILEPATH_USERS) #reload users from file
-            models.MODELS = models.collect_models_from_folders() #reload models 
+    async def play_init_funcs(self, ctx):
+        users.USERS = users.read_users_from_json_file(cfg.FILEPATH_USERS) #reload users from file
+        models.MODELS = models.collect_models_from_folders() #reload models 
 
-            voice_client = ctx.guild.voice_client
-            if not voice_client:
-                await ctx.author.voice.channel.connect()
-                if not cfg.DEBUG: self.audio_player.add_to_playlist(tpi.Audio(filepath=FILEPATH_START_SOUND, id=0))
-            
-            # Start the audio player task if it's not already running
-            if self.audio_player_task is None or self.audio_player_task.done():
-                self.audio_player_task = self.bot.loop.create_task(self.audio_player.run(), name='AudioPlayer')
+        voice_client = ctx.guild.voice_client
+        if not voice_client:
+            await ctx.author.voice.channel.connect()
+            if not cfg.DEBUG: self.audio_player.add_to_playlist(tpi.Audio(filepath=FILEPATH_START_SOUND, id=0))
+        
+        # Start the audio player task if it's not already running
+        if self.audio_player_task is None or self.audio_player_task.done():
+            self.audio_player_task = self.bot.loop.create_task(self.audio_player.run(), name='AudioPlayer')
                 await ctx.send("Audio player started.")
 
     async def generate_article_audio(self, requester:users.User, media_uid) -> Optional[Path]:
