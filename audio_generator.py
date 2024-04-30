@@ -25,6 +25,7 @@ GENERATOR = os.getenv('GENERATOR')
 
 NEWS_SCRAPER = na.NewsScraper()
 REDDIT_SCRAPER = rs.RedditPostFetcher()
+GEMINI_CHAT = cg.GeminiChat()
 
 executor = ProcessPoolExecutor(max_workers=multiprocessing.cpu_count())
 
@@ -65,14 +66,14 @@ async def generate_song_comment_audio_file(vc_handler_name:str, media:Union[tpi.
     model = models.get_model(vc_handler_name)
     try:
         if isinstance(media, tpi.Video):
-            generated_comment = await asyncio.to_thread(cg.generate_song_comment, model.description, media.requester.real_name, media.requester.background, media.video_info.title, media.video_info.uploader)
+            generated_comment = await asyncio.to_thread(GEMINI_CHAT.generate_song_comment, model.description, media.requester.real_name, media.requester.background, media.video_info.title, media.video_info.uploader)
         elif isinstance(media, tpi.SpotifyMedia):
-            generated_comment = await asyncio.to_thread(cg.generate_song_comment, model.description, media.requester.real_name, media.requester.background, media.spotify_info.name, media.spotify_info.artists[0])
+            generated_comment = await asyncio.to_thread(GEMINI_CHAT.generate_song_comment, model.description, media.requester.real_name, media.requester.background, media.spotify_info.name, media.spotify_info.artists[0])
 
         if generated_comment is not False:
             output_filepath = await generate_voice_converter_audio(model, generated_comment, output_name)
         else:
-            raise ValueError("cg.generate_song_comment returned False instead of a comment string")
+            raise ValueError("GEMINI_CHAT.generate_song_comment returned False instead of a comment string")
         
     except Exception as e:
         cfg.LOGGER.error(e, exc_info=True)
@@ -85,12 +86,12 @@ async def generate_news_article_audio_file(vc_handler_name:str, output_name:str)
     try:
         article = NEWS_SCRAPER.get_random_article(category=na.Category.TECHNOLOGY)
         article_text = NEWS_SCRAPER.get_article_text(article)
-        article_text_summarized = await asyncio.to_thread(cg.generate_news_comment, model.description, article_text)
+        article_text_summarized = await asyncio.to_thread(GEMINI_CHAT.generate_news_comment, model.description, article_text)
 
         if article_text_summarized is not False:
             output_filepath = await generate_voice_converter_audio(model, article_text_summarized, output_name)
         else:
-            raise ValueError("cg.generate_song_comment returned False instead of a comment string")
+            raise ValueError("GEMINI_CHAT.generate_song_comment returned False instead of a comment string")
         
     except Exception as e:
         cfg.LOGGER.error(e, exc_info=True)
@@ -105,7 +106,7 @@ async def generate_reddit_article_audio_file(vc_handler_name: str, output_name: 
     try:
         while article_text_summarized is None: #we do this because reddit can have posts gemini doesnt like
             reddit_post = next(REDDIT_SCRAPER.post_generator)
-            article_text_summarized = await asyncio.to_thread(cg.generate_reddit_post_comment, model.description, reddit_post.title, reddit_post.post_text)
+            article_text_summarized = await asyncio.to_thread(GEMINI_CHAT.generate_reddit_post_comment, model.description, reddit_post.title, reddit_post.post_text)
 
         output_filepath = await generate_voice_converter_audio(model, article_text_summarized, output_name)
         
