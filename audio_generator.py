@@ -105,7 +105,7 @@ async def generate_reddit_article_audio_file(vc_handler_name: str, output_name: 
     try:
         while article_text_summarized is None: #we do this because reddit can have posts gemini doesnt like
             reddit_post = next(REDDIT_SCRAPER.post_generator)
-            article_text_summarized = await asyncio.to_thread(cg.generate_reddit_post_comment, model.description, reddit_post.title, reddit_post.post_text, reddit_post.poster_name)
+            article_text_summarized = await asyncio.to_thread(cg.generate_reddit_post_comment, model.description, reddit_post.title, reddit_post.post_text)
 
         output_filepath = await generate_voice_converter_audio(model, article_text_summarized, output_name)
         

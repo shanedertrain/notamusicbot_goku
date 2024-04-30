@@ -19,12 +19,12 @@ genai.configure(api_key=GEMENI_API_KEY)
 model = genai.GenerativeModel('gemini-pro')
 chat = model.start_chat(history=[])
 
-def generate_reddit_post_comment(vc_description:str, post_title:str, post_text:str, post_submitter:str) -> Union[str, bool]:
+def generate_reddit_post_comment(vc_description:str, post_title:str, post_text:str) -> Union[str, bool]:
     # Creating a scenario where Goku comments on the requester's personality and introduces the song
     prompt = f"""
         You are {vc_description} and remember to speak in first person.
         Limit your response to maximum 3 paragraphs.
-        You are summarizing a reddit post by {post_submitter} as the host of the Galactic Beats radio show. 
+        You are summarizing a reddit post as the host of the Galactic Beats radio show. 
         Announce the title of the post: {post_title}.
         The post content to be summarized is: {post_text}.
     """
