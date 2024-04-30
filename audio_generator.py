@@ -4,7 +4,7 @@ from pathlib import Path
 import asyncio
 import multiprocessing
 from concurrent.futures import ProcessPoolExecutor
-from typing import Union
+from typing import Optional, Union
 
 from dotenv import load_dotenv
 
@@ -46,7 +46,7 @@ def convert_voice_for_multiprocess(model:models.Model, audio_filepath:Path) -> P
     vc_handler = vc.VoiceConverterHandler(model=model, generator=GENERATOR)
     return vc_handler.convert_voice(audio_filepath)
 
-async def generate_voice_converter_audio(model:models.Model, text:str, output_name:str) -> Union[Path, None]:
+async def generate_voice_converter_audio(model:models.Model, text:str, output_name:str) -> Optional[Path]:
     try:
         tts_module = tts.get_tts_module(model.tts_type)
 
@@ -61,7 +61,7 @@ async def generate_voice_converter_audio(model:models.Model, text:str, output_na
     except Exception as e:
         cfg.LOGGER.error(e, exc_info=True)
 
-async def generate_song_comment_audio_file(vc_handler_name:str, media:Union[tpi.Video, tpi.SpotifyMedia], output_name:str) -> Union[Path, None]: 
+async def generate_song_comment_audio_file(vc_handler_name:str, media:Union[tpi.Video, tpi.SpotifyMedia], output_name:str) -> Optional[Path]: 
     output_filepath = None
     model = models.get_model(vc_handler_name)
     try:
@@ -80,7 +80,7 @@ async def generate_song_comment_audio_file(vc_handler_name:str, media:Union[tpi.
 
     return output_filepath
 
-async def generate_news_article_audio_file(vc_handler_name:str, output_name:str) -> Union[Path, None]:
+async def generate_news_article_audio_file(vc_handler_name:str, output_name:str) -> Optional[Path]:
     output_filepath = None
     model = models.get_model(vc_handler_name)
     try:
@@ -98,7 +98,7 @@ async def generate_news_article_audio_file(vc_handler_name:str, output_name:str)
 
     return output_filepath
 
-async def generate_reddit_article_audio_file(vc_handler_name: str, output_name: str) -> Union[Path, None]:
+async def generate_reddit_article_audio_file(vc_handler_name: str, output_name: str) -> Optional[Path]:
     output_filepath = None
     article_text_summarized = None
     model = models.get_model(vc_handler_name)
@@ -118,4 +118,3 @@ async def generate_reddit_article_audio_file(vc_handler_name: str, output_name: 
         cfg.LOGGER.error(e, exc_info=True)
 
     return output_filepath
-    

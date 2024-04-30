@@ -69,6 +69,10 @@ class BotManager:
             except Exception as e:
                 cfg.LOGGER.error(f"Error processing spotify track: {e}", exc_info=True)
                 await ctx.send(f"Error processing spotify track: {e}")
+        
+        @self.bot.command(name='join', help='Joins the voice channel of the user who invoked the command')
+        async def join_channel(ctx):
+            await self.play_init_funcs(ctx)
 
         @self.bot.command(name='stop', help='Stops playing the audio and disconnects from the voice channel')
         async def stop(ctx):

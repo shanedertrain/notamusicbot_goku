@@ -1,9 +1,12 @@
+from datetime import timedelta as td
+from typing import Union
+import asyncio
+
 import discord
 from discord.ext import commands
-from types_playlist_items import Video, Audio, SpotifyMedia
 from configuration import LOGGER
-import asyncio
-from datetime import timedelta as td
+
+from types_playlist_items import Video, Audio, SpotifyMedia
 
 FFMPEG_BEFORE_OPTIONS = "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -nostdin"
 FFMEG_OPTIONS = '-vn -filter:a "volume=0.5"'
@@ -48,7 +51,7 @@ class AudioPlayer:
         except Exception as e:
             LOGGER.error(e)
 
-    def add_to_playlist(self, media_item):
+    def add_to_playlist(self, media_item: Union[Video, Audio, SpotifyMedia]):
         self.playlist.append(media_item)
 
     async def clear_playlist(self):
