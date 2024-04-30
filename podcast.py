@@ -86,6 +86,8 @@ async def generate_conversation(character_1:Character, character_2:Character):
 
 if __name__ == '__main__':
     import time
+    import threading
+    
     clear_folder_contents(cfg.FOLDER_TTS)
     clear_folder_contents(cfg.FOLDER_OUTPUT)
 
@@ -95,7 +97,8 @@ if __name__ == '__main__':
     init_prompt_obama = "President Obama, as someone who has led the United States through numerous challenges with a focus on diplomacy, justice, and equality, you may find an interesting parallel in the character of 'L' from the series Death Note. 'L' is a master detective who operates within the shadows, using his intellect and keen sense of justice to track down and confront global threats. Much like your experience in the Oval Office, 'L' faces complex moral and ethical dilemmas, requiring a blend of strategic thinking, psychological insight, and an unwavering commitment to the greater good. His methods, though secretive, emphasize the importance of understanding diverse perspectives and the deep undercurrents of human behavior—themes that were also central to your presidency. This comparison might offer a unique lens through which to view your own approaches to leadership and conflict resolution."
     character_obama = Character(init_prompt_obama, model=models.get_model('Obama'))
     
-    asyncio.to_thread(lambda x: BOT_MANAGER.run(TOKEN))
+    bot_thread = threading.Thread(target=lambda: BOT_MANAGER.run(TOKEN))
+    bot_thread.start()
 
     voice_client = BOT_MANAGER.bot.voice_clients[0] if BOT_MANAGER.bot.voice_clients else None
     while voice_client is None:
@@ -103,5 +106,5 @@ if __name__ == '__main__':
         cfg.LOGGER.info("Not in channel. Sleeping for 5 seconds")
         time.sleep(5)
     #conversation
-    generate_conversation(character_l, character_obama)
+    asyncio.run(generate_conversation(character_l, character_obama))
     
