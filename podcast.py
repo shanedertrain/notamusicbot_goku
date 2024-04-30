@@ -80,11 +80,11 @@ async def generate_conversation(character_1:Character, character_2:Character):
         i += 1
         response_character_1 = character_1.converse(character_2.model.model_name, response_character_2)
         audio_path_charater_1 = await ag.generate_voice_converter_audio(character_1.model, response_character_1, f"{character_1.model.model_name}_{i}")
-        BOT_MANAGER.audio_player.add_to_playlist(tpi.Audio(audio_path_charater_1, id=f"{character_1.model.model_name}_{i}"))
+        BOT_MANAGER.audio_player.add_to_playlist(tpi.Audio(id=f"{character_1.model.model_name}_{i}", filepath=audio_path_charater_1))
 
         response_character_2 = character_2.converse(character_1.model.model_name, response_character_1)
         audio_path_charater_2 = await ag.generate_voice_converter_audio(character_2.model, response_character_2, f"{character_2.model.model_name}_{i}")
-        BOT_MANAGER.audio_player.add_to_playlist(tpi.Audio(audio_path_charater_2, id=f"{character_2.model.model_name}_{i}"))
+        BOT_MANAGER.audio_player.add_to_playlist(tpi.Audio(id=f"{character_2.model.model_name}_{i}", filepath=audio_path_charater_2))
 
 if __name__ == '__main__':
     import time
