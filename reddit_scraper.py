@@ -30,7 +30,7 @@ class RedditPostFetcher:
             user_agent=user_agent,
             check_for_async=False
         )
-        self.posts = self.fetch_text_posts_from_front_page(limit=post_limit)
+        self.post_generator = self.posts_traverser()
 
     def fetch_text_posts_from_front_page(self, limit=100) -> List[RedditPost]:
         results: List[RedditPost] = []
@@ -48,7 +48,7 @@ class RedditPostFetcher:
         return results
 
     def posts_traverser(self):
-        for post in self.posts:
+        for post in self.fetch_text_posts_from_front_page():
             yield post
 
     def get_random_reddit_post(self) -> RedditPost:
