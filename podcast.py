@@ -99,7 +99,7 @@ if __name__ == '__main__':
     voice_client = BOT_MANAGER.bot.voice_clients[0] if BOT_MANAGER.bot.voice_clients else None
     while voice_client is None:
         voice_client = BOT_MANAGER.bot.voice_clients[0] if BOT_MANAGER.bot.voice_clients else None
-        print("Not in channel. Sleeping for 5 seconds")
+        cfg.LOGGER.info("Not in channel. Sleeping for 5 seconds")
         time.sleep(5)
     #conversation
     generate_conversation(character_l, character_obama)
