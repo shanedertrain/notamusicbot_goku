@@ -80,11 +80,11 @@ async def generate_song_comment_audio_file(vc_handler_name:str, media:Union[tpi.
 
     return output_filepath
 
-async def generate_news_article_audio_file(vc_handler_name:str, output_name:str) -> Optional[Path]:
+async def generate_news_article_audio_file(vc_handler_name:str, output_name:str, category:na.Category=na.Category.TECHNOLOGY) -> Optional[Path]:
     output_filepath = None
     model = models.get_model(vc_handler_name)
     try:
-        article = NEWS_SCRAPER.get_random_article(category=na.Category.TECHNOLOGY)
+        article = NEWS_SCRAPER.get_random_article(category=category)
         article_text = NEWS_SCRAPER.get_article_text(article)
         article_text_summarized = await asyncio.to_thread(GEMINI_CHAT.generate_news_comment, model.description, article_text)
 

@@ -11,6 +11,7 @@ from bot_manager import BotManager
 import comment_generator as cg
 import audio_generator as ag
 import types_playlist_items as tpi
+import reddit_scraper as rs
 
 sys.path.append(str(cfg.FOLDER_ROOT / 'rvc_cli'))
 from rvc_cli import models
@@ -25,6 +26,7 @@ intents.presences = False
 intents.members = True
 
 BOT_MANAGER = BotManager(command_prefix='!g', intents=intents)
+REDDIT_SCRAPER = rs.RedditPostFetcher()
 
 def clear_folder_contents(folder: str):
     for filename in os.listdir(folder):
@@ -63,10 +65,34 @@ class Character(cg.GeminiChat):
             return None
 
         return response.text
+    
+    def generate_article_post_opening(self, post_title:str, post_text:str, guest_description:str) -> Union[str, bool]:
+        prompt = f"""
+            You are {self.model.description} and remember to speak in first person.
+            Limit your response to maximum 3 paragraphs.
+            You are summarizing a reddit post as the host a talk show. 
+            Your guest is {guest_description}.
+            Introduce yourself and them and then ask them what they think about the article. 
+            Announce the title of the post: {post_title}.
+            The post content to be summarized is: {post_text}.
+        """
+        try:
+            response = self.chat.send_message(prompt)
+            cfg.LOGGER.debug(response.text)
+        except Exception as e:
+            cfg.LOGGER.error(e)
+            return None
+
+        return response.text
 
 async def generate_conversation(character_1:Character, character_2:Character):
+    reddit_post = next(REDDIT_SCRAPER.post_generator)
+    opening_speech = await asyncio.to_thread(character_1.generate_article_post_opening, 
+                                                      reddit_post.title, 
+                                                      reddit_post.post_text, 
+                                                      character_2.model.description)
+    
     #opening
-    opening_speech = "Hello and welcome to the show. We're glad to have you。 Is there anything you would like to discuss today?"
     audio_path_charater_1 = await ag.generate_voice_converter_audio(character_1.model, opening_speech, f"{character_1.model.model_name}_opening")
     BOT_MANAGER.audio_player.add_to_playlist(tpi.Audio(id=f"{character_1.model.model_name}_opening", filepath=audio_path_charater_1))
 
