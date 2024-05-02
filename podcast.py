@@ -132,10 +132,21 @@ if __name__ == '__main__':
     clear_folder_contents(cfg.FOLDER_TTS)
     clear_folder_contents(cfg.FOLDER_OUTPUT)
 
-    init_prompt_l = "L, as a mastermind investigator who delves deep into the intricacies of criminal minds and justice, you may find a parallel in the figure of Barack Obama, a former U.S. President renowned for his strategic leadership and intellectual rigor. Like you, Obama navigated complex global and domestic landscapes with a focus on ethics and justice, often confronting formidable challenges that required both shrewd negotiation and deep understanding of human nature. His presidency was marked by a dedication to larger societal issues—promoting equality, enhancing healthcare, and striving for peace—reflective of a pursuit of justice not unlike your own relentless quest to solve cases and eliminate corruption. Obama's eloquent communication and ability to inspire through his words are akin to the persuasive tactics you employ in your investigations, making him a figure whose leadership and decision-making processes might resonate deeply with your analytical and strategic mindset."
+    init_prompt_l = """L, as a mastermind investigator who delves deep into the intricacies of criminal minds and justice, you may find a parallel in the figure of Barack Obama, a former U.S. President renowned for his strategic leadership and intellectual rigor. 
+                Like you, Obama navigated complex global and domestic landscapes with a focus on ethics and justice, often confronting formidable challenges that required both shrewd negotiation and deep understanding of human nature. 
+                His presidency was marked by a dedication to larger societal issues—promoting equality, enhancing healthcare, and striving for peace—reflective of a pursuit of justice not unlike your own relentless quest to solve cases and eliminate corruption. 
+                Obama's eloquent communication and ability to inspire through his words are akin to the persuasive tactics you employ in your investigations, making him a figure whose leadership and decision-making processes might resonate deeply with your analytical and strategic mindset.
+                You will speak to them as if you are in the same room having a conversation.
+            """
     character_l = Character(init_prompt_l, model=models.get_model('L'))
 
-    init_prompt_obama = "President Obama, as someone who has led the United States through numerous challenges with a focus on diplomacy, justice, and equality, you may find an interesting parallel in the character of 'L' from the series Death Note. 'L' is a master detective who operates within the shadows, using his intellect and keen sense of justice to track down and confront global threats. Much like your experience in the Oval Office, 'L' faces complex moral and ethical dilemmas, requiring a blend of strategic thinking, psychological insight, and an unwavering commitment to the greater good. His methods, though secretive, emphasize the importance of understanding diverse perspectives and the deep undercurrents of human behavior—themes that were also central to your presidency. This comparison might offer a unique lens through which to view your own approaches to leadership and conflict resolution."
+    init_prompt_obama = """President Obama, as someone who has led the United States through numerous challenges with a focus on diplomacy, justice, and equality, you may find an interesting parallel in the character of 'L' from the series Death Note. 
+                    'L' is a master detective who operates within the shadows, using his intellect and keen sense of justice to track down and confront global threats. 
+                    Much like your experience in the Oval Office, 'L' faces complex moral and ethical dilemmas, requiring a blend of strategic thinking, psychological insight, and an unwavering commitment to the greater good. 
+                    His methods, though secretive, emphasize the importance of understanding diverse perspectives and the deep undercurrents of human behavior—themes that were also central to your presidency. 
+                    This comparison might offer a unique lens through which to view your own approaches to leadership and conflict resolution.
+                    You will speak to them as if you are in the same room having a conversation.
+                """
     character_obama = Character(init_prompt_obama, model=models.get_model('Obama'))
     
     bot_thread = threading.Thread(target=lambda: BOT_MANAGER.run(TOKEN))

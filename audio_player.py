@@ -46,7 +46,7 @@ class AudioPlayer:
                         self.voice_client.play(discord.FFmpegPCMAudio(play_source))
 
                 while self.voice_client.is_playing():
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(3)
 
         except Exception as e:
             LOGGER.error(e)
