@@ -1,7 +1,11 @@
+import sys
 from pathlib import Path
 import pyttsx3
 from gtts import gTTS
 import configuration as cfg 
+
+sys.path.append(str(cfg.FOLDER_ROOT / 'tiktok_voice_tts'))
+from tiktok_voice_tts.tiktokvoice import TikTokVoiceTTS
 
 class TextToSpeechConverter:
     def text_to_speech(self, text: str, output_path: Path = cfg.FOLDER_OUTPUT, gender: str = 'male') -> Path:
@@ -52,7 +56,7 @@ class TextToSpeechConverter_Pyttsx3(TextToSpeechConverter):
             print("Languages Known: %s" % voice.languages)
 
 class TextToSpeechConverter_gTTS(TextToSpeechConverter):
-    def text_to_speech(self, text: str, output_path: Path = cfg.FOLDER_OUTPUT, gender: str = 'male') -> Path:
+    def text_to_speech(self, text: str, output_path: Path = cfg.FOLDER_OUTPUT, ) -> Path:
         tts = gTTS(text=text, lang='en', slow=False)
         tts.save(output_path)
 
@@ -63,6 +67,22 @@ class TextToSpeechConverter_gTTS(TextToSpeechConverter):
     def list_voices(self):
         """gTTS doesn't provide voice options like pyttsx3"""
         print("gTTS doesn't provide voice options like pyttsx3")
+        
+class TextToSpeechConverter_TikTok(TextToSpeechConverter):
+    def __init__(self):
+        super().__init__()
+        self.converter = TikTokVoiceTTS()
+
+    def text_to_speech(self, text: str, output_filepath: Path = cfg.FOLDER_OUTPUT / 'test.mp3', voice: TikTokVoiceTTS.Voices = TikTokVoiceTTS.Voices.en_us_001) -> Path:
+        self.converter.tts(text, voice, output_filepath)
+
+        cfg.LOGGER.debug(f"Audio saved as {output_filepath}")
+
+        return output_filepath
+
+    def list_voices(self):
+        for voice_enum in self.converter.Voices.__members__.values():
+            print(f"{voice_enum.value}: {voice_enum.name}")
 
 def get_tts_module(tts_type:str) -> TextToSpeechConverter:
     tts_modules = {
@@ -73,5 +93,7 @@ def get_tts_module(tts_type:str) -> TextToSpeechConverter:
     return tts_modules[selected_module]
 
 if __name__ == '__main__':
-    pyttsx3_converter = TextToSpeechConverter_Pyttsx3()
-    pyttsx3_converter.list_voices()
+    tiktok_converter = TextToSpeechConverter_TikTok()
+    tiktok_converter.list_voices()
+
+    tiktok_converter.text_to_speech(text="Hello, World!", output_filepath=cfg.FOLDER_OUTPUT / 'test.mp3', voice=TikTokVoiceTTS.Voices.en_us_001)
