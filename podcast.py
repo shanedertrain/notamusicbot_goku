@@ -55,7 +55,7 @@ class Character(cg.GeminiChat):
 
     def converse(self, conversation_target:str, input_response:str) -> Union[str, bool]:
         prompt = f"""
-            '{conversation_target} has responded to you saying: "{input_response}". 
+            {conversation_target} has responded to you saying: "{input_response}". 
             What do you have to say in response? Reply to them directly.'
         """
         try:
@@ -99,7 +99,7 @@ async def generate_conversation(character_1:Character, character_2:Character):
                                                     character_2.model.description)
     
     #opening
-    audio_path_charater_1 = await ag.generate_voice_converter_audio(character_1.model, opening_speech, conversation_folder / f"{character_1.model.model_name}_opening")
+    audio_path_charater_1 = await ag.generate_voice_converter_audio(character_1.model, opening_speech, conversation_folder, f"{character_1.model.model_name}_opening")
     with(open(conversation_folder / 'podcast.txt', 'a')) as f:
         f.write(f"{character_1.model.model_name}: {opening_speech}\n\n")
     
@@ -110,7 +110,7 @@ async def generate_conversation(character_1:Character, character_2:Character):
     with(open(conversation_folder / 'podcast.txt', 'a')) as f:
         f.write(f"{character_2.model.model_name}: {response_character_2}\n\n")
     
-    audio_path_charater_2 = await ag.generate_voice_converter_audio(character_2.model, response_character_2, conversation_folder / f"{character_2.model.model_name}_opening")
+    audio_path_charater_2 = await ag.generate_voice_converter_audio(character_2.model, response_character_2, conversation_folder, f"{character_2.model.model_name}_opening")
     audio_path_charater_2 = conversation_folder / str(audio_path_charater_2.name)
     BOT_MANAGER.audio_player.add_to_playlist(tpi.Audio(id=f"{character_2.model.model_name}_opening", filepath=audio_path_charater_2))
 
@@ -122,7 +122,7 @@ async def generate_conversation(character_1:Character, character_2:Character):
             with(open(conversation_folder / 'podcast.txt', 'a')) as f:
                 f.write(f"{character_1.model.model_name}: {response_character_1}\n\n")
             
-            audio_path_charater_1 = await ag.generate_voice_converter_audio(character_1.model, response_character_1, conversation_folder / f"{character_1.model.model_name}_{i}")
+            audio_path_charater_1 = await ag.generate_voice_converter_audio(character_1.model, response_character_1, conversation_folder, f"{character_1.model.model_name}_{i}")
             audio_path_charater_1 = conversation_folder / str(audio_path_charater_1.name)
             BOT_MANAGER.audio_player.add_to_playlist(tpi.Audio(id=f"{character_1.model.model_name}_{i}", filepath=audio_path_charater_1))
 
@@ -130,7 +130,7 @@ async def generate_conversation(character_1:Character, character_2:Character):
             with(open(conversation_folder / 'podcast.txt', 'a')) as f:
                 f.write(f"{character_2.model.model_name}: {response_character_2}\n\n")
             
-            audio_path_charater_2 = await ag.generate_voice_converter_audio(character_2.model, response_character_2, conversation_folder / f"{character_2.model.model_name}_{i}")
+            audio_path_charater_2 = await ag.generate_voice_converter_audio(character_2.model, response_character_2, conversation_folder, f"{character_2.model.model_name}_{i}")
             audio_path_charater_2 = conversation_folder / str(audio_path_charater_2.name)
             BOT_MANAGER.audio_player.add_to_playlist(tpi.Audio(id=f"{character_2.model.model_name}_{i}", filepath=audio_path_charater_2))
 
@@ -149,7 +149,6 @@ async def generate_conversation(character_1:Character, character_2:Character):
         f.write(f"CHANGE TOPIC: {new_topic_prompt}\n\n")
 
         response_character_2 = response_character_2 + new_topic_prompt
-            
 
 if __name__ == '__main__':
     import time
