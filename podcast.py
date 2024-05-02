@@ -72,7 +72,7 @@ class Character(cg.GeminiChat):
             You are summarizing a reddit post as the host a talk show. 
             Your guest is {guest_description}.
             Introduce yourself and then ask your guest what they think about the article. 
-            In your opening response, announce the title of the post: {post_title} and the article content to be summarized is: {post_text}.
+            In your opening statement, announce the title of the post: {post_title} and the article content discussed is: {post_text}.
         """
         try:
             response = self.chat.send_message(prompt)
@@ -115,9 +115,9 @@ async def generate_conversation(character_1:Character, character_2:Character):
         reddit_post = next(REDDIT_SCRAPER.post_generator)
         new_topic_prompt = f"""
             \n\n [THIS IS NOT PART OF {character_2.model.model_name}'S RESPONSE. THEY ARE INSTRUCTIONS TO YOU SPECIFICALLY]: 
-            It's time to change the conversation topic. 
-            Here's another article to talk about: 
-            Title: {reddit_post.title}, Article: {reddit_post.post_text}
+            Respond to {character_2.model.model_name}'s last response and then introduce this new article into the show: 
+            Title: {reddit_post.title}, Article: {reddit_post.post_text}.
+            Ask {character_2.model.model_name} what they think about the article.
         """
 
         cfg.LOGGER.debug(new_topic_prompt)
