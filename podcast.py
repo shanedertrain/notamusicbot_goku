@@ -122,7 +122,7 @@ async def generate_conversation(character_1:Character, character_2:Character):
 
         cfg.LOGGER.debug(new_topic_prompt)
 
-        response_character_2 + new_topic_prompt
+        response_character_2 = response_character_2 + new_topic_prompt
             
 
 if __name__ == '__main__':
