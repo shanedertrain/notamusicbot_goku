@@ -48,7 +48,7 @@ class RedditPostFetcher:
         return results
 
     def posts_traverser(self):
-        for post in self.fetch_text_posts_from_front_page():
+        for post in random.shuffle(self.fetch_text_posts_from_front_page()):
             yield post
 
     def get_random_reddit_post(self) -> RedditPost:
