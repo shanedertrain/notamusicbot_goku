@@ -73,7 +73,8 @@ class TextToSpeechConverter_TikTok(TextToSpeechConverter):
         super().__init__()
         self.converter = TikTokVoiceTTS()
 
-    def text_to_speech(self, text: str, output_filepath: Path = cfg.FOLDER_TTS / 'test_ttv.mp3', voice: TikTokVoiceTTS.Voices = TikTokVoiceTTS.Voices.en_us_001) -> Path:
+    def text_to_speech(self, text: str, output_filepath: Path = cfg.FOLDER_TTS / 'test_ttv.mp3', voice_name: str = TikTokVoiceTTS.Voices.en_us_001.name) -> Path:
+        voice = TikTokVoiceTTS.get_voice_by_name(voice_name)
         self.converter.tts(text, voice, output_filepath)
 
         cfg.LOGGER.debug(f"Audio saved as {output_filepath}")
@@ -88,6 +89,7 @@ def get_tts_module(tts_type:str) -> TextToSpeechConverter:
     tts_modules = {
         'gtts': TextToSpeechConverter_gTTS(),
         'pyttsx3': TextToSpeechConverter_Pyttsx3(),
+        'ttv': TextToSpeechConverter_TikTok(),
     }
     selected_module = tts_type if tts_type in tts_modules else 'gtts'
     return tts_modules[selected_module]
@@ -95,5 +97,7 @@ def get_tts_module(tts_type:str) -> TextToSpeechConverter:
 if __name__ == '__main__':
     tiktok_converter = TextToSpeechConverter_TikTok()
     tiktok_converter.list_voices()
+    
+    voice = TikTokVoiceTTS.Voices.en_us_001
 
-    tiktok_converter.text_to_speech(text="Hello, World!", output_filepath=cfg.FOLDER_TTS / 'test.mp3', voice=TikTokVoiceTTS.Voices.en_us_001)
+    tiktok_converter.text_to_speech(text="Hello, World!", output_filepath=cfg.FOLDER_TTS / 'test.mp3', voice_name=voice.name)
