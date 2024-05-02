@@ -32,7 +32,7 @@ class TextToSpeechConverter_Pyttsx3(TextToSpeechConverter):
         self.converter = pyttsx3.init()
 
     def text_to_speech(self, text: str, output_folder: Path = cfg.FOLDER_TTS, output_filestem:str = 'test_pyttsx3') -> Path:
-        output_filepath = output_folder / output_filestem+'.mp3'
+        output_filepath = output_folder / (output_filestem+'.mp3')
         
         voices = self.converter.getProperty('voices')
         if self.gender == 'male':
@@ -40,7 +40,7 @@ class TextToSpeechConverter_Pyttsx3(TextToSpeechConverter):
         else:
             self.converter.setProperty('voice', voices[1].id)  # Use the first female voice
 
-        self.converter.save_to_file(text, output_filepath)
+        self.converter.save_to_file(text, str(output_filepath))
         self.converter.runAndWait()
 
         cfg.LOGGER.debug(f"Audio saved as {output_filepath}")
@@ -66,7 +66,7 @@ class TextToSpeechConverter_gTTS(TextToSpeechConverter):
         output_filepath = output_folder / output_filestem+'.wav'
 
         tts = gTTS(text=text, lang='en', slow=False)
-        tts.save(output_filepath)
+        tts.save(str(output_filepath))
 
         cfg.LOGGER.debug(f"Audio saved as {output_folder}")
 
