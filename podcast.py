@@ -88,61 +88,67 @@ async def generate_conversation(character_1:Character, character_2:Character):
     conversation_folder = cfg.FOLDER_OUTPUT / 'podcasts' / f'podcast_{dt.now().strftime(cfg.DATETIME_FORMAT_FILESAFE)}'
     conversation_folder.mkdir(exist_ok=True, parents=True)
 
-    reddit_post = next(REDDIT_SCRAPER.post_generator)
-
     with(open(conversation_folder / 'podcast.txt', 'w')) as f:
-        opening_speech = await asyncio.to_thread(character_1.generate_article_post_opening, 
-                                                        reddit_post.title, 
-                                                        reddit_post.post_text, 
-                                                        character_2.model.description)
-        
-        #opening
-        audio_path_charater_1 = await ag.generate_voice_converter_audio(character_1.model, opening_speech, conversation_folder / f"{character_1.model.model_name}_opening")
-        audio_path_charater_1 = conversation_folder / str(audio_path_charater_1.name)
-        BOT_MANAGER.audio_player.add_to_playlist(tpi.Audio(id=f"{character_1.model.model_name}_opening", filepath=audio_path_charater_1))
+        f.write(f"Conversation between {character_1.model.model_name} and {character_2.model.model_name} on {dt.now().strftime(cfg.DATETIME_FORMAT)}\n\n")
 
+    reddit_post = next(REDDIT_SCRAPER.post_generator)
+    
+    opening_speech = await asyncio.to_thread(character_1.generate_article_post_opening, 
+                                                    reddit_post.title, 
+                                                    reddit_post.post_text, 
+                                                    character_2.model.description)
+    
+    #opening
+    audio_path_charater_1 = await ag.generate_voice_converter_audio(character_1.model, opening_speech, conversation_folder / f"{character_1.model.model_name}_opening")
+    with(open(conversation_folder / 'podcast.txt', 'a')) as f:
         f.write(f"{character_1.model.model_name}: {opening_speech}\n\n")
+    
+    audio_path_charater_1 = conversation_folder / str(audio_path_charater_1.name)
+    BOT_MANAGER.audio_player.add_to_playlist(tpi.Audio(id=f"{character_1.model.model_name}_opening", filepath=audio_path_charater_1))
 
-        response_character_2 = character_2.converse(character_1.model.model_name, opening_speech)
-        audio_path_charater_2 = await ag.generate_voice_converter_audio(character_2.model, response_character_2, conversation_folder / f"{character_2.model.model_name}_opening")
-        audio_path_charater_2 = conversation_folder / str(audio_path_charater_2.name)
-        BOT_MANAGER.audio_player.add_to_playlist(tpi.Audio(id=f"{character_2.model.model_name}_opening", filepath=audio_path_charater_2))
-
+    response_character_2 = character_2.converse(character_1.model.model_name, opening_speech)
+    with(open(conversation_folder / 'podcast.txt', 'a')) as f:
         f.write(f"{character_2.model.model_name}: {response_character_2}\n\n")
+    
+    audio_path_charater_2 = await ag.generate_voice_converter_audio(character_2.model, response_character_2, conversation_folder / f"{character_2.model.model_name}_opening")
+    audio_path_charater_2 = conversation_folder / str(audio_path_charater_2.name)
+    BOT_MANAGER.audio_player.add_to_playlist(tpi.Audio(id=f"{character_2.model.model_name}_opening", filepath=audio_path_charater_2))
 
-        #conversation
-        i = 0
-        while True:
-            for i in range(3):
-                response_character_1 = character_1.converse(character_2.model.model_name, response_character_2)
-                audio_path_charater_1 = await ag.generate_voice_converter_audio(character_1.model, response_character_1, conversation_folder / f"{character_1.model.model_name}_{i}")
-                audio_path_charater_1 = conversation_folder / str(audio_path_charater_1.name)
-                BOT_MANAGER.audio_player.add_to_playlist(tpi.Audio(id=f"{character_1.model.model_name}_{i}", filepath=audio_path_charater_1))
-
+    #conversation
+    i = 0
+    while True:
+        for i in range(3):
+            response_character_1 = character_1.converse(character_2.model.model_name, response_character_2)
+            with(open(conversation_folder / 'podcast.txt', 'a')) as f:
                 f.write(f"{character_1.model.model_name}: {response_character_1}\n\n")
+            
+            audio_path_charater_1 = await ag.generate_voice_converter_audio(character_1.model, response_character_1, conversation_folder / f"{character_1.model.model_name}_{i}")
+            audio_path_charater_1 = conversation_folder / str(audio_path_charater_1.name)
+            BOT_MANAGER.audio_player.add_to_playlist(tpi.Audio(id=f"{character_1.model.model_name}_{i}", filepath=audio_path_charater_1))
 
-                response_character_2 = character_2.converse(character_1.model.model_name, response_character_1)
-                audio_path_charater_2 = await ag.generate_voice_converter_audio(character_2.model, response_character_2, conversation_folder / f"{character_2.model.model_name}_{i}")
-                audio_path_charater_2 = conversation_folder / str(audio_path_charater_2.name)
-                BOT_MANAGER.audio_player.add_to_playlist(tpi.Audio(id=f"{character_2.model.model_name}_{i}", filepath=audio_path_charater_2))
-
+            response_character_2 = character_2.converse(character_1.model.model_name, response_character_1)
+            with(open(conversation_folder / 'podcast.txt', 'a')) as f:
                 f.write(f"{character_2.model.model_name}: {response_character_2}\n\n")
+            
+            audio_path_charater_2 = await ag.generate_voice_converter_audio(character_2.model, response_character_2, conversation_folder / f"{character_2.model.model_name}_{i}")
+            audio_path_charater_2 = conversation_folder / str(audio_path_charater_2.name)
+            BOT_MANAGER.audio_player.add_to_playlist(tpi.Audio(id=f"{character_2.model.model_name}_{i}", filepath=audio_path_charater_2))
 
-                i += 1
+            i += 1
 
-            reddit_post = next(REDDIT_SCRAPER.post_generator)
-            new_topic_prompt = f"""
-                \n\n [THIS IS NOT PART OF {character_2.model.model_name}'S RESPONSE. THEY ARE INSTRUCTIONS TO YOU SPECIFICALLY]: 
-                Respond to {character_2.model.model_name}'s last response and then introduce this new article into the show: 
-                Title: {reddit_post.title}, Article: {reddit_post.post_text}.
-                Ask {character_2.model.model_name} what they think about the article.
-            """
+        reddit_post = next(REDDIT_SCRAPER.post_generator)
+        new_topic_prompt = f"""
+            \n\n [THIS IS NOT PART OF {character_2.model.model_name}'S RESPONSE. THEY ARE INSTRUCTIONS TO YOU SPECIFICALLY]: 
+            Respond to {character_2.model.model_name}'s last response and then introduce this new article into the show: 
+            Title: {reddit_post.title}, Article: {reddit_post.post_text}.
+            Ask {character_2.model.model_name} what they think about the article.
+        """
 
-            cfg.LOGGER.debug(new_topic_prompt)
+        cfg.LOGGER.debug(new_topic_prompt)
 
-            f.write(f"CHANGE TOPIC: {new_topic_prompt}\n\n")
+        f.write(f"CHANGE TOPIC: {new_topic_prompt}\n\n")
 
-            response_character_2 = response_character_2 + new_topic_prompt
+        response_character_2 = response_character_2 + new_topic_prompt
             
 
 if __name__ == '__main__':
