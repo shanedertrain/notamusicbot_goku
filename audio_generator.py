@@ -55,7 +55,7 @@ async def generate_voice_converter_audio(model:models.Model, text:str, output_fo
         # Run the synchronous voice conversion in a separate process
         output_filepath = await run_in_process(convert_voice_for_multiprocess, model, tts_audio_filepath)
 
-        output_filepath = await asyncio.to_thread(ap.modify_speed, output_filepath, speed_multiplier=model.speed_multiplier)
+        # output_filepath = await asyncio.to_thread(ap.modify_speed, output_filepath, speed_multiplier=model.speed_multiplier)
 
         return output_filepath
     except Exception as e:
