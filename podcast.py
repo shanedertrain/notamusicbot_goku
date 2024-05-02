@@ -97,14 +97,14 @@ async def generate_conversation(character_1:Character, character_2:Character):
                                                         character_2.model.description)
         
         #opening
-        audio_path_charater_1 = await ag.generate_voice_converter_audio(character_1.model, opening_speech, f"{character_1.model.model_name}_opening")
+        audio_path_charater_1 = await ag.generate_voice_converter_audio(character_1.model, opening_speech, conversation_folder / f"{character_1.model.model_name}_opening")
         audio_path_charater_1 = conversation_folder / str(audio_path_charater_1.name)
         BOT_MANAGER.audio_player.add_to_playlist(tpi.Audio(id=f"{character_1.model.model_name}_opening", filepath=audio_path_charater_1))
 
         f.write(f"{character_1.model.model_name}: {opening_speech}\n\n")
 
         response_character_2 = character_2.converse(character_1.model.model_name, opening_speech)
-        audio_path_charater_2 = await ag.generate_voice_converter_audio(character_2.model, response_character_2, f"{character_2.model.model_name}_opening")
+        audio_path_charater_2 = await ag.generate_voice_converter_audio(character_2.model, response_character_2, conversation_folder / f"{character_2.model.model_name}_opening")
         audio_path_charater_2 = conversation_folder / str(audio_path_charater_2.name)
         BOT_MANAGER.audio_player.add_to_playlist(tpi.Audio(id=f"{character_2.model.model_name}_opening", filepath=audio_path_charater_2))
 
@@ -115,14 +115,14 @@ async def generate_conversation(character_1:Character, character_2:Character):
         while True:
             for i in range(3):
                 response_character_1 = character_1.converse(character_2.model.model_name, response_character_2)
-                audio_path_charater_1 = await ag.generate_voice_converter_audio(character_1.model, response_character_1, f"{character_1.model.model_name}_{i}")
+                audio_path_charater_1 = await ag.generate_voice_converter_audio(character_1.model, response_character_1, conversation_folder / f"{character_1.model.model_name}_{i}")
                 audio_path_charater_1 = conversation_folder / str(audio_path_charater_1.name)
                 BOT_MANAGER.audio_player.add_to_playlist(tpi.Audio(id=f"{character_1.model.model_name}_{i}", filepath=audio_path_charater_1))
 
                 f.write(f"{character_1.model.model_name}: {response_character_1}\n\n")
 
                 response_character_2 = character_2.converse(character_1.model.model_name, response_character_1)
-                audio_path_charater_2 = await ag.generate_voice_converter_audio(character_2.model, response_character_2, f"{character_2.model.model_name}_{i}")
+                audio_path_charater_2 = await ag.generate_voice_converter_audio(character_2.model, response_character_2, conversation_folder / f"{character_2.model.model_name}_{i}")
                 audio_path_charater_2 = conversation_folder / str(audio_path_charater_2.name)
                 BOT_MANAGER.audio_player.add_to_playlist(tpi.Audio(id=f"{character_2.model.model_name}_{i}", filepath=audio_path_charater_2))
 

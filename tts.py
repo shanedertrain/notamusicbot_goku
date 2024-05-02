@@ -30,19 +30,19 @@ class TextToSpeechConverter_Pyttsx3(TextToSpeechConverter):
     def __init__(self):
         self.converter = pyttsx3.init()
 
-    def text_to_speech(self, text: str, output_path: Path = cfg.FOLDER_TTS / 'test_pyttsx3.mp3', gender: str = 'male') -> Path:
+    def text_to_speech(self, text: str, output_filepath: Path = cfg.FOLDER_TTS / 'test_pyttsx3.mp3', gender: str = 'male') -> Path:
         voices = self.converter.getProperty('voices')
         if gender == 'male':
             self.converter.setProperty('voice', voices[0].id)  # Use the first male voice
         else:
             self.converter.setProperty('voice', voices[1].id)  # Use the first female voice
 
-        self.converter.save_to_file(text, str(output_path))
+        self.converter.save_to_file(text, str(output_filepath))
         self.converter.runAndWait()
 
-        cfg.LOGGER.debug(f"Audio saved as {output_path}")
+        cfg.LOGGER.debug(f"Audio saved as {output_filepath}")
 
-        return output_path
+        return output_filepath
 
     def list_voices(self):
         """Prints information about available voices."""
@@ -56,13 +56,13 @@ class TextToSpeechConverter_Pyttsx3(TextToSpeechConverter):
             print("Languages Known: %s" % voice.languages)
 
 class TextToSpeechConverter_gTTS(TextToSpeechConverter):
-    def text_to_speech(self, text: str, output_path: Path = cfg.FOLDER_TTS / 'test_gtts.mp3', ) -> Path:
+    def text_to_speech(self, text: str, output_filepath: Path = cfg.FOLDER_TTS / 'test_gtts.mp3', ) -> Path:
         tts = gTTS(text=text, lang='en', slow=False)
-        tts.save(output_path)
+        tts.save(output_filepath)
 
-        cfg.LOGGER.debug(f"Audio saved as {output_path}")
+        cfg.LOGGER.debug(f"Audio saved as {output_filepath}")
 
-        return output_path
+        return output_filepath
 
     def list_voices(self):
         """gTTS doesn't provide voice options like pyttsx3"""
