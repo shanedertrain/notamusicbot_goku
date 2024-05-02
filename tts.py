@@ -8,7 +8,7 @@ sys.path.append(str(cfg.FOLDER_ROOT / 'tiktok_voice_tts'))
 from tiktok_voice_tts.tiktokvoice import TikTokVoiceTTS
 
 class TextToSpeechConverter:
-    def text_to_speech(self, text: str, output_path: Path = cfg.FOLDER_OUTPUT, gender: str = 'male') -> Path:
+    def text_to_speech(self, text: str, output_filepath: Path = cfg.FOLDER_OUTPUT, gender: str = 'male') -> Path:
         """
         Convert text to speech and save it as an audio file.
 

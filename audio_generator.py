@@ -33,11 +33,11 @@ async def run_in_process(fn, *args):
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(executor, fn, *args)
 
-def generate_tts_audio(tts_module:tts.TextToSpeechConverter, text:str, output_name:str) -> Path:
+def generate_tts_audio(tts_module:tts.TextToSpeechConverter, text:str, output_filepath:Path) -> Path:
     cfg.LOGGER.debug("Starting TTS audio generation")
     text_without_quotes = text.replace('"', '')
     
-    tts_filepath = tts_module.text_to_speech(text_without_quotes, output_path=Path(cfg.FOLDER_TTS / f"{output_name}.wav"))
+    tts_filepath = tts_module.text_to_speech(text_without_quotes, output_filepath=Path(cfg.FOLDER_TTS / f"{output_filepath.stem}.wav"))
     # tts_filepath = ap.increase_speed(tts_filepath, speed_multiplier=1.0)
     cfg.LOGGER.debug("TTS audio generation complete!")
     return tts_filepath
@@ -46,11 +46,11 @@ def convert_voice_for_multiprocess(model:models.Model, audio_filepath:Path) -> P
     vc_handler = vc.VoiceConverterHandler(model=model, generator=GENERATOR)
     return vc_handler.convert_voice(audio_filepath)
 
-async def generate_voice_converter_audio(model:models.Model, text:str, output_name:str) -> Optional[Path]:
+async def generate_voice_converter_audio(model:models.Model, text:str, output_filepath:Path) -> Optional[Path]:
     try:
         tts_module = tts.get_tts_module(model.tts_type)
 
-        tts_audio_filepath = await asyncio.to_thread(generate_tts_audio, tts_module, text, output_name)
+        tts_audio_filepath = await asyncio.to_thread(generate_tts_audio, tts_module, text, output_filepath)
 
         # Run the synchronous voice conversion in a separate process
         output_filepath = await run_in_process(convert_voice_for_multiprocess, model, tts_audio_filepath)
