@@ -85,8 +85,8 @@ class Character(cg.GeminiChat):
         return response.text
 
 async def generate_conversation(character_1:Character, character_2:Character):
-    conversation_folder = cfg.FOLDER_OUTPUT / 'podcasts' / f'podcast_{dt.now().strftime(cfg.DATETIME_FORMAT)}'
-    conversation_folder.mkdir(exist_ok=True)
+    conversation_folder = cfg.FOLDER_OUTPUT / 'podcasts' / f'podcast_{dt.now().strftime(cfg.DATETIME_FORMAT_FILESAFE)}'
+    conversation_folder.mkdir(exist_ok=True, parents=True)
 
     reddit_post = next(REDDIT_SCRAPER.post_generator)
 
