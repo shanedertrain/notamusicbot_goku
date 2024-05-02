@@ -1,3 +1,6 @@
 [submodule "rvc_cli"]
 	path = rvc_cli
 	url = https://github.com/AshtonScalise/rvc-cli.git
+[submodule "tiktok_voice_tts"]
+	path = tiktok_voice_tts
+	url = https://github.com/shanedertrain/TikTok-Voice-TTS.git
