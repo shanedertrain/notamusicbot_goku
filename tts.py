@@ -30,7 +30,7 @@ class TextToSpeechConverter_Pyttsx3(TextToSpeechConverter):
     def __init__(self):
         self.converter = pyttsx3.init()
 
-    def text_to_speech(self, text: str, output_path: Path = cfg.FOLDER_OUTPUT, gender: str = 'male') -> Path:
+    def text_to_speech(self, text: str, output_path: Path = cfg.FOLDER_TTS / 'test_pyttsx3.mp3', gender: str = 'male') -> Path:
         voices = self.converter.getProperty('voices')
         if gender == 'male':
             self.converter.setProperty('voice', voices[0].id)  # Use the first male voice
@@ -56,7 +56,7 @@ class TextToSpeechConverter_Pyttsx3(TextToSpeechConverter):
             print("Languages Known: %s" % voice.languages)
 
 class TextToSpeechConverter_gTTS(TextToSpeechConverter):
-    def text_to_speech(self, text: str, output_path: Path = cfg.FOLDER_OUTPUT, ) -> Path:
+    def text_to_speech(self, text: str, output_path: Path = cfg.FOLDER_TTS / 'test_gtts.mp3', ) -> Path:
         tts = gTTS(text=text, lang='en', slow=False)
         tts.save(output_path)
 
@@ -73,7 +73,7 @@ class TextToSpeechConverter_TikTok(TextToSpeechConverter):
         super().__init__()
         self.converter = TikTokVoiceTTS()
 
-    def text_to_speech(self, text: str, output_filepath: Path = cfg.FOLDER_OUTPUT / 'test.mp3', voice: TikTokVoiceTTS.Voices = TikTokVoiceTTS.Voices.en_us_001) -> Path:
+    def text_to_speech(self, text: str, output_filepath: Path = cfg.FOLDER_TTS / 'test_ttv.mp3', voice: TikTokVoiceTTS.Voices = TikTokVoiceTTS.Voices.en_us_001) -> Path:
         self.converter.tts(text, voice, output_filepath)
 
         cfg.LOGGER.debug(f"Audio saved as {output_filepath}")
@@ -96,4 +96,4 @@ if __name__ == '__main__':
     tiktok_converter = TextToSpeechConverter_TikTok()
     tiktok_converter.list_voices()
 
-    tiktok_converter.text_to_speech(text="Hello, World!", output_filepath=cfg.FOLDER_OUTPUT / 'test.mp3', voice=TikTokVoiceTTS.Voices.en_us_001)
+    tiktok_converter.text_to_speech(text="Hello, World!", output_filepath=cfg.FOLDER_TTS / 'test.mp3', voice=TikTokVoiceTTS.Voices.en_us_001)
