@@ -37,7 +37,7 @@ def generate_tts_audio(tts_module:tts.TextToSpeechConverter, text:str, output_fi
     cfg.LOGGER.debug("Starting TTS audio generation")
     text_without_quotes = text.replace('"', '')
     
-    tts_filepath = tts_module.text_to_speech(text_without_quotes, output_filepath=Path(cfg.FOLDER_TTS / f"{output_filepath.stem}.wav"))
+    tts_filepath = tts_module.text_to_speech(text_without_quotes, output_filepath=output_filepath.parent / f"{output_filepath.stem}.wav")
     # tts_filepath = ap.increase_speed(tts_filepath, speed_multiplier=1.0)
     cfg.LOGGER.debug("TTS audio generation complete!")
     return tts_filepath
