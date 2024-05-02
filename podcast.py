@@ -69,12 +69,11 @@ class Character(cg.GeminiChat):
     def generate_article_post_opening(self, post_title:str, post_text:str, guest_description:str) -> Union[str, bool]:
         prompt = f"""
             You are {self.model.description} and remember to speak in first person.
-            Limit your response to maximum 3 paragraphs.
             You are summarizing a reddit post as the host a talk show. 
             Your guest is {guest_description}.
-            Introduce yourself and them and then ask them what they think about the article. 
-            Announce the title of the post: {post_title}.
-            The post content to be summarized is: {post_text}.
+            In your opening converstation, Announce the title of the post: {post_title} and the article content to be summarized is: {post_text}.
+            Introduce yourself and your guest and then ask them what they think about the article. 
+            Limit your response to a maximum of 3 paragraphs.
         """
         try:
             response = self.chat.send_message(prompt)
@@ -111,6 +110,18 @@ async def generate_conversation(character_1:Character, character_2:Character):
         response_character_2 = character_2.converse(character_1.model.model_name, response_character_1)
         audio_path_charater_2 = await ag.generate_voice_converter_audio(character_2.model, response_character_2, f"{character_2.model.model_name}_{i}")
         BOT_MANAGER.audio_player.add_to_playlist(tpi.Audio(id=f"{character_2.model.model_name}_{i}", filepath=audio_path_charater_2))
+
+        if (i % 3 == 0):
+            reddit_post = next(REDDIT_SCRAPER.post_generator)
+            new_topic_prompt = f"""
+                \n\n [THIS IS NOT PART OF {character_2.model.model_name}'S RESPONSE. THEY ARE INSTRUCTIONS TO YOU SPECIFICALLY]: 
+                It's time to change the conversation topic. 
+                Here's another article to talk about: 
+                Title: {reddit_post.title}, Article: {reddit_post.post_text}
+            """
+
+            response_character_2 + new_topic_prompt
+            
 
 if __name__ == '__main__':
     import time
