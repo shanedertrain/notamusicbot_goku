@@ -12,7 +12,7 @@ import configuration as cfg
 import newsapi as na
 import reddit_scraper as rs
 import types_playlist_items as tpi
-import comment_generator as cg
+import genai_chat as gc
 import tts
 
 sys.path.append(str(cfg.FOLDER_ROOT / 'rvc_cli'))
@@ -25,7 +25,7 @@ GENERATOR = os.getenv('GENERATOR')
 
 NEWS_SCRAPER = na.NewsScraper()
 REDDIT_SCRAPER = rs.RedditPostFetcher()
-GEMINI_CHAT = cg.GeminiChat()
+GEMINI_CHAT = gc.GeminiChat()
 
 executor = ProcessPoolExecutor(max_workers=multiprocessing.cpu_count())
 

@@ -1,25 +1,30 @@
-import textwrap
-from dotenv import load_dotenv
 import os
-from typing import Union
-import google.generativeai as genai
+import textwrap
+from typing import Union, Optional
+from abc import ABC, abstractmethod
 from IPython.display import display, Markdown
+from dataclasses import dataclass
+
+from dotenv import load_dotenv
+import google.generativeai as genai
 
 import configuration as cfg
 
-class GeminiChat:
+@dataclass
+class Response:
+    text:str
+
+class GenAIChat(ABC):
     def __init__(self):
-        self.load_dotenv()
-        genai.configure(api_key=self.get_api_key())
+        pass
 
-        self.model = genai.GenerativeModel('gemini-pro')
-        self.chat = self.model.start_chat(history=[])
-
-    def load_dotenv(self):
-        load_dotenv()
-
-    def get_api_key(self):
-        return os.getenv('GEMENI_API_KEY')
+    @abstractmethod
+    def send_message(self, prompt: str) -> Optional[Response]:
+        """
+        Abstract method to send a message and return a response.
+        Subclasses must implement this method.
+        """
+        pass
 
     def to_markdown(self, text:str):
         text = text.replace('•', '  *')
@@ -34,7 +39,7 @@ class GeminiChat:
             The post content to be summarized is: {post_text}.
         """
         try:
-            response = self.chat.send_message(prompt)
+            response = self.send_message(prompt)
             display(self.to_markdown(response.text))
             cfg.LOGGER.debug(response.text)
         except Exception as e:
@@ -52,7 +57,7 @@ class GeminiChat:
             {article_text}.
         """
         try:
-            response = self.chat.send_message(prompt)
+            response = self.send_message(prompt)
             display(self.to_markdown(response.text))
             cfg.LOGGER.debug(response.text)
         except Exception as e:
@@ -71,7 +76,7 @@ class GeminiChat:
             Do not repeat jokes about the requestor's background across prompts.
         """
         try:
-            response = self.chat.send_message(prompt)
+            response = self.send_message(prompt)
             display(self.to_markdown(response.text))
             cfg.LOGGER.debug(response.text)
         except Exception as e:
@@ -80,6 +85,29 @@ class GeminiChat:
 
         return response.text
 
+class GeminiChat(GenAIChat):
+    def __init__(self):
+        super().__init__()
+        self.load_dotenv()
+        genai.configure(api_key=self.get_api_key())
+
+        self.model = genai.GenerativeModel('gemini-pro')
+        self.chat = self.model.start_chat(history=[])
+
+    def send_message(self, prompt: str)  -> Optional[Response]:
+        try:
+            response = self.chat.send_message(prompt)
+            return response
+        except Exception as e:
+            cfg.LOGGER.error(e)
+            return None
+
+    def load_dotenv(self):
+        load_dotenv()
+
+    def get_api_key(self):
+        return os.getenv('GEMENI_API_KEY')
+
 # Example usage
 if __name__ == "__main__":
     radio_host = GeminiChat()
@@ -87,4 +115,4 @@ if __name__ == "__main__":
     requester_background = "a right-wing, conspiracy theorist who loves guns and UFOs"
     song_name = "Space Oddity"
     artist_name = "David Bowie"
-    print(radio_host.generate_song_comment(requester_name, requester_background, song_name, artist_name))
+    print(radio_host.generate_song_comment('L from Death Note', requester_name, requester_background, song_name, artist_name))
