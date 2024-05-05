@@ -1,10 +1,23 @@
 from pathlib import Path
 import logging
 
+DEBUG = True #mostly just disabled the opening message to not be annoying
+
 DATETIME_FORMAT = '%Y-%m-%d %H:%M:%S.%f'
 DATETIME_FORMAT_FILESAFE = '%Y%m%d_%H%M%S'
 
 FOLDER_ROOT = Path(__file__).parent
+
+FOLDER_INPUT = FOLDER_ROOT / "input"
+FOLDER_INPUT.mkdir(parents=True, exist_ok=True)
+
+FILEPATH_USERS = FOLDER_INPUT / "users.json"
+
+FOLDER_OUTPUT = FOLDER_ROOT / "output"
+FOLDER_OUTPUT.mkdir(parents=True, exist_ok=True)
+
+FOLDER_TTS = FOLDER_OUTPUT / "tts"
+FOLDER_TTS.mkdir(parents=True, exist_ok=True)
 
 FOLDER_LOGS = FOLDER_ROOT / "logs"
 FOLDER_LOGS.mkdir(parents=True, exist_ok=True)
@@ -12,7 +25,7 @@ FOLDER_LOGS.mkdir(parents=True, exist_ok=True)
 FILEPATH_LOG = FOLDER_LOGS / 'log.log'
 
 def configure_logger(log_file) -> logging.Logger:
-    logger = logging.getLogger('logger_genai')
+    logger = logging.getLogger('logger_rvc')
     logger.setLevel(logging.DEBUG)
 
     # Create file handler which logs only messages above INFO level to the file

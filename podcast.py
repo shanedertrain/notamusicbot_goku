@@ -9,7 +9,7 @@ import discord
 
 import configuration as cfg
 from bot_manager import BotManager
-import genai_chat as gc
+import genai.genai_base as gc
 import audio_generator as ag
 import types_playlist_items as tpi
 import reddit_scraper as rs

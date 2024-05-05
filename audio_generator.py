@@ -12,7 +12,7 @@ import configuration as cfg
 import newsapi as na
 import reddit_scraper as rs
 import types_playlist_items as tpi
-import genai_chat as gc
+import genai.genai_base as gc
 import tts
 
 sys.path.append(str(cfg.FOLDER_ROOT / 'rvc_cli'))

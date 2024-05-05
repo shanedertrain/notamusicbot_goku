@@ -1,0 +1,13 @@
+[ERROR] 09:05:51: chatgpt.py:25 | 
+
+You tried to access openai.Completion, but this is no longer supported in openai>=1.0.0 - see the README at https://github.com/openai/openai-python for the API.
+
+You can run `openai migrate` to automatically upgrade your codebase to use the 1.0.0 interface. 
+
+Alternatively, you can pin your installation to the old version, e.g. `pip install openai==0.28`
+
+A detailed migration guide is available here: https://github.com/openai/openai-python/discussions/742
+
+[ERROR] 09:05:51: genai_base.py:79 | 'NoneType' object has no attribute 'text'
+[ERROR] 09:09:56: chatgpt.py:32 | Error code: 429 - {'error': {'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, read the docs: https://platform.openai.com/docs/guides/error-codes/api-errors.', 'type': 'insufficient_quota', 'param': None, 'code': 'insufficient_quota'}}
+[ERROR] 09:09:56: genai_base.py:79 | 'NoneType' object has no attribute 'text'
