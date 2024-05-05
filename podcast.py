@@ -9,10 +9,12 @@ import discord
 
 import configuration as cfg
 from bot_manager import BotManager
-import genai.genai_base as gc
 import audio_generator as ag
 import types_playlist_items as tpi
 import reddit_scraper as rs
+
+sys.path.append(str(cfg.FOLDER_ROOT / 'genai'))
+import genai.gemini as gc
 
 sys.path.append(str(cfg.FOLDER_ROOT / 'rvc_cli'))
 from rvc_cli import models

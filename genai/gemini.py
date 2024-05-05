@@ -5,8 +5,8 @@ from dotenv import load_dotenv
 import google.generativeai as gemini
 from google.generativeai.types import HarmCategory, HarmBlockThreshold, generation_types
 
-import configuration_genai as cfg
-import genai_base
+from . import configuration_genai as cfg
+from . import genai_base
 
 class GeminiChat(genai_base.GenAIChat):
     # Safety config

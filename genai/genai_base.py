@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from IPython.display import display, Markdown
 from dataclasses import dataclass
 
-import configuration_genai as cfg
+from . import configuration_genai as cfg
 
 @dataclass
 class Response:

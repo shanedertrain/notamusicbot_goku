@@ -5,3 +5,4 @@ output/*
 hubert_base.pt
 .env
 .cache
+genai/logs/*

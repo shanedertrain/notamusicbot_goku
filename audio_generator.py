@@ -12,8 +12,10 @@ import configuration as cfg
 import newsapi as na
 import reddit_scraper as rs
 import types_playlist_items as tpi
-import genai.genai_base as gc
 import tts
+
+sys.path.append(str(cfg.FOLDER_ROOT / 'gen_ai'))
+import genai.gemini as gc
 
 sys.path.append(str(cfg.FOLDER_ROOT / 'rvc_cli'))
 from rvc_cli import audio_processor as ap
