@@ -16,7 +16,7 @@ class User:
         result = asdict(self)
         return result
 
-def read_users_from_json_file(file_path:Path=cfg.FILEPATH_USERS) -> List[User]:
+def read_users_from_json_file(file_path:Path=cfg.FILEPATH_LOG) -> List[User]:
     users = []
     try:
         with open(file_path, 'r') as file:

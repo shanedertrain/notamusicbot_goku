@@ -4,6 +4,7 @@ import random
 import uuid
 from typing import Optional
 from pathlib import Path
+from datetime import datetime as dt
 
 import discord
 from discord.ext import commands
@@ -23,9 +24,10 @@ FILEPATH_START_SOUND = cfg.FOLDER_INPUT / os.getenv('FILENAME_START_SOUND')
 
 class BotManager:
     audio_player_task:asyncio.Task = None
-    def __init__(self, command_prefix: str, intents: discord.Intents=discord.Intents.default()):
+    def __init__(self, command_prefix: str, intents: discord.Intents=discord.Intents.default(), output_folder:Path=cfg.FOLDER_OUTPUT):
         self.bot = commands.Bot(command_prefix=command_prefix, intents=intents)
         self.audio_player = AudioPlayer(self.bot)
+        self.output_folder = output_folder
         self.register_events()
         self.register_commands()
 
@@ -129,11 +131,11 @@ class BotManager:
         if random.choice([True] + ([False] * (1 if not cfg.DEBUG else 0))): 
             #reddit
             media_name = f"{media_uid}_reddit"
-            media_audio_path = await ag.generate_reddit_article_audio_file(requester.model_name, media_name)
+            media_audio_path = await ag.generate_reddit_article_audio_file(requester.model_name, self.output_folder, media_name)
         else:
             #news article
             media_name = f"{media_uid}_article"
-            media_audio_path = await ag.generate_news_article_audio_file(requester.model_name, media_name)
+            media_audio_path = await ag.generate_news_article_audio_file(requester.model_name, self.output_folder, media_name)
         
         return media_audio_path
 
@@ -151,7 +153,7 @@ class BotManager:
                                 self.audio_player.add_to_playlist(tpi.Audio(filepath=media_audio_path, id=media_uid))
                         
                         if requester.real_name:
-                            audio_file_path = await ag.generate_song_comment_audio_file(requester.model_name, video, media_uid)
+                            audio_file_path = await ag.generate_song_comment_audio_file(requester.model_name, video, self.output_folder, media_uid)
                             if audio_file_path:
                                 self.audio_player.add_to_playlist(tpi.Audio(filepath=audio_file_path, id=media_uid))
 
@@ -208,5 +210,8 @@ if __name__ == '__main__':
     intents.presences = False
     intents.members = True
 
-    bot_manager = BotManager(command_prefix='!g', intents=intents)
+    run_folder = cfg.FOLDER_OUTPUT / 'music_bot_runs' / f'run_{dt.now().strftime(cfg.DATETIME_FORMAT_FILESAFE)}'
+    run_folder.mkdir(exist_ok=True, parents=True)
+
+    bot_manager = BotManager(command_prefix='!g', intents=intents, output_folder=run_folder)
     bot_manager.run(TOKEN)
