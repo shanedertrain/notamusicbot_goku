@@ -53,8 +53,20 @@ class BotManager:
             try:
                 await self.play_init_funcs(ctx)
                 requester = users.get_user_by_id(ctx.author.id)
-                media_uid = uuid.uuid4()
+                media_uid = str(uuid.uuid4())
                 await self.queue_music_youtube(url, ctx, requester, media_uid)
+                    
+            except Exception as e:
+                cfg.LOGGER.error(f"Error processing video: {e}", exc_info=True)
+                await ctx.send(f"Error processing video: {e}")
+
+        @self.bot.command(name='playnow', help='Add a video or playlist to the queue and start playing immediately')
+        async def play(ctx, url: str):
+            try:
+                await self.play_init_funcs(ctx)
+                requester = users.get_user_by_id(ctx.author.id)
+                media_uid = str(uuid.uuid4())
+                await self.queue_music_youtube(url, ctx, requester, media_uid, quick=True)
                     
             except Exception as e:
                 cfg.LOGGER.error(f"Error processing video: {e}", exc_info=True)
@@ -139,23 +151,24 @@ class BotManager:
         
         return media_audio_path
 
-    async def queue_music_youtube(self, url: str, ctx, requester:users.User, media_uid:str):
+    async def queue_music_youtube(self, url: str, ctx, requester:users.User, media_uid:str, quick=False):
         if 'youtube.com' in url:
             async for video_info in tpi.extract_youtube_video_info(url):
                 if video_info:
                     try:
                         video = tpi.Video(id=media_uid, requester=requester, video_info=video_info, requested_channel=ctx.channel)
                         
-                        if random.choice([True] + ([False] * (3 if not cfg.DEBUG else 0))):
-                            media_audio_path = await self.generate_article_audio(requester, media_uid)
+                        if not quick:
+                            if random.choice([True] + ([False] * (3 if not cfg.DEBUG else 0))):
+                                media_audio_path = await self.generate_article_audio(requester, media_uid)
+                                
+                                if media_audio_path:
+                                    self.audio_player.add_to_playlist(tpi.Audio(filepath=media_audio_path, id=media_uid))
                             
-                            if media_audio_path:
-                                self.audio_player.add_to_playlist(tpi.Audio(filepath=media_audio_path, id=media_uid))
-                        
-                        if requester.real_name:
-                            audio_file_path = await ag.generate_song_comment_audio_file(requester.model_name, video, self.output_folder, media_uid)
-                            if audio_file_path:
-                                self.audio_player.add_to_playlist(tpi.Audio(filepath=audio_file_path, id=media_uid))
+                            if requester.real_name:
+                                audio_file_path = await ag.generate_song_comment_audio_file(requester.model_name, video, self.output_folder, media_uid)
+                                if audio_file_path:
+                                    self.audio_player.add_to_playlist(tpi.Audio(filepath=audio_file_path, id=media_uid))
 
                         self.audio_player.add_to_playlist(video)
                         # await ctx.send(f"Added to playlist: {video.video_info.title} | Duration: {td(seconds=video.video_info.duration)} | Requester: {video.requester.screen_name} ({video.requester.real_name})")
