@@ -119,7 +119,7 @@ async def generate_conversation(character_1:Character, character_2:Character):
     #conversation
     i = 0
     while True:
-        for i in range(3):
+        for _ in range(3):
             response_character_1 = character_1.converse(character_2.model.model_name, response_character_2)
             with(open(conversation_folder / 'podcast.txt', 'a')) as f:
                 f.write(f"{character_1.model.model_name}: {response_character_1}\n\n")
