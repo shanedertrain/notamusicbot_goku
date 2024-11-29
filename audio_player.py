@@ -8,8 +8,11 @@ from configuration import LOGGER
 
 from types_playlist_items import Video, Audio, SpotifyMedia
 
+import subprocess
+from pathlib import Path
+
 FFMPEG_BEFORE_OPTIONS = "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -nostdin"
-FFMEG_OPTIONS = '-vn -filter:a "volume=0.5"'
+FFMPEG_OPTIONS = "-vn -filter:a volume=0.5"
 
 class AudioPlayer:
     def __init__(self, bot: commands.Bot):
@@ -20,7 +23,22 @@ class AudioPlayer:
     async def run(self):
         while True:
             await self.play_audio()
-            await asyncio.sleep(1)  # Check the playlist again after a short delay
+            await asyncio.sleep(1)
+
+    async def extract_audio_url(self, url: str) -> str:
+        """Use yt-dlp to get the best audio URL."""
+        try:
+            result = subprocess.run(
+                ["yt-dlp", "-f", "bestaudio", "-g", url],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=True,
+            )
+            return result.stdout.strip()
+        except subprocess.CalledProcessError as e:
+            LOGGER.error(f"yt-dlp error: {e.stderr}")
+            return ""
 
     async def play_audio(self):
         try:
@@ -31,15 +49,21 @@ class AudioPlayer:
                     LOGGER.debug(f"Popped: {media}")
 
                     if isinstance(media, Video):
-                        play_source = media.video_info.url
+                        audio_url = await self.extract_audio_url(media.video_info.url)
+                        if not audio_url:
+                            LOGGER.error(f"Failed to extract audio URL for {media.video_info.title}")
+                            return
+
                         await media.requested_channel.send(
                             f"Now playing: {media.video_info.title} | Duration: {str(td(seconds=media.video_info.duration))} | Requester: {media.requester.screen_name} ({media.requester.real_name})"
                         )
-                        self.voice_client.play(discord.FFmpegPCMAudio(play_source, before_options=FFMPEG_BEFORE_OPTIONS, options=FFMEG_OPTIONS))
-                
+                        self.voice_client.play(
+                            discord.FFmpegPCMAudio(audio_url, before_options=FFMPEG_BEFORE_OPTIONS, options=FFMPEG_OPTIONS)
+                        )
+
                     elif isinstance(media, Audio):
                         play_source = media.filepath
-                        self.voice_client.play(discord.FFmpegPCMAudio(play_source))
+                        self.voice_client.play(discord.FFmpegPCMAudio(str(play_source)))
 
                     elif isinstance(media, SpotifyMedia):
                         play_source = media.spotify_info.uri
@@ -58,14 +82,3 @@ class AudioPlayer:
         self.playlist = []
         if self.voice_client and self.voice_client.is_playing():
             self.voice_client.stop()
-
-if __name__ == '__main__':
-    intents = discord.Intents.default()
-    intents.message_content = True
-    intents.typing = False
-    intents.presences = False
-    intents.members = True
-
-    bot = commands.Bot(command_prefix='!g', intents=intents)
-    audio_player = AudioPlayer(bot)
-    asyncio.run(audio_player.run())

@@ -41,7 +41,7 @@ def generate_tts_audio(tts_module:tts.TextToSpeechConverter, text:str, output_fo
     
     tts_filepath = tts_module.text_to_speech(text_without_quotes, output_folder=output_folder, output_filestem=output_filestem)
     # tts_filepath = ap.increase_speed(tts_filepath, speed_multiplier=1.0)
-    cfg.LOGGER.debug("TTS audio generation complete!")
+    cfg.LOGGER.debug(f"TTS audio generation complete!: {tts_filepath}")
     return tts_filepath
 
 def convert_voice_for_multiprocess(model:models.Model, input_audio_filepath:Path) -> Path:

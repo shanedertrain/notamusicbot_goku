@@ -1,10 +1,7 @@
 from dataclasses import dataclass
 from typing import AsyncIterator
-import asyncio
-import json
-import subprocess
 from pathlib import Path
-import youtube_dlc
+import yt_dlp
 
 import discord
 
@@ -21,7 +18,7 @@ class VideoInfo:
 
 @dataclass
 class Media:
-    id:str
+    id: str
 
 @dataclass
 class Video(Media):
@@ -30,8 +27,7 @@ class Video(Media):
     requested_channel: discord.TextChannel
 
     def __repr__(self) -> str:
-        # Customize the representation of Video to exclude video_info details
-        return (f"Video(id={self.id!r}, requester={self.requester!r}), requested_channel={self.requested_channel!r})")
+        return (f"Video(id={self.id!r}, requester={self.requester!r}, requested_channel={self.requested_channel!r})")
 
 @dataclass
 class Audio(Media):
@@ -42,25 +38,23 @@ class SpotifyMedia(Media):
     spotify_info: SpotifyTrack
     requester: User
 
-async def extract_youtube_video_info(url:str) -> AsyncIterator[VideoInfo]:
-    process = await asyncio.create_subprocess_exec(
-        'youtube-dlc', '--skip-download', '--dump-json', '--format', 'bestaudio', url,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE
-    )
+async def extract_youtube_video_info(url: str) -> AsyncIterator[VideoInfo]:
+    ydl_opts = {
+        'quiet': True,
+        'format': 'bestaudio',
+        'dump_single_json': True,
+        'noplaylist': True,
+    }
 
-    while True:
-        line = await process.stdout.readline()
-        if not line:
-            break
-
-        info = json.loads(line.decode())
-        yield VideoInfo(
-            title=info['title'],
-            url=info['url'],
-            duration=info['duration'],
-            uploader=info['uploader'],
-            formats=info['formats'],
-        )
-
-    await process.communicate()
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        try:
+            info = ydl.extract_info(url, download=False)
+            yield VideoInfo(
+                title=info['title'],
+                url=info['webpage_url'],
+                duration=info['duration'],
+                uploader=info.get('uploader', 'Unknown'),
+                formats=info.get('formats', []),
+            )
+        except yt_dlp.utils.DownloadError as e:
+            print(f"Error extracting info for {url}: {e}")
