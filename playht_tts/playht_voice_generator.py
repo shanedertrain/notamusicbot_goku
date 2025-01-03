@@ -1,0 +1,35 @@
+from pyht import Client
+from dotenv import load_dotenv
+from pyht.client import TTSOptions
+import os
+from pathlib import Path
+load_dotenv()
+
+if __name__ == "__main__":
+    import sys
+    sys.path.append(str(Path(__file__).parent.parent))
+
+from playht_tts.playht_voices import VoiceManifest
+
+client = Client(
+    user_id=os.getenv("PLAY_HT_USER_ID"),
+    api_key=os.getenv("PLAY_HT_API_KEY"),
+)
+
+class PlayHTVoiceGenerator:
+    def __init__(self, verbose: bool = False):
+        self.verbose = verbose
+
+    def generate(self, text: str, voice_manifest: VoiceManifest, output_path:Path = Path.cwd() / "output.wav") -> Path:
+        options = TTSOptions(voice=voice_manifest.value)
+        with open(output_path, "wb") as audio_file:
+            for chunk in client.tts(text, options, voice_engine = 'PlayDialog-http'):
+                audio_file.write(chunk)
+
+        print(f"Audio saved as {output_path}")
+
+        return output_path
+    
+if __name__ == "__main__":
+    converter = PlayHTVoiceGenerator()
+    converter.generate("Hello World", VoiceManifest.Joseph.name)
