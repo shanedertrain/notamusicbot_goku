@@ -8,6 +8,7 @@ from datetime import datetime as dt
 
 import discord
 from discord.ext import commands
+from discord.ext.commands import Context
 from audio_player import AudioPlayer
 import configuration as cfg
 
@@ -17,6 +18,62 @@ import users
 from rvc_cli import models
 
 from dotenv import load_dotenv
+
+# Workaround for discord.py voice gateway returning an empty "modes" list.
+import discord.gateway as _dg
+if not hasattr(_dg.DiscordVoiceWebSocket, "_patched_empty_modes"):
+    _orig_initial_connection = _dg.DiscordVoiceWebSocket.initial_connection
+
+    async def _initial_connection_safe(self, data):
+        # Ensure the modes list is populated (and compatible) before passing to the original handler
+        payload = dict(data.get("d") or data)
+        requested_modes = payload.get("modes") or []
+
+        # Keep only modes supported by the client; if none remain, fall back to a safe order.
+        supported_modes = list(getattr(self, "_connection", None).supported_modes or [])
+        preferred_order = [
+            "aead_xchacha20_poly1305_rtpsize",
+            "xsalsa20_poly1305",
+            "xsalsa20_poly1305_suffix",
+            "xsalsa20_poly1305_lite",
+        ]
+        modes = [m for m in requested_modes if m in supported_modes]
+        if not modes:
+            modes = [m for m in preferred_order if (not supported_modes or m in supported_modes)] or preferred_order
+
+        payload["modes"] = modes
+
+        # Extra logging to debug odd handshake payloads and close codes
+        cfg.LOGGER.info(
+            "Voice ready payload patched: requested=%s supported=%s chosen=%s ip=%s port=%s",
+            requested_modes or [],
+            supported_modes or [],
+            modes,
+            payload.get("ip"),
+            payload.get("port"),
+        )
+
+        if "d" in data:
+            new_data = dict(data)
+            new_data["d"] = payload
+        else:
+            new_data = payload
+
+        try:
+            return await _orig_initial_connection(self, new_data)
+        except Exception:
+            cfg.LOGGER.exception(
+                "Voice initial_connection failed: requested=%s supported=%s chosen=%s payload=%s raw=%s",
+                requested_modes or [],
+                supported_modes or [],
+                modes,
+                payload,
+                data,
+            )
+            raise
+
+    _dg.DiscordVoiceWebSocket.initial_connection = _initial_connection_safe
+    _dg.DiscordVoiceWebSocket._patched_empty_modes = True
 
 load_dotenv()
 GUILD = os.getenv('DISCORD_GUILD')
@@ -49,7 +106,7 @@ class BotManager:
 
     def register_commands(self):
         @self.bot.command(name='play', help='Add a video or playlist to the queue and start playing')
-        async def play(ctx, url: str):
+        async def play(ctx:Context, url: str):
             try:
                 await self.play_init_funcs(ctx)
                 requester = users.get_user_by_id(ctx.author.id)
@@ -61,7 +118,7 @@ class BotManager:
                 await ctx.send(f"Error processing video: {e}")
 
         @self.bot.command(name='playnow', help='Add a video or playlist to the queue and start playing immediately')
-        async def play(ctx, url: str):
+        async def play(ctx:Context, url: str):
             try:
                 await self.play_init_funcs(ctx)
                 requester = users.get_user_by_id(ctx.author.id)
@@ -124,14 +181,15 @@ class BotManager:
                         await message.delete()
                         await asyncio.sleep(1)
 
-    async def play_init_funcs(self, ctx):
+    async def play_init_funcs(self, ctx:Context):
         users.USERS = users.read_users_from_json_file(cfg.FILEPATH_USERS) #reload users from file
         models.MODELS = models.collect_models_from_folders() #reload models 
 
         voice_client = ctx.guild.voice_client
         if not voice_client:
             await ctx.author.voice.channel.connect()
-            if not cfg.DEBUG: self.audio_player.add_to_playlist(tpi.Audio(filepath=FILEPATH_START_SOUND, id=0))
+            if not cfg.DEBUG: 
+                self.audio_player.add_to_playlist(tpi.Audio(filepath=FILEPATH_START_SOUND, id=0))
         
         # Start the audio player task if it's not already running
         if self.audio_player_task is None or self.audio_player_task.done():
@@ -222,6 +280,7 @@ if __name__ == '__main__':
     intents.typing = False
     intents.presences = False
     intents.members = True
+    intents.voice_states = True   # ✅ needed for voice connection
 
     run_folder = cfg.FOLDER_OUTPUT / 'music_bot_runs' / f'run_{dt.now().strftime(cfg.DATETIME_FORMAT_FILESAFE)}'
     run_folder.mkdir(exist_ok=True, parents=True)

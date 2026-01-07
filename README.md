@@ -16,6 +16,7 @@ This Discord bot is designed to play audio in a voice channel based on user requ
 - `ffmpeg` installed and added to the system PATH: https://ffmpeg.org/download.html
 - Windows 10 SDK installed to build fairseq: https://developer.microsoft.com/en-us/windows/downloads/windows-sdk/
 - hubert_base.pt placed into in the root directory: https://huggingface.co/lj1995/VoiceConversionWebUI/blob/main/hubert_base.pt
+- A JS runtime for yt-dlp (Node 18+/Deno/QuickJS). Install once on the host so yt-dlp can solve YouTube signatures.
 
 ### Installation
 
@@ -41,6 +42,12 @@ OR
         2. Install the required Python packages:
 
             pip install -r requirements.txt
+
+        3. (YouTube reliability) Ensure yt-dlp has external JS support installed in the same environment:
+
+            pip install -U yt-dlp yt-dlp-ejs
+
+           Optional but recommended: export your YouTube cookies to `input/youtube_cookies.txt` so age/region-gated videos can play.
 
 
 3. Update the `.env` file in the root directory of the project:

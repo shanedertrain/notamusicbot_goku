@@ -10,7 +10,8 @@
             "request": "launch",
             "program": "main.py",
             "console": "integratedTerminal",
-            "justMyCode": false
+            "justMyCode": false,
+            "python": "D:/Projects/notamusicbot_goku/.venv/Scripts/python.exe"
         },
         {
             "name": "Python: Current File",
@@ -18,7 +19,8 @@
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal",
-            "justMyCode": false
+            "justMyCode": false,
+            "python": "D:/Projects/notamusicbot_goku/.venv/Scripts/python.exe"
         }
     ]
 }

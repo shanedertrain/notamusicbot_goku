@@ -99,6 +99,7 @@ class VoiceManifest(StrEnum):
     Russell = "s3://peregrine-voices/russell2_parrot_saad/manifest.json"
     Samuel = "s3://voice-cloning-zero-shot/36e9c53d-ca4e-4815-b5ed-9732be3839b4/samuelsaad/manifest.json"
     Sarah = "s3://voice-cloning-zero-shot/820da3d2-3a3b-42e7-844d-e68db835a206/sarah/manifest.json"
+    Siobhan = "s3://voice-cloning-zero-shot/30884451-1eff-4fd8-9a24-d1ee3353b215/original/manifest.json"
     Sophia = "s3://voice-cloning-zero-shot/1f44b3e7-22ea-4c2e-87d0-b4d9c8f1d47d/sophia/manifest.json"
     Will = "s3://peregrine-voices/mel22/manifest.json"
 

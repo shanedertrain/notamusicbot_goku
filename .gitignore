@@ -7,3 +7,4 @@ hubert_base.pt
 .cache
 genai/logs/*
 *.log
+tools/deno/

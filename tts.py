@@ -6,7 +6,7 @@ import configuration as cfg
 
 sys.path.append(str(cfg.FOLDER_ROOT / 'tiktok_voice_tts'))
 from tiktok_voice_tts.tiktokvoice import TikTokVoiceTTS
-from playht_tts.playht_voice_generator import PlayHTVoiceGenerator, VoiceManifest
+# from playht_tts.playht_voice_generator import PlayHTVoiceGenerator, VoiceManifest
 
 class TextToSpeechConverter:
     def text_to_speech(self, text: str, output_folder:Path = cfg.FOLDER_OUTPUT, output_filestem: str='test') -> Path:
@@ -96,31 +96,31 @@ class TextToSpeechConverter_TikTok(TextToSpeechConverter):
         for voice_enum in self.converter.Voices.__members__.values():
             print(f"{voice_enum.value}: {voice_enum.name}")
         
-class TextToSpeechConverter_PlayHT(TextToSpeechConverter):
-    def __init__(self, voice_name=VoiceManifest.Charlotte_Narrative.name):
-        super().__init__()
-        self.converter = PlayHTVoiceGenerator()
-        self.voice = VoiceManifest[voice_name]
+# class TextToSpeechConverter_PlayHT(TextToSpeechConverter):
+#     def __init__(self, voice_name=VoiceManifest.Charlotte_Narrative.name):
+#         super().__init__()
+#         self.converter = PlayHTVoiceGenerator()
+#         self.voice = VoiceManifest[voice_name]
 
-    def text_to_speech(self, text: str, output_folder:Path = cfg.FOLDER_OUTPUT, output_filestem: str = 'test_playht') -> Path:
-        output_filepath =  output_folder / (output_filestem + ".wav")
+#     def text_to_speech(self, text: str, output_folder:Path = cfg.FOLDER_OUTPUT, output_filestem: str = 'test_playht') -> Path:
+#         output_filepath =  output_folder / (output_filestem + ".wav")
 
-        self.converter.generate(text, self.voice, output_filepath)
+#         self.converter.generate(text, self.voice, output_filepath)
 
-        cfg.LOGGER.debug(f"Audio saved as {output_filepath}")
+#         cfg.LOGGER.debug(f"Audio saved as {output_filepath}")
 
-        return output_filepath
+#         return output_filepath
 
-    def list_voices(self):
-        for voice_enum in VoiceManifest.__members__.values():
-            print(f"{voice_enum.value}: {voice_enum.name}")
+#     def list_voices(self):
+#         for voice_enum in VoiceManifest.__members__.values():
+#             print(f"{voice_enum.value}: {voice_enum.name}")
 
 def get_tts_module(tts_packed:str) -> TextToSpeechConverter:
     tts_modules = {
         'gtts': TextToSpeechConverter_gTTS,
         'pyttsx3': TextToSpeechConverter_Pyttsx3,
         'ttv': TextToSpeechConverter_TikTok,
-        'pyht': TextToSpeechConverter_PlayHT,
+        # 'pyht': TextToSpeechConverter_PlayHT,
     }
 
     tts_unpacked = tts_packed.split(':')
@@ -136,6 +136,7 @@ def get_tts_module(tts_packed:str) -> TextToSpeechConverter:
     return tts_module
 
 if __name__ == '__main__':
-    converter = TextToSpeechConverter_PlayHT(voice_name=VoiceManifest.Joseph.name)
+    # converter = TextToSpeechConverter_PlayHT(voice_name=VoiceManifest.Joseph.name)
     # converter.list_voices()
-    converter.text_to_speech(text="My name is L...I am a famous detective.", output_folder=cfg.FOLDER_TTS, output_filestem='test')
+    # converter.text_to_speech(text="My name is L...I am a famous detective.", output_folder=cfg.FOLDER_TTS, output_filestem='test')
+    pass
