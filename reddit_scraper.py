@@ -1,10 +1,11 @@
 import os
 import random
-import asyncio
-from typing import List
 from dataclasses import dataclass
-from dotenv import load_dotenv
+from typing import List
+
 import praw
+from dotenv import load_dotenv
+
 
 @dataclass
 class RedditPost:
@@ -12,23 +13,21 @@ class RedditPost:
     title: str
     url: str
     poster_name: str
-    post_text: str = ''
+    post_text: str = ""
 
     def __repr__(self):
         return f"Title: {self.title}, URL: {self.url}, Poster Name: {self.poster_name}"
 
+
 class RedditPostFetcher:
     def __init__(self, post_limit=300):
         load_dotenv()  # Load environment variables from .env file
-        client_id = os.getenv('REDDIT_CLIENT_ID')
-        client_secret = os.getenv('REDDIT_CLIENT_SECRET')
-        user_agent = 'windows:reddit_access:v1.0 (by u/Proud-Election-4152)'
-        
+        client_id = os.getenv("REDDIT_CLIENT_ID")
+        client_secret = os.getenv("REDDIT_CLIENT_SECRET")
+        user_agent = "windows:reddit_access:v1.0 (by u/Proud-Election-4152)"
+
         self.reddit = praw.Reddit(
-            client_id=client_id,
-            client_secret=client_secret,
-            user_agent=user_agent,
-            check_for_async=False
+            client_id=client_id, client_secret=client_secret, user_agent=user_agent, check_for_async=False
         )
         self.post_generator = self.posts_traverser()
 
@@ -37,25 +36,28 @@ class RedditPostFetcher:
 
         for post in self.reddit.front.hot(limit=limit):
             if post.is_self:
-                results.append(RedditPost(
-                    post_id=post.id,
-                    title=post.title.encode("utf-8", "ignore").decode("utf-8"),
-                    url=post.url,
-                    poster_name=post.author.name,
-                    post_text=post.selftext,
-                ))
+                results.append(
+                    RedditPost(
+                        post_id=post.id,
+                        title=post.title.encode("utf-8", "ignore").decode("utf-8"),
+                        url=post.url,
+                        poster_name=post.author.name,
+                        post_text=post.selftext,
+                    )
+                )
 
         return results
 
     def posts_traverser(self):
         post_list = self.fetch_text_posts_from_front_page()
         random.shuffle(post_list)
-        
+
         for post in post_list:
             yield post
 
     def get_random_reddit_post(self) -> RedditPost:
         return random.choice(self.posts) if self.posts else None
+
 
 if __name__ == "__main__":
     reddit_fetcher = RedditPostFetcher()

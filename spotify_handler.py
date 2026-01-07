@@ -1,14 +1,15 @@
-from typing import Optional, List
-from dataclasses import dataclass
 import os
+from dataclasses import dataclass
+from typing import List, Optional
 
-from dotenv import load_dotenv
 import spotipy
+from dotenv import load_dotenv
 from spotipy.oauth2 import SpotifyClientCredentials
 
 load_dotenv()
 client_id = os.getenv("SPOTIFY_CLIENT_ID")
 client_secret = os.getenv("SPOTIFY_CLIENT_SECRET")
+
 
 @dataclass
 class SpotifyTrack:
@@ -17,8 +18,9 @@ class SpotifyTrack:
     album: str
     uri: str
 
+
 class SpotifyHandler:
-    def __init__(self, client_id: str=client_id, client_secret: str=client_secret):
+    def __init__(self, client_id: str = client_id, client_secret: str = client_secret):
         self.client_id = client_id
         self.client_secret = client_secret
         self.sp = self._authenticate_spotify()
@@ -30,13 +32,13 @@ class SpotifyHandler:
 
     def search_track(self, query: str) -> Optional[SpotifyTrack]:
         results = self.sp.search(q=query, limit=1)
-        if results['tracks']['items']:
-            track_info = results['tracks']['items'][0]
+        if results["tracks"]["items"]:
+            track_info = results["tracks"]["items"][0]
             track = SpotifyTrack(
-                name=track_info['name'],
-                artists=[artist['name'] for artist in track_info['artists']],
-                album=track_info['album']['name'],
-                uri=track_info['uri']
+                name=track_info["name"],
+                artists=[artist["name"] for artist in track_info["artists"]],
+                album=track_info["album"]["name"],
+                uri=track_info["uri"],
             )
             return track
         else:
@@ -44,6 +46,7 @@ class SpotifyHandler:
 
     def play_track(self, track: SpotifyTrack) -> None:
         self.sp.start_playback(uris=[track.uri])
+
 
 if __name__ == "__main__":
     spotify_handler = SpotifyHandler()

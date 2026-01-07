@@ -1,20 +1,18 @@
-from datetime import timedelta as td
-from typing import Dict, Tuple, Union
-import os
 import asyncio
+import os
+import shutil
 import uuid
+from datetime import timedelta as td
+from pathlib import Path
+from typing import Dict, Tuple, Union
 
 import discord
+import yt_dlp
 from discord.ext import commands
+
 import configuration as cfg
 from configuration import LOGGER
-
-from types_playlist_items import Video, Audio, SpotifyMedia
-
-import subprocess
-import shutil
-from pathlib import Path
-import yt_dlp
+from types_playlist_items import Audio, SpotifyMedia, Video
 
 FFMPEG_BEFORE_OPTIONS = "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -nostdin"
 FFMPEG_OPTIONS = "-vn -filter:a volume=0.5"
@@ -35,11 +33,11 @@ YT_COOKIES_FILE = cfg.FOLDER_INPUT / "youtube_cookies.txt"
 
 # Use a stable desktop UA to reduce PO-token prompts.
 DESKTOP_UA = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
 
 LOCAL_DENO = Path(__file__).resolve().parent / "tools" / "deno" / ("deno.exe" if os.name == "nt" else "deno")
+
 
 def _detect_js_runtimes():
     """Find available JS runtimes for yt-dlp (node/deno/quickjs)."""
@@ -56,11 +54,13 @@ def _detect_js_runtimes():
             "No JavaScript runtime found for yt-dlp. Install Node/Deno/QuickJS or place a runtime in tools/deno/."
         )
     else:
-        LOGGER.info("JS runtimes detected for yt-dlp: %s", {k: v.get('path') for k, v in runtimes.items()})
+        LOGGER.info("JS runtimes detected for yt-dlp: %s", {k: v.get("path") for k, v in runtimes.items()})
     return runtimes
+
 
 # Prefer Node for JS runtime, fall back to Deno/QuickJS if available.
 YT_JS_RUNTIMES = _detect_js_runtimes()
+
 
 def build_yt_opts(client: str) -> Dict:
     opts = {
@@ -72,6 +72,7 @@ def build_yt_opts(client: str) -> Dict:
     if YT_COOKIES_FILE.exists():
         opts["cookiefile"] = str(YT_COOKIES_FILE)
     return opts
+
 
 class AudioPlayer:
     def __init__(self, bot: commands.Bot):

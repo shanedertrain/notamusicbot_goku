@@ -1,26 +1,26 @@
+import asyncio
 import os
 import sys
-from dotenv import load_dotenv
-from typing import Union
-import asyncio
 from datetime import datetime as dt
+from typing import Union
 
 import discord
+from dotenv import load_dotenv
 
-import configuration as cfg
-from bot_manager import BotManager
 import audio_generator as ag
-import types_playlist_items as tpi
+import configuration as cfg
 import reddit_scraper as rs
+import types_playlist_items as tpi
+from bot_manager import BotManager
 
-sys.path.append(str(cfg.FOLDER_ROOT / 'genai'))
+sys.path.append(str(cfg.FOLDER_ROOT / "genai"))
 import genai.gemini as gc
 
-sys.path.append(str(cfg.FOLDER_ROOT / 'rvc_cli'))
+sys.path.append(str(cfg.FOLDER_ROOT / "rvc_cli"))
 from rvc_cli import models
 
 load_dotenv()
-TOKEN = os.getenv('DISCORD_TOKEN')
+TOKEN = os.getenv("DISCORD_TOKEN")
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -28,8 +28,9 @@ intents.typing = False
 intents.presences = False
 intents.members = True
 
-BOT_MANAGER = BotManager(command_prefix='!g', intents=intents)
+BOT_MANAGER = BotManager(command_prefix="!g", intents=intents)
 REDDIT_SCRAPER = rs.RedditPostFetcher()
+
 
 def clear_folder_contents(folder: str):
     for filename in os.listdir(folder):
@@ -38,10 +39,11 @@ def clear_folder_contents(folder: str):
             if os.path.isfile(file_path) or os.path.islink(file_path):
                 os.unlink(file_path)  # Deletes a file or symbolic link
         except Exception as e:
-            cfg.LOGGER.error(f'Failed to delete {file_path}. Reason: {e}')
+            cfg.LOGGER.error(f"Failed to delete {file_path}. Reason: {e}")
+
 
 class Character(gc.GeminiChat):
-    def __init__(self, initialize_prompt:str, model:models.Model):
+    def __init__(self, initialize_prompt: str, model: models.Model):
         super().__init__()
         self.model = model
 
@@ -55,7 +57,7 @@ class Character(gc.GeminiChat):
         """
         return self.chat.send_message(prompt)
 
-    def converse(self, conversation_target:str, input_response:str) -> Union[str, bool]:
+    def converse(self, conversation_target: str, input_response: str) -> Union[str, bool]:
         prompt = f"""
             {conversation_target} has responded to you saying: "{input_response}". 
             What do you have to say in response? Reply to them directly.'
@@ -68,8 +70,10 @@ class Character(gc.GeminiChat):
             return None
 
         return response.text
-    
-    def generate_article_post_opening(self, post_title:str, post_text:str, guest_description:str) -> Union[str, bool]:
+
+    def generate_article_post_opening(
+        self, post_title: str, post_text: str, guest_description: str
+    ) -> Union[str, bool]:
         prompt = f"""
             You are {self.model.description} speak only as yourself and in first person.
             You are summarizing a reddit post as the host a talk show. 
@@ -86,55 +90,76 @@ class Character(gc.GeminiChat):
 
         return response.text
 
-async def generate_conversation(character_1:Character, character_2:Character):
-    conversation_folder = cfg.FOLDER_OUTPUT / 'podcasts' / f'podcast_{dt.now().strftime(cfg.DATETIME_FORMAT_FILESAFE)}'
+
+async def generate_conversation(character_1: Character, character_2: Character):
+    conversation_folder = cfg.FOLDER_OUTPUT / "podcasts" / f"podcast_{dt.now().strftime(cfg.DATETIME_FORMAT_FILESAFE)}"
     conversation_folder.mkdir(exist_ok=True, parents=True)
 
-    with(open(conversation_folder / 'podcast.txt', 'w')) as f:
-        f.write(f"Conversation between {character_1.model.model_name} and {character_2.model.model_name} on {dt.now().strftime(cfg.DATETIME_FORMAT)}\n\n")
+    with open(conversation_folder / "podcast.txt", "w") as f:
+        f.write(
+            f"Conversation between {character_1.model.model_name} and {character_2.model.model_name} on {dt.now().strftime(cfg.DATETIME_FORMAT)}\n\n"
+        )
 
     reddit_post = next(REDDIT_SCRAPER.post_generator)
-    
-    opening_speech = await asyncio.to_thread(character_1.generate_article_post_opening, 
-                                                    reddit_post.title, 
-                                                    reddit_post.post_text, 
-                                                    character_2.model.description)
-    
-    #opening
-    audio_path_charater_1 = await ag.generate_voice_converter_audio(character_1.model, opening_speech, conversation_folder, f"{character_1.model.model_name}_opening")
-    with(open(conversation_folder / 'podcast.txt', 'a')) as f:
+
+    opening_speech = await asyncio.to_thread(
+        character_1.generate_article_post_opening,
+        reddit_post.title,
+        reddit_post.post_text,
+        character_2.model.description,
+    )
+
+    # opening
+    audio_path_charater_1 = await ag.generate_voice_converter_audio(
+        character_1.model, opening_speech, conversation_folder, f"{character_1.model.model_name}_opening"
+    )
+    with open(conversation_folder / "podcast.txt", "a") as f:
         f.write(f"{character_1.model.model_name}: {opening_speech}\n\n")
-    
+
     audio_path_charater_1 = conversation_folder / str(audio_path_charater_1.name)
-    BOT_MANAGER.audio_player.add_to_playlist(tpi.Audio(id=f"{character_1.model.model_name}_opening", filepath=audio_path_charater_1))
+    BOT_MANAGER.audio_player.add_to_playlist(
+        tpi.Audio(id=f"{character_1.model.model_name}_opening", filepath=audio_path_charater_1)
+    )
 
     response_character_2 = character_2.converse(character_1.model.model_name, opening_speech)
-    with(open(conversation_folder / 'podcast.txt', 'a')) as f:
+    with open(conversation_folder / "podcast.txt", "a") as f:
         f.write(f"{character_2.model.model_name}: {response_character_2}\n\n")
-    
-    audio_path_charater_2 = await ag.generate_voice_converter_audio(character_2.model, response_character_2, conversation_folder, f"{character_2.model.model_name}_opening")
-    audio_path_charater_2 = conversation_folder / str(audio_path_charater_2.name)
-    BOT_MANAGER.audio_player.add_to_playlist(tpi.Audio(id=f"{character_2.model.model_name}_opening", filepath=audio_path_charater_2))
 
-    #conversation
+    audio_path_charater_2 = await ag.generate_voice_converter_audio(
+        character_2.model, response_character_2, conversation_folder, f"{character_2.model.model_name}_opening"
+    )
+    audio_path_charater_2 = conversation_folder / str(audio_path_charater_2.name)
+    BOT_MANAGER.audio_player.add_to_playlist(
+        tpi.Audio(id=f"{character_2.model.model_name}_opening", filepath=audio_path_charater_2)
+    )
+
+    # conversation
     i = 0
     while True:
         for _ in range(3):
             response_character_1 = character_1.converse(character_2.model.model_name, response_character_2)
-            with(open(conversation_folder / 'podcast.txt', 'a')) as f:
+            with open(conversation_folder / "podcast.txt", "a") as f:
                 f.write(f"{character_1.model.model_name}: {response_character_1}\n\n")
-            
-            audio_path_charater_1 = await ag.generate_voice_converter_audio(character_1.model, response_character_1, conversation_folder, f"{character_1.model.model_name}_{i}")
+
+            audio_path_charater_1 = await ag.generate_voice_converter_audio(
+                character_1.model, response_character_1, conversation_folder, f"{character_1.model.model_name}_{i}"
+            )
             audio_path_charater_1 = conversation_folder / str(audio_path_charater_1.name)
-            BOT_MANAGER.audio_player.add_to_playlist(tpi.Audio(id=f"{character_1.model.model_name}_{i}", filepath=audio_path_charater_1))
+            BOT_MANAGER.audio_player.add_to_playlist(
+                tpi.Audio(id=f"{character_1.model.model_name}_{i}", filepath=audio_path_charater_1)
+            )
 
             response_character_2 = character_2.converse(character_1.model.model_name, response_character_1)
-            with(open(conversation_folder / 'podcast.txt', 'a')) as f:
+            with open(conversation_folder / "podcast.txt", "a") as f:
                 f.write(f"{character_2.model.model_name}: {response_character_2}\n\n")
-            
-            audio_path_charater_2 = await ag.generate_voice_converter_audio(character_2.model, response_character_2, conversation_folder, f"{character_2.model.model_name}_{i}")
+
+            audio_path_charater_2 = await ag.generate_voice_converter_audio(
+                character_2.model, response_character_2, conversation_folder, f"{character_2.model.model_name}_{i}"
+            )
             audio_path_charater_2 = conversation_folder / str(audio_path_charater_2.name)
-            BOT_MANAGER.audio_player.add_to_playlist(tpi.Audio(id=f"{character_2.model.model_name}_{i}", filepath=audio_path_charater_2))
+            BOT_MANAGER.audio_player.add_to_playlist(
+                tpi.Audio(id=f"{character_2.model.model_name}_{i}", filepath=audio_path_charater_2)
+            )
 
             i += 1
 
@@ -152,10 +177,11 @@ async def generate_conversation(character_1:Character, character_2:Character):
 
         response_character_2 = response_character_2 + new_topic_prompt
 
-if __name__ == '__main__':
-    import time
+
+if __name__ == "__main__":
     import threading
-    
+    import time
+
     clear_folder_contents(cfg.FOLDER_TTS)
     clear_folder_contents(cfg.FOLDER_OUTPUT)
 
@@ -165,7 +191,7 @@ if __name__ == '__main__':
                 Obama's eloquent communication and ability to inspire through his words are akin to the persuasive tactics you employ in your investigations, making him a figure whose leadership and decision-making processes might resonate deeply with your analytical and strategic mindset.
                 You will speak to them as if you are in the same room having a conversation.
             """
-    character_l = Character(init_prompt_l, model=models.get_model('L'))
+    character_l = Character(init_prompt_l, model=models.get_model("L"))
 
     init_prompt_obama = """President Obama, as someone who has led the United States through numerous challenges with a focus on diplomacy, justice, and equality, you may find an interesting parallel in the character of 'L' from the series Death Note. 
                     'L' is a master detective who operates within the shadows, using his intellect and keen sense of justice to track down and confront global threats. 
@@ -174,8 +200,8 @@ if __name__ == '__main__':
                     This comparison might offer a unique lens through which to view your own approaches to leadership and conflict resolution.
                     You will speak to them as if you are in the same room having a conversation.
                 """
-    character_obama = Character(init_prompt_obama, model=models.get_model('Obama'))
-    
+    character_obama = Character(init_prompt_obama, model=models.get_model("Obama"))
+
     bot_thread = threading.Thread(target=lambda: BOT_MANAGER.run(TOKEN))
     bot_thread.start()
 
@@ -184,6 +210,5 @@ if __name__ == '__main__':
         voice_client = BOT_MANAGER.bot.voice_clients[0] if BOT_MANAGER.bot.voice_clients else None
         cfg.LOGGER.info("Not in channel. Sleeping for 5 seconds")
         time.sleep(5)
-    #conversation
+    # conversation
     asyncio.run(generate_conversation(character_l, character_obama))
-    

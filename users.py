@@ -1,8 +1,10 @@
-import configuration as cfg
 import json
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from dataclasses import dataclass, asdict, field
 from typing import List
+
+import configuration as cfg
+
 
 @dataclass
 class User:
@@ -16,47 +18,47 @@ class User:
         result = asdict(self)
         return result
 
-def read_users_from_json_file(file_path:Path=cfg.FILEPATH_LOG) -> List[User]:
+
+def read_users_from_json_file(file_path: Path = cfg.FILEPATH_LOG) -> List[User]:
     users = []
     try:
-        with open(file_path, 'r') as file:
+        with open(file_path, "r") as file:
             json_data = json.load(file)
             for user_id, user_info in json_data.items():
                 user = User(
                     id=int(user_id),
-                    real_name=user_info['real_name'],
-                    background=user_info['background'],
-                    model_name=user_info['model_name'],
-                    screen_name=user_info['screen_name'],
+                    real_name=user_info["real_name"],
+                    background=user_info["background"],
+                    model_name=user_info["model_name"],
+                    screen_name=user_info["screen_name"],
                 )
                 users.append(user)
     except FileNotFoundError:
-        cfg.LOGGER.warning(f'File not found: {file_path}. This will be generated for your to fill in')
+        cfg.LOGGER.warning(f"File not found: {file_path}. This will be generated for your to fill in")
         return None
     return users
 
-def write_users_to_json(users:list[User], filename=cfg.FILEPATH_USERS):
+
+def write_users_to_json(users: list[User], filename=cfg.FILEPATH_USERS):
     users_dict = [user.to_dict() for user in users]
-    
-    with open(filename, 'w') as file:
+
+    with open(filename, "w") as file:
         json.dump(users_dict, file, indent=4)
+
 
 def get_user_by_id(user_id: int) -> User:
     for user in USERS:
         if user.id == user_id:
             return user
 
+
 def generate_users_from_guild_members(members) -> list[User]:
-    user_list:list[User] = []
+    user_list: list[User] = []
     for member in members:
-        user_list.append(User(
-                            id = member.id,
-                            screen_name=member.name,
-                            model_name = "OBAMA"
-                        )
-                    )
+        user_list.append(User(id=member.id, screen_name=member.name, model_name="OBAMA"))
 
     return user_list
+
 
 async def get_users_from_guild(guild) -> list[User]:
     members = []
@@ -67,15 +69,16 @@ async def get_users_from_guild(guild) -> list[User]:
 
     if not cfg.FILEPATH_USERS.exists():
         write_users_to_json(USERS, cfg.FILEPATH_USERS)
-    
+
     return USERS
+
 
 USERS = read_users_from_json_file(cfg.FILEPATH_USERS)
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     print(USERS)
 
-    WRITE_FILEPATH = cfg.FOLDER_INPUT / 'users_test.json'
+    WRITE_FILEPATH = cfg.FOLDER_INPUT / "users_test.json"
     write_users_to_json(USERS, WRITE_FILEPATH)
     print(f"Wrote users to file: {WRITE_FILEPATH}")
 

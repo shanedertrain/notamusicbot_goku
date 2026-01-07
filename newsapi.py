@@ -1,13 +1,15 @@
 import os
+import random
+from dataclasses import dataclass
 from enum import Enum, auto
+from typing import List, Optional
+
 import requests
 from bs4 import BeautifulSoup
-from dataclasses import dataclass
-import random
-from typing import List, Optional, Union
-
 from dotenv import load_dotenv
+
 load_dotenv()
+
 
 @dataclass
 class Article:
@@ -16,6 +18,7 @@ class Article:
     description: str
     url: str
     text: str = None
+
 
 class Category(Enum):
     BUSINESS = auto()
@@ -26,48 +29,57 @@ class Category(Enum):
     SPORTS = auto()
     TECHNOLOGY = auto()
 
+
 class CountryCode(Enum):
-    US = 'us'
-    UK = 'gb'
-    CANADA = 'ca'
-    AUSTRALIA = 'au'
-    INDIA = 'in'
-    GERMANY = 'de'
-    FRANCE = 'fr'
+    US = "us"
+    UK = "gb"
+    CANADA = "ca"
+    AUSTRALIA = "au"
+    INDIA = "in"
+    GERMANY = "de"
+    FRANCE = "fr"
+
 
 class NewsScraper:
     def __init__(self):
-        self.api_key = os.getenv('NEWS_API_KEY')
+        self.api_key = os.getenv("NEWS_API_KEY")
 
-    def get_articles(self, country_code: CountryCode = CountryCode.US, category: Optional[Category] = None) -> List[Article]:
+    def get_articles(
+        self, country_code: CountryCode = CountryCode.US, category: Optional[Category] = None
+    ) -> List[Article]:
         if isinstance(country_code, CountryCode):
             country_code = country_code.value
-        url = f'https://newsapi.org/v2/top-headlines?country={country_code}&apiKey={self.api_key}'
+        url = f"https://newsapi.org/v2/top-headlines?country={country_code}&apiKey={self.api_key}"
         if category:
-            url += f'&category={category.name.lower()}'
+            url += f"&category={category.name.lower()}"
         response = requests.get(url)
         data = response.json()
-        if data['status'] == 'ok':
-            articles_data = data['articles']
-            articles = [Article(article['title'], article['source']['name'], article['description'], article['url']) for article in articles_data]
+        if data["status"] == "ok":
+            articles_data = data["articles"]
+            articles = [
+                Article(article["title"], article["source"]["name"], article["description"], article["url"])
+                for article in articles_data
+            ]
             return articles
         else:
-            print('Failed to fetch news headlines:', data['message'])
+            print("Failed to fetch news headlines:", data["message"])
             return []
 
-    def get_random_article(self, country_code: CountryCode = CountryCode.US, category: Optional[Category] = None) -> Article:
+    def get_random_article(
+        self, country_code: CountryCode = CountryCode.US, category: Optional[Category] = None
+    ) -> Article:
         articles = self.get_articles(country_code=country_code, category=category)
         return random.choice(articles)
-    
+
     def get_article_text(self, article: Article) -> str:
         response = requests.get(article.url)
-        soup = BeautifulSoup(response.content, 'html.parser')
+        soup = BeautifulSoup(response.content, "html.parser")
 
         # Assuming the article text is contained within <p> tags
-        article_paragraphs = soup.find_all('p')
-        article_text = ' '.join([paragraph.get_text() for paragraph in article_paragraphs])
+        article_paragraphs = soup.find_all("p")
+        article_text = " ".join([paragraph.get_text() for paragraph in article_paragraphs])
         return article_text
-    
+
 
 if __name__ == "__main__":
     news_scraper = NewsScraper()

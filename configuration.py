@@ -1,10 +1,10 @@
-from pathlib import Path
 import logging
+from pathlib import Path
 
-DEBUG = True #Set to True, mostly just disables the opening message to not be annoying
+DEBUG = True  # Set to True, mostly just disables the opening message to not be annoying
 
-DATETIME_FORMAT = '%Y-%m-%d %H:%M:%S.%f'
-DATETIME_FORMAT_FILESAFE = '%Y%m%d_%H%M%S'
+DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S.%f"
+DATETIME_FORMAT_FILESAFE = "%Y%m%d_%H%M%S"
 
 FOLDER_ROOT = Path(__file__).parent
 
@@ -22,10 +22,11 @@ FOLDER_TTS.mkdir(parents=True, exist_ok=True)
 FOLDER_LOGS = FOLDER_ROOT / "logs"
 FOLDER_LOGS.mkdir(parents=True, exist_ok=True)
 
-FILEPATH_LOG = FOLDER_LOGS / 'log.log'
+FILEPATH_LOG = FOLDER_LOGS / "log.log"
+
 
 def configure_logger(log_file) -> logging.Logger:
-    logger = logging.getLogger('logger_rvc')
+    logger = logging.getLogger("logger_rvc")
     logger.setLevel(logging.DEBUG)
 
     # Create file handler which logs only messages above INFO level to the file
@@ -38,14 +39,15 @@ def configure_logger(log_file) -> logging.Logger:
 
     # Create a formatter and set it to the handler
     # Include filename and line number
-    formatter = logging.Formatter('[%(levelname)s] %(asctime)s: %(filename)s:%(lineno)d | %(message)s', '%H:%M:%S')
+    formatter = logging.Formatter("[%(levelname)s] %(asctime)s: %(filename)s:%(lineno)d | %(message)s", "%H:%M:%S")
     file_handler.setFormatter(formatter)
     console_handler.setFormatter(formatter)
 
     # Add the handlers to the logger
     logger.addHandler(file_handler)
     logger.addHandler(console_handler)
-    
+
     return logger
+
 
 LOGGER = configure_logger(FILEPATH_LOG)

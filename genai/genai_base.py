@@ -1,14 +1,17 @@
 import textwrap
-from typing import Union, Optional
 from abc import ABC, abstractmethod
-from IPython.display import display, Markdown
 from dataclasses import dataclass
+from typing import Optional, Union
+
+from IPython.display import Markdown, display
 
 from . import configuration_genai as cfg
 
+
 @dataclass
 class Response:
-    text:str
+    text: str
+
 
 class GenAIChat(ABC):
     def __init__(self):
@@ -22,11 +25,11 @@ class GenAIChat(ABC):
         """
         pass
 
-    def to_markdown(self, text:str):
-        text = text.replace('•', '  *')
-        return Markdown(textwrap.indent(text, '> ', predicate=lambda _: True))
+    def to_markdown(self, text: str):
+        text = text.replace("•", "  *")
+        return Markdown(textwrap.indent(text, "> ", predicate=lambda _: True))
 
-    def generate_reddit_post_comment(self, vc_description:str, post_title:str, post_text:str) -> Union[str, bool]:
+    def generate_reddit_post_comment(self, vc_description: str, post_title: str, post_text: str) -> Union[str, bool]:
         prompt = f"""
             You are {vc_description} and remember to speak in first person.
             Limit your response to maximum 3 paragraphs.
@@ -44,7 +47,7 @@ class GenAIChat(ABC):
 
         return response.text
 
-    def generate_news_comment(self, vc_description:str, article_text:str) -> Union[str, bool]:
+    def generate_news_comment(self, vc_description: str, article_text: str) -> Union[str, bool]:
         prompt = f"""
             You are {vc_description} and remember to speak in first person.
             Your response must be 2 - 3 sentences. 
@@ -62,7 +65,9 @@ class GenAIChat(ABC):
 
         return response.text
 
-    def generate_song_comment(self, vc_description:str, requester_name:str, requester_background:str, song_name:str, artist_name:str) -> Union[str, bool]:
+    def generate_song_comment(
+        self, vc_description: str, requester_name: str, requester_background: str, song_name: str, artist_name: str
+    ) -> Union[str, bool]:
         prompt = f"""
             You are {vc_description} and remember to speak in first person.
             Your response must be 2 - 3 sentences. 

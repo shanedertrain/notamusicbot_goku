@@ -1,18 +1,20 @@
 import asyncio
+import sys
 
 import audio_generator as ag
-import newsapi as na
 import configuration as cfg
+import newsapi as na
 
-import sys
-sys.path.append(str(cfg.FOLDER_ROOT / 'rvc_cli'))
+sys.path.append(str(cfg.FOLDER_ROOT / "rvc_cli"))
 from rvc_cli import models
 
-selection = 1 
+selection = 1
 
 if selection == 0:
-    media_name = f"article"
-    media_audio_path = asyncio.run(ag.generate_news_article_audio_file("OBAMA", media_name, category=na.Category.SPORTS))
+    media_name = "article"
+    media_audio_path = asyncio.run(
+        ag.generate_news_article_audio_file("OBAMA", media_name, category=na.Category.SPORTS)
+    )
 elif selection == 1:
     text = """
         Mr. L, thank you for having me on your show. I'm a big fan of your work, and I'm honored to be here.
@@ -26,4 +28,6 @@ elif selection == 1:
         What do you think, Mr. L? Do you think I have what it takes to survive 24 hours being chased by Freddy Krueger?
     """
     model = models.get_model("OBAMA")
-    media_audio_path = asyncio.run(ag.generate_voice_converter_audio(model, text, cfg.FOLDER_OUTPUT / "manual_generation.mp3"))
+    media_audio_path = asyncio.run(
+        ag.generate_voice_converter_audio(model, text, cfg.FOLDER_OUTPUT / "manual_generation.mp3")
+    )

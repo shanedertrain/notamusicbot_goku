@@ -141,6 +141,7 @@ yt-dlp-ejs = "0.3.2"
 
 [tool.poetry.group.dev.dependencies]
 # poethepoet removed for now to avoid PyYAML version conflict; re-add with a compatible PyYAML bump if needed.
+ruff = "^0.7.1"
 
 [tool.poetry.scripts]
 goku-bot = "main:main"
@@ -153,6 +154,32 @@ priority = "primary"
 name = "pytorch-cu121"
 url = "https://download.pytorch.org/whl/cu121"
 priority = "explicit"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 800
+extend-exclude = [
+    ".venv",
+    "output",
+    "logs",
+    "input",
+    "genai/logs",
+    "rvc_cli/infer_pack",
+    "rvc_cli/__pycache__",
+    "rvc_cli/infer_pack/__pycache__",
+    "tiktok_voice_tts",
+    "rvc_cli/example.py",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+ignore = []
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
 
 [build-system]
 requires = ["poetry-core>=1.8.0"]

@@ -23,6 +23,7 @@ def parse_return_code(return_code: int) -> str:
     # Return the parsed bytes as a string
     return f"({a_char},'{b_char}','{c_char}','{d_char}')"
 
+
 if __name__ == "__main__":
     # Example usage:
     return_code = 3436169992
