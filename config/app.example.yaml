@@ -18,3 +18,20 @@ speech:
   channels: 2
   default_speed: 1.0
   default_target_peak_dbfs: -1.0
+
+  # Generated song commentary via the speech pipeline (content provider lands
+  # in Phase F; until then commentary text is a static template).
+  commentary_enabled: false
+
+discord:
+  command_prefix: "!g"
+  # Optional sound played on first voice-channel join per session.
+  start_sound: null
+  message_delete_delay_s: 1.0
+
+media:
+  yt_clients: [default, web, tv_embedded]
+  cookies_file: input/youtube_cookies.txt   # optional; missing file = anonymous extraction
+  cache_dir: var/cache/youtube              # per-run files, deleted after playback
+  js_runtimes:
+    deno: ~/.deno/bin/deno                  # discovered + registered for yt-dlp (yt_dlp_ejs)

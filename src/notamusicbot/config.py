@@ -49,12 +49,38 @@ class SpeechSettings(BaseModel):
     channels: int = 2
     default_speed: float = Field(default=1.0, ge=0.25, le=4.0)
     default_target_peak_dbfs: float = Field(default=-1.0, le=0.0)
+    commentary_enabled: bool = False
+
+
+class DiscordSettings(BaseModel):
+    """Discord-facing settings (non-secret; token lives in secrets)."""
+
+    command_prefix: str = "!g"
+    # Optional sound played when the bot first joins a voice channel.
+    start_sound: Path | None = None
+    # Delay between deletions in the deleteallmessages cleanup command.
+    message_delete_delay_s: float = Field(default=1.0, ge=0.0)
+
+
+class MediaSettings(BaseModel):
+    """yt-dlp / media acquisition settings (non-secret)."""
+
+    yt_clients: list[str] = Field(default_factory=lambda: ["default", "web", "tv_embedded"])
+    cookies_file: Path = Path("input/youtube_cookies.txt")
+    cache_dir: Path = Path("var/cache/youtube")
+    js_runtimes: dict[str, Path] = Field(default_factory=lambda: {"deno": Path("~/.deno/bin/deno")})
+    user_agent: str = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    )
 
 
 class AppSettings(BaseModel):
     """Non-secret application settings, normally loaded from ``config/app.yaml``."""
 
     speech: SpeechSettings = SpeechSettings()
+    discord: DiscordSettings = DiscordSettings()
+    media: MediaSettings = MediaSettings()
 
 
 def load_app_settings(path: Path | None = None) -> AppSettings:
