@@ -95,11 +95,11 @@ Untouched: `input/`, `backups/`, `rvc_cli/` (vendored legacy stack),
 ## Test commands and results
 
 See `TEST_RESULTS.md` for exact counts (unit 105 passed; RVC integration
-2 passed; live Discord smoke **NOT_RUN** at time of writing).
+2 passed; live Discord smoke PASS — logged in as Goku#8715 on the real gateway, 2 guilds, commands registered).
 
 ## Known limitations / follow-up
 
-- Live Discord smoke test not yet run by the coordinator (field left NOT_RUN).
+- ~~Live Discord smoke not run~~ — run by the coordinator: PASS (gateway connect + commands; voice-channel playback requires a human in a VC).
 - `content/reddit.py` is a stub (praw not ported).
 - `warmup_on_start` is off by default; `warmup()` now handles both loop states.
 - Combined LLM+TTS steady-state GPU memory is 11.2/16.0 GiB; the load-order

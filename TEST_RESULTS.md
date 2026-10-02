@@ -14,8 +14,8 @@ SKIPPED / NOT_RUN. Nothing unavailable was converted into a pass.
 | Qwen TTS smoke (Gate C, coordinator-verified) | GPU generation of `var/speech/smoke/hey_it_me_goku.wav` | **PASS** | 3.92 s audio, 24 kHz returned rate, bf16/sdpa/cuda, peak −4.3 dBFS |
 | End-to-end local speech (Gate D, coordinator-verified) | Qwen → RVC (Goku) → postprocess | **PASS** | `var/speech/e2e_goku.wav` 4.14 s; tts 7.9 s, vc 7.98 s warm |
 | Mocked Discord startup smoke (coordinator-verified) | `tools/smoke_discord_startup.py` (mocked gateway) | **PASS** | — |
-| **Live Discord smoke** | real gateway + voice channel | **NOT_RUN** | Coordinator to run after Phase G commits land. Do not treat any other result as covering this. |
-| Fresh install via `scripts/setup.sh` (Gate G) | coordinator-run | **NOT_RUN** at time of writing | Script is being exercised concurrently by the coordinator. |
+| **Live Discord smoke** | real gateway connection | **PASS** | Bot logged in as `Goku#8715` on the real gateway, connected to 2 guilds, `!g` commands registered, clean shutdown (coordinator, 2026-10-02). Live voice-channel playback needs a human issuing `!gplay` in a voice channel — left for the user. |
+| Fresh install (Gate G, coordinator-run) | fresh uv venv from `pyproject.toml` | **PASS** | Fresh py3.12 venv: `.[discord,media,dev]` installed after fixing an unsatisfiable `yt-dlp-ejs>=2025.10.14` pin (→ `>=0.8`); import OK; **105 unit tests passed** in the fresh venv. `scripts/setup.sh` additionally exercised end-to-end (idempotent run) on the development machine with all steps OK. |
 
 ## Notes
 
