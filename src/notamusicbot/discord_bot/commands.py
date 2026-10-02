@@ -204,11 +204,11 @@ def setup_commands(bot: NotAMusicBot) -> None:
             await ctx.send("No song is currently playing.")
 
     @bot.command(
-        name="gpodcast",
+        name="podcast",
         help="Start or stop podcast mode: after each song the bot plays a short "
         "two-voice conversation (!gpodcast start|stop)",
     )
-    async def gpodcast(ctx: Context, action: str = "start") -> None:
+    async def podcast(ctx: Context, action: str = "start") -> None:
         action = action.lower()
         if action not in ("start", "stop"):
             await ctx.send("Usage: !gpodcast start|stop")
