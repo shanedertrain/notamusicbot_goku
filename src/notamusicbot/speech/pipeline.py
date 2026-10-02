@@ -1,0 +1,118 @@
+"""Speech pipeline: TTS -> voice conversion -> post-processing -> final WAV.
+
+Discord and content code never performs these stages manually; they call
+:attr:`SpeechPipeline.run`. Intermediates are PCM/WAV only.
+"""
+
+from __future__ import annotations
+
+import logging
+import time
+import uuid
+from pathlib import Path
+from typing import Protocol
+
+import soundfile as sf
+
+from notamusicbot.domain.speech import (
+    AudioArtifact,
+    AudioProcessingProfile,
+    SpeechJobMetrics,
+    TtsRequest,
+    VoiceConversionProfile,
+)
+from notamusicbot.speech.coordinator import InferenceCoordinator
+from notamusicbot.speech.postprocess import postprocess
+from notamusicbot.speech.tts.base import SpeechSynthesizer
+from notamusicbot.speech.voice_conversion.base import VoiceConverter
+
+logger = logging.getLogger(__name__)
+
+
+class PipelineClock(Protocol):
+    """Injectable clock so tests can control timing without sleeping."""
+
+    def perf_counter(self) -> float: ...
+
+
+class SpeechPipeline:
+    """Owns the full TTS -> VC -> postprocess chain for one request."""
+
+    def __init__(
+        self,
+        synthesizer: SpeechSynthesizer,
+        converter: VoiceConverter,
+        processing: AudioProcessingProfile | None = None,
+        coordinator: InferenceCoordinator | None = None,
+        output_dir: Path = Path("var/speech"),
+    ) -> None:
+        self._synthesizer = synthesizer
+        self._converter = converter
+        self._processing = processing or AudioProcessingProfile()
+        self._coordinator = coordinator or InferenceCoordinator()
+        self._output_dir = output_dir
+
+    def _paths(self, job_id: str) -> tuple[Path, Path, Path]:
+        job_dir = self._output_dir / job_id
+        return (
+            job_dir / "tts_source.wav",
+            job_dir / "converted.wav",
+            job_dir / "final.wav",
+        )
+
+    async def run(
+        self,
+        request: TtsRequest,
+        conversion: VoiceConversionProfile,
+        processing: AudioProcessingProfile | None = None,
+    ) -> tuple[AudioArtifact, SpeechJobMetrics]:
+        """Execute one speech job and return the final artifact plus metrics."""
+        processing = processing or self._processing
+        job_id = uuid.uuid4().hex[:12]
+        start = time.perf_counter()
+        queue_start = time.perf_counter()
+
+        async with self._coordinator.slot():
+            queue_wait = time.perf_counter() - queue_start
+            tts_path, vc_path, final_path = self._paths(job_id)
+            tts_start = time.perf_counter()
+            source = await self._synthesizer.synthesize(request, tts_path)
+            tts_s = time.perf_counter() - tts_start
+
+            vc_start = time.perf_counter()
+            converted = await self._converter.convert(source, conversion, vc_path)
+            vc_s = time.perf_counter() - vc_start
+
+            pp_start = time.perf_counter()
+            final = await postprocess(converted, final_path, processing)
+            pp_s = time.perf_counter() - pp_start
+
+        total_s = time.perf_counter() - start
+        out_duration = final.duration_s or _probe_duration(final.path)
+        metrics = SpeechJobMetrics(
+            job_id=job_id,
+            queue_wait_s=queue_wait,
+            tts_s=tts_s,
+            voice_conversion_s=vc_s,
+            postprocess_s=pp_s,
+            total_s=total_s,
+            output_duration_s=out_duration,
+            tts_rtf=tts_s / out_duration if out_duration > 0 else 0.0,
+            voice_conversion_rtf=vc_s / out_duration if out_duration > 0 else 0.0,
+            total_rtf=total_s / out_duration if out_duration > 0 else 0.0,
+        )
+        logger.info(
+            "Speech job %s done tts=%.2fs vc=%.2fs pp=%.2fs total=%.2fs rtf=%.2f",
+            job_id,
+            tts_s,
+            vc_s,
+            pp_s,
+            total_s,
+            metrics.total_rtf,
+        )
+        return final, metrics
+
+
+def _probe_duration(path: Path) -> float:
+    frames, rate = sf.info(path).frames, sf.info(path).samplerate
+    return frames / rate if rate else 0.0
