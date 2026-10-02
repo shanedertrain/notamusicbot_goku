@@ -1,0 +1,16 @@
+id: obama_trans
+persona:
+  display_name: Obama
+  description: Former president of the United States, Barack Obama
+tts:
+  backend: qwen_custom_voice
+  model: Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice
+  language: English
+  speaker: Ryan
+voice_conversion:
+  backend: rvc
+  model: Obama
+  pitch_shift: 0
+audio:
+  speed: 1.0
+  target_peak_dbfs: -1.0

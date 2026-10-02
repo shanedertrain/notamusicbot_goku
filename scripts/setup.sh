@@ -6,6 +6,26 @@
 #   ./scripts/setup.sh              # full setup + non-GPU sanity checks
 #   ./scripts/setup.sh --gpu-check  # additionally run Qwen TTS + RVC smoke tests
 #   ./scripts/setup.sh --no-rvc     # skip the legacy Python 3.10 RVC environment
+#
+# PLATFORM REQUIREMENT (P2-21): the runtime targets **Linux / WSL only**.
+# Windows is not natively supported — use WSL2 on Windows. The script and the
+# application rely on POSIX paths (.venv-main/bin/python), Bash and ffmpeg.
+#
+# REQUIRED RVC ASSETS (not distributed with the repo; must be supplied locally):
+#   - hubert_base.pt                 at the repository root (HuBERT feature
+#                                    extractor; obtain from the RVC project
+#                                    releases, e.g. fatetudio/retrieve or the
+#                                    Retrieval-based-Voice-Conversion repo).
+#   - rvc_cli/models/<Name>/*.pth    per-voice model weights (one directory per
+#                                    voice, mixed-case directory names such as
+#                                    models/Obama, models/Goku).
+#   - rvc_cli/models/<Name>/*.index  matching FAISS index per voice.
+#   - rvc_cli/models/<Name>/*.yaml   per-voice (or per-variant) config; the yaml
+#                                    stem is the legacy model name (e.g.
+#                                    obama_trans.yaml defines OBAMA_TRANS, which
+#                                    shares the Obama weights).
+# Without hubert_base.pt the legacy RVC worker cannot start; voice profiles can
+# still use voice_conversion.backend: passthrough.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
@@ -21,13 +41,24 @@ done
 log()  { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 ok()   { printf '\033[1;32m  OK \033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m WARN\033[0m %s\n' "$*"; }
-fail() { printf '\033[1;31m FAIL\033[0m %s\n' "$*"; }
+# `set -e`-compatible: fail() terminates the script with a non-zero exit code
+# (P1-15), so missing prerequisites actually abort setup instead of printing
+# and continuing.
+fail() { printf '\033[1;31m FAIL\033[0m %s\n' "$*" >&2; exit 1; }
 
 # ---------------------------------------------------------------------------
 log "1/7 System prerequisites"
 for cmd in git curl ffmpeg; do
   command -v "$cmd" >/dev/null && ok "$cmd found ($(command -v $cmd))" || fail "$cmd missing — install it first (e.g. apt install ffmpeg build-essential)"
 done
+
+# Git submodules (legacy rvc_cli lives in a submodule) — required for RVC.
+if [ -f .gitmodules ] && grep -q rvc_cli .gitmodules; then
+  git submodule update --init --recursive && ok "rvc_cli submodule initialised" \
+    || fail "git submodule update --init --recursive failed — the legacy RVC code could not be fetched"
+else
+  ok "no rvc_cli submodule configured (already vendored?)"
+fi
 if command -v espeak-ng >/dev/null || command -v espeak >/dev/null; then ok "espeak found"; else warn "espeak-ng not found (only needed for legacy TTS fallbacks): apt install espeak-ng"; fi
 
 # GPU / CUDA
@@ -57,12 +88,21 @@ uv pip install -p .venv-main "discord.py[voice]" yt-dlp yt-dlp-ejs soundfile sox
 ok "main venv ready"
 
 # ---------------------------------------------------------------------------
-log "4/7 Secrets (.env)"
+log "4/7 Secrets (.env) + app config"
 if [ -f .env ]; then
   ok ".env already present (left untouched)"
 else
   cp .env.example .env
   warn "Created .env from .env.example — EDIT IT and fill in DISCORD_TOKEN etc. before running the bot."
+fi
+
+# Non-secret app config: scaffold config/app.yaml from the example only if
+# missing (P0-3). load_app_settings() reads config/app.yaml by default.
+if [ -f config/app.yaml ]; then
+  ok "config/app.yaml already present (left untouched)"
+else
+  cp config/app.example.yaml config/app.yaml
+  ok "Scaffolded config/app.yaml from config/app.example.yaml"
 fi
 
 # ---------------------------------------------------------------------------
@@ -107,7 +147,7 @@ if [ "$WITH_RVC" = "1" ]; then
     uv pip install -p .venv ffmpeg-python || true
     ok "legacy RVC venv built"
   fi
-  [ -f hubert_base.pt ] || fail "hubert_base.pt missing at repo root — required by RVC"
+  [ -f hubert_base.pt ] || fail "hubert_base.pt missing at repo root — required by RVC. See 'REQUIRED RVC ASSETS' in this script's header for where to obtain it."
   ls rvc_cli/models >/dev/null 2>&1 && ok "RVC voice models present ($(ls rvc_cli/models | wc -l) models)" || warn "no rvc_cli/models — target voices unavailable"
 else
   warn "Skipping legacy RVC (--no-rvc); voice profiles must use voice_conversion.backend: passthrough"

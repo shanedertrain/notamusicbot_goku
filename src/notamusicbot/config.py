@@ -115,11 +115,37 @@ class AppSettings(BaseModel):
     content: ContentSettings = ContentSettings()
 
 
+DEFAULT_APP_CONFIG_PATH = Path("config/app.yaml")
+
+
+def resolve_app_config_path(path: Path | None = None) -> Path | None:
+    """Resolve the app-config file via the documented chain.
+
+    Resolution order: explicit argument → ``NOTAMUSICBOT_CONFIG`` env override
+    → ``config/app.yaml`` → ``None`` (built-in defaults). A missing file is not
+    an error; callers fall back to defaults.
+    """
+    if path is not None:
+        return path
+    import os
+
+    env_path = os.environ.get("NOTAMUSICBOT_CONFIG")
+    if env_path:
+        return Path(env_path)
+    return DEFAULT_APP_CONFIG_PATH
+
+
 def load_app_settings(path: Path | None = None) -> AppSettings:
-    """Load app settings from YAML (or defaults when the file is absent)."""
-    if path is None or not path.is_file():
+    """Load app settings from YAML (or defaults when the file is absent).
+
+    ``path=None`` resolves the default ``config/app.yaml`` (see
+    :func:`resolve_app_config_path`); when that file does not exist, built-in
+    defaults apply. When it exists, its values win over the defaults.
+    """
+    resolved = resolve_app_config_path(path)
+    if resolved is None or not resolved.is_file():
         return AppSettings()
     import yaml
 
-    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    data = yaml.safe_load(resolved.read_text(encoding="utf-8")) or {}
     return AppSettings.model_validate(data)

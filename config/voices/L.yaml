@@ -1,0 +1,16 @@
+id: L
+persona:
+  display_name: L
+  description: L from deathnote
+tts:
+  backend: qwen_custom_voice
+  model: Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice
+  language: English
+  speaker: Ryan
+voice_conversion:
+  backend: rvc
+  model: L
+  pitch_shift: 0
+audio:
+  speed: 0.8
+  target_peak_dbfs: -1.0

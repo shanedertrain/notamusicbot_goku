@@ -42,6 +42,11 @@ Key layout:
 
 ## Setup
 
+> **Platform requirement:** the runtime targets **Linux / WSL2 only**. Windows
+> is not natively supported — the setup script and the application use POSIX
+> paths (`.venv-main/bin/python`), Bash and ffmpeg. On Windows, run everything
+> inside WSL2.
+
 Prerequisites: git, curl, ffmpeg, an NVIDIA GPU (recommended), and `deno`
 (for yt-dlp's JS challenges; the setup script checks for it).
 
@@ -51,10 +56,23 @@ Prerequisites: git, curl, ffmpeg, an NVIDIA GPU (recommended), and `deno`
 ./scripts/setup.sh --no-rvc     # skip the legacy Python 3.10 RVC environment
 ```
 
-The script is idempotent: it installs uv + Python 3.12, creates `.venv-main`,
-installs the package with the `discord` and `media` extras, downloads the Qwen
-TTS/LLM weights, and seeds `.env` from `.env.example`. It does not print or
-store any secret.
+The script is idempotent: it installs uv + Python 3.12, initializes the
+`rvc_cli` git submodule (`git submodule update --init --recursive`), creates
+`.venv-main`, installs the package with the `discord` and `media` extras,
+scaffolds `config/app.yaml` from `config/app.example.yaml` (only if missing),
+downloads the Qwen TTS/LLM weights, and seeds `.env` from `.env.example`. It
+does not print or store any secret, and any failed prerequisite aborts the
+script with a non-zero exit code.
+
+**Required RVC assets** (not distributed; supply locally — see the header of
+`scripts/setup.sh` for details):
+
+- `hubert_base.pt` at the repository root (HuBERT feature extractor, from the
+  Retrieval-based-Voice-Conversion project releases);
+- `rvc_cli/models/<Name>/*.pth` + `*.index` per voice (weights + FAISS index);
+- `rvc_cli/models/<Name>/*.yaml` per voice/variant (the yaml stem is the
+  legacy model name; e.g. `obama_trans.yaml` defines `OBAMA_TRANS` and shares
+  the Obama weights in `rvc_cli/models/Obama/`).
 
 ### Configuration (`.env`)
 
@@ -70,9 +88,24 @@ SPOTIFY_CLIENT_ID/SECRET= # optional: better Spotify metadata search
 
 There is **no LLM API key**: song commentary is generated locally by
 Qwen3-4B-Instruct on the GPU, falling back to static template lines if the
-LLM cannot load. Non-secret settings live in `config/app.example.yaml`
-(speech defaults, output dir, warmup, etc.). Old user configs are migrated
-with the `migrate_users` tool (`src/notamusicbot/tools/migrate_users.py`).
+LLM cannot load.
+
+### Configuration resolution (non-secret app settings)
+
+`load_app_settings()` resolves its YAML file in this order:
+
+```text
+explicit path argument → NOTAMUSICBOT_CONFIG env var → config/app.yaml → built-in defaults
+```
+
+A missing file is not an error (built-in defaults apply), but when
+`config/app.yaml` exists its values win over the defaults. `scripts/setup.sh`
+scaffolds it from `config/app.example.yaml` on first run.
+
+Old user configs are migrated with the `migrate_users` tool
+(`src/notamusicbot/tools/migrate_users.py`); it resolves each legacy model
+name to a matching voice profile (e.g. `OBAMA` → `obama`) and exits non-zero
+if a referenced model has no profile — it never silently falls back to `goku`.
 
 ## Voice profiles
 
