@@ -33,7 +33,9 @@ Key layout:
 - `src/notamusicbot/` — the application package (`app.py` composition root,
   `config.py` typed settings, `discord_bot/`, `media/`, `content/`, `speech/`,
   `domain/`, `tools/`).
-- `config/` — voice profiles (`config/voices/goku.yaml`) and `users.yaml`.
+- `config/` — voice profiles (`config/voices/goku.yaml`) and
+  `config/users.example.yaml` (the live `users.yaml` stays in the working
+  deployment only and is excluded from review packages).
 - `legacy/` — the isolated legacy RVC worker (JSON over stdin/stdout).
 - `rvc_cli/` — vendored legacy RVC stack (Python 3.10, fairseq), never imported
   by the application.
@@ -87,8 +89,10 @@ SPOTIFY_CLIENT_ID/SECRET= # optional: better Spotify metadata search
 ```
 
 There is **no LLM API key**: song commentary is generated locally by
-Qwen3-4B-Instruct on the GPU, falling back to static template lines if the
-LLM cannot load.
+Qwen3-4B-Instruct on the GPU (`speech.commentary_enabled` and
+`content.enabled` default to **true** in `config/app.example.yaml`), falling
+back to static template lines if the LLM cannot load. Interstitial and
+podcast generation remain opt-in (default off).
 
 ### Configuration resolution (non-secret app settings)
 
@@ -145,7 +149,7 @@ speech failure is skipped silently — playback continues.
 
 ```yaml
 interstitial:
-  enabled: true        # off by default
+  enabled: false       # opt-in; default false
   probability: 0.25
   min_interval_s: 300
   voice_profile: goku
@@ -166,10 +170,15 @@ failure mid-segment aborts just that segment and playback continues.
 
 ```yaml
 podcast:
-  enabled: true
+  enabled: false       # opt-in; default false
   host_profile: obama
   turns: 2
 ```
+
+Note: alternating voice profiles (e.g. Obama↔Goku) currently restart the
+legacy RVC worker per model switch (~5.5 s per switch, vs ~0.6 s warm
+same-model — see `TEST_RESULTS.md`); a persistent per-model worker cache is
+planned future work.
 
 ## CLI tools
 
@@ -192,9 +201,21 @@ bot itself lives entirely in `src/notamusicbot/`. See `LEGACY_VENV.md`.
 ## Testing
 
 ```bash
-.venv-main/bin/python -m pytest tests/unit                                  # 105 tests
+.venv-main/bin/python -m pytest tests/unit                                  # full unit suite
 .venv-main/bin/python -m pytest tests/integration -m "rvc and integration"  # needs GPU + RVC models
 .venv-main/bin/ruff check src tests && .venv-main/bin/ruff format --check src tests
+```
+
+Exact pass/fail counts for a given revision are deliberately **not**
+hard-coded here — see `TEST_RESULTS.md` (it also maps the review's required
+tests and records the RVC-switching benchmark and GPU-residency run).
+
+## CLI tools
+
+Also available:
+
+```bash
+.venv-main/bin/python -m notamusicbot.tools.benchmark_rvc_switching --help  # alternating-profile RVC switch-cost benchmark
 ```
 
 Evidence from the rework: `IMPLEMENTATION_REPORT.md`, `TEST_RESULTS.md`,

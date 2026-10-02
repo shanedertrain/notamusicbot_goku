@@ -49,21 +49,44 @@ combination (torch 2.14.1+cu130, transformers 4.57.3) is documented in
   with yt-dlp; requires the `deno` binary — `media/youtube.py` imports it),
   `spotipy` 2.26.0 (`media/spotify.py` metadata search).
 - **`dev`**: `pytest` 9.1.1, `pytest-asyncio` 1.4.0, `ruff` 0.16.10, `mypy` 2.4.0.
+  Installed into the main venv by `scripts/setup.sh` (fixed in `548b150` — the
+  dev extra was previously missing from the main-venv install).
+- **`reddit`**: `praw` (floor `>=7.7`; 8.0.3 tested) — **Reddit IS ported**:
+  `content/reddit.py` contains a real PRAW-backed `RedditPostFetcher` used for
+  reddit interstitials and podcast topics. This is an optional extra, not a
+  main dependency, and needs `REDDIT_CLIENT_ID`/`REDDIT_CLIENT_SECRET` in
+  `.env`. (An earlier revision of these notes wrongly called reddit a
+  documented stub — corrected in the Round-3 return.)
 
 Deliberately **not** dependencies of the main environment:
 
 - `fairseq`, `pyworld`, `faiss`, `torchcrepe`, etc. stay only in the legacy
   Python 3.10 RVC venv (`.venv`) used by `legacy/rvc_worker.py` / `rvc_cli`.
   The main environment never imports them.
-- No cloud LLM/TTS SDKs: Gemini (`google-genai`), PlayHT, gTTS, pyttsx3 and
-  the TikTok TTS integration were removed with the legacy code. Commentary
-  uses a local Qwen3-4B-Instruct-2507 — an explicit user decision ("We dont
-  use Gemini anymore so we want to run the LLM parts on the 4070 ti", review
-  P2-18). A smaller model (e.g. Qwen3-1.7B) is under review; swapping is
-  config-only via `content.model_id`. `praw` was not ported, so
-  `content/reddit.py` is a documented stub.
+- No cloud LLM/TTS SDKs in the main environment: Gemini (`google-genai`),
+  PlayHT and the TikTok TTS integration were removed with the legacy code.
+  Commentary uses a local Qwen3-4B-Instruct-2507 — an explicit user decision
+  ("We dont use Gemini anymore so we want to run the LLM parts on the 4070 ti",
+  review P2-18). A smaller model (e.g. Qwen3-1.7B) is optional, config-only
+  via `content.model_id`; the Round-3 GPU-residency run shows the 4B model
+  coexists with TTS + RVC on 16 GB with no OOM, so no smaller model is needed.
 - FFmpeg is a **system** prerequisite (installed by `scripts/setup.sh`), not a
   Python package; no `ffmpeg`-named Python package is required.
+
+## Legacy RVC venv dependencies (`scripts/setup.sh`, Gate R7)
+
+The legacy Python 3.10 RVC environment is built **from scratch** by
+`scripts/setup.sh` (proven on a fresh clone in the Round-3 return; setup
+exits non-zero on missing assets). Its dependency list was completed in
+`548b15007f87eb11d85cb52523d2e460de159e3d`:
+
+- previously missing legacy deps now installed: `audiostretchy`, `pydub`,
+  `gTTS`, `pyttsx3`, `pyyaml`, `python-dotenv`;
+- `setuptools<81` pinned in that venv — setuptools 84 dropped
+  `pkg_resources`, which the legacy stack (fairseq era) still imports;
+- `fairseq` is compiled there (torch 2.5.0+cu121).
+
+These stay out of the main environment; the main app never imports them.
 
 ## Secrets
 
@@ -71,7 +94,10 @@ Deliberately **not** dependencies of the main environment:
   variables. No LLM API key is needed (local LLM). Discord token and optional
   news/Spotify keys are the only secrets. Model weights and `var/` output are
   git-ignored and are not part of any report package.
-- Packaging now goes through `scripts/package.sh` (allowlist + secret scan,
-  Gate R1). Because the first review package left the dev machine before that
-  gate existed, rotation is recommended for the PLAY_HT/OPENAI/GEMINI-era
-  keys (no key values are reproduced anywhere in these reports).
+- Packaging goes through `scripts/package.sh` (allowlist + secret scan,
+  Gate R1); `5cd412f` additionally excludes the live `config/users.yaml`
+  (live Discord user metadata) from review packages — only
+  `config/users.example.yaml` ships. Because the first review package left
+  the dev machine before that gate existed, rotation is recommended for the
+  PLAY_HT/OPENAI/GEMINI-era keys (no key values are reproduced anywhere in
+  these reports).
