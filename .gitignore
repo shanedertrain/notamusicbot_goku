@@ -8,3 +8,4 @@ hubert_base.pt
 genai/logs/*
 *.log
 tools/deno/
+var/
