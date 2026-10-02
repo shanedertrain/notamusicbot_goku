@@ -19,7 +19,6 @@ happens inside the worker subprocess on GPU.
 import json
 import math
 import subprocess
-import sys
 import time
 from pathlib import Path
 
@@ -48,7 +47,12 @@ def _available_model() -> str | None:
         return None
     for name in CANDIDATE_MODELS:
         d = MODELS_DIR / name
-        if d.is_dir() and list(d.glob("*.pth")) and list(d.glob("*.index")) and list(d.glob("*.yaml")):
+        if (
+            d.is_dir()
+            and list(d.glob("*.pth"))
+            and list(d.glob("*.index"))
+            and list(d.glob("*.yaml"))
+        ):
             return name
     return None
 
@@ -170,12 +174,16 @@ def test_worker_health_and_convert_real_model(fixture_wav):
     assert data.size > 0
     duration = data.size / sr
     assert duration > 0.5, f"output too short: {duration:.3f}s"
-    assert math.isfinite(float(data.min())) and math.isfinite(float(data.max())), "NaN/Inf in output"
+    assert math.isfinite(float(data.min())) and math.isfinite(float(data.max())), (
+        "NaN/Inf in output"
+    )
     peak = float(np.abs(data).max())
     assert 0.0 < peak <= 1.0, f"insane peak: {peak}"
 
-    print(f"\nmodel={model_name} load={load_seconds:.2f}s convert={convert_seconds:.2f}s "
-          f"out_dur={duration:.2f}s sr={sr} peak={peak:.3f}")
+    print(
+        f"\nmodel={model_name} load={load_seconds:.2f}s convert={convert_seconds:.2f}s "
+        f"out_dur={duration:.2f}s sr={sr} peak={peak:.3f}"
+    )
 
     # Record latency for the performance baseline (section 35 of the handoff).
     latency_note = FIXTURES / "rvc_worker_last_latency.txt"
@@ -188,8 +196,11 @@ def test_worker_health_and_convert_real_model(fixture_wav):
 @pytest.mark.skipif(not _assets_available(), reason="legacy RVC assets missing")
 def test_worker_rejects_bad_requests(fixture_wav):
     with WorkerProcess() as w:
-        r = w.request(action="convert", input_wav_path=str(fixture_wav),
-                      output_wav_path=str(FIXTURES / "never.wav"))
+        r = w.request(
+            action="convert",
+            input_wav_path=str(fixture_wav),
+            output_wav_path=str(FIXTURES / "never.wav"),
+        )
         assert r["status"] == "error" and "no model loaded" in r["error"]
 
         r = w.request(action="load-model", name="../escape")

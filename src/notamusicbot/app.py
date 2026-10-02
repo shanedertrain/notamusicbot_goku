@@ -7,7 +7,6 @@ expensive is constructed at import time.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from pathlib import Path
 
@@ -87,19 +86,28 @@ class Application:
         if self.settings.speech.warmup_on_start and self._synthesizer is not None:
             self._synthesizer.warmup(Path(self.settings.speech.output_dir) / "warmup.wav")
 
-    async def run(self) -> None:
-        """Main event loop entry point; Discord wiring arrives in Phase E."""
-        self.load_speech_model()
-        self.build_pipeline()
-        await self.warmup()
-        logger.info("Speech stack initialized; Discord layer pending (Phase E)")
-        await asyncio.Event().wait()  # run until cancelled (placeholder)
+    def run_discord(self) -> None:
+        """Startup path for the Discord bot (handoff section 19).
+
+        Model loading and pipeline construction happen in the bot's
+        ``setup_hook`` (inside the bot's event loop, off the event-loop thread).
+        Heavy work is never done at import time.
+        """
+        token = self.secrets.discord_token
+        if not token:
+            logger.error("DISCORD_TOKEN is not set; refusing to start the Discord bot")
+            return
+        # Imported here so non-Discord tooling does not require discord.py.
+        from notamusicbot.discord_bot.bot import build_bot
+
+        bot = build_bot(self)
+        bot.run(token)
 
 
 def main() -> None:
     configure_logging()
     app = Application(load_app_settings())
     try:
-        asyncio.run(app.run())
+        app.run_discord()
     except KeyboardInterrupt:
         logger.info("Shutting down")

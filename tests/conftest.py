@@ -1,7 +1,5 @@
 """Shared pytest configuration for the notamusicbot test suite."""
 
-import pytest
-
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "rvc: legacy RVC runtime tests")
