@@ -139,19 +139,27 @@ class QwenCustomVoiceSynthesizer:
         return AudioArtifact(path=output_path, sample_rate_hz=int(sample_rate), duration_s=duration)
 
     def warmup(self, output_path: Path) -> AudioArtifact:
-        """Run one short generation at startup; timings are logged separately."""
-        import asyncio
+        """Run one short generation at startup; timings are logged separately.
 
-        artifact = asyncio.get_event_loop().run_until_complete(
-            self.synthesize(
-                TtsRequest(
-                    text="Warmup.",
-                    language=self.default_language,
-                    speaker=self.default_speaker,
-                ),
-                output_path,
-            )
+        Safe to call from anywhere: with no running event loop it runs a fresh
+        loop; from inside a running loop it executes on a worker thread so the
+        caller's loop is never blocked or re-entered.
+        """
+        import asyncio
+        import concurrent.futures
+
+        request = TtsRequest(
+            text="Warmup.",
+            language=self.default_language,
+            speaker=self.default_speaker,
         )
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            artifact = asyncio.run(self.synthesize(request, output_path))
+        else:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                artifact = pool.submit(asyncio.run, self.synthesize(request, output_path)).result()
         logger.info("Warmup synthesis complete duration=%.2fs", artifact.duration_s)
         return artifact
 
