@@ -83,7 +83,7 @@ uv python install 3.12
 log "3/7 Main application environment (.venv-main, Python 3.12)"
 [ -d .venv-main ] || uv venv --python 3.12 .venv-main
 # Torch: default PyPI wheels bundle CUDA on Linux; done via pyproject/uv sync.
-uv pip install -p .venv-main -e ".[discord,media]"
+uv pip install -p .venv-main -e ".[discord,media,dev]"
 uv pip install -p .venv-main "discord.py[voice]" yt-dlp yt-dlp-ejs soundfile soxr
 ok "main venv ready"
 
@@ -139,11 +139,13 @@ if [ "$WITH_RVC" = "1" ]; then
   else
     warn "Building legacy RVC venv (large: torch cu121 + fairseq build)..."
     uv venv --python 3.10 .venv
-    uv pip install -p .venv "numpy==1.26.4" "cython<3" wheel setuptools
+    uv pip install -p .venv "numpy==1.26.4" "cython<3" wheel "setuptools<81"
     uv pip install -p .venv fairseq==0.12.2
     uv pip install -p .venv "torch==2.5.0" "torchaudio==2.5.0" --index-url https://download.pytorch.org/whl/cu121
-    uv pip install -p .venv librosa faiss-cpu soundfile praat-parselmouth resampy soxr pyworld torchcrepe "cython<3"
+    uv pip install -p .venv setuptools librosa faiss-cpu soundfile praat-parselmouth resampy soxr pyworld torchcrepe audiostretchy pydub gTTS pyttsx3 pyyaml python-dotenv "cython<3"
     # ffmpeg-python shim: legacy rvc_cli imports it; system ffmpeg CLI is used.
+    # customtkinter (rvc_cli GUI surface) is intentionally not installed — the
+    # worker imports only the conversion path.
     uv pip install -p .venv ffmpeg-python || true
     ok "legacy RVC venv built"
   fi
