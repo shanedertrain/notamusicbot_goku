@@ -18,6 +18,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+
+pytest.importorskip("discord", reason="this module drives the discord command layer")
+
 import soundfile as sf
 import yaml
 
