@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -84,3 +85,55 @@ def test_speed_one_identity(tmp_wav, tmp_path: Path) -> None:
     after_norm = data_after / np.abs(data_after).max()
     assert np.allclose(before_norm, after_norm, atol=1e-3)
     assert len(data_before) == len(data_after)
+
+
+_requires_ffmpeg = pytest.mark.skipif(
+    shutil.which("ffmpeg") is None, reason="ffmpeg CLI not on PATH"
+)
+
+
+def _dominant_frequency(path: Path) -> float:
+    data, rate = sf.read(path, dtype="float64")
+    spectrum = np.abs(np.fft.rfft(data[:, 0] if data.ndim > 1 else data))
+    freqs = np.fft.rfftfreq(data.shape[0], d=1.0 / rate)
+    return float(freqs[int(np.argmax(spectrum))])
+
+
+@_requires_ffmpeg
+def test_speed_stretches_duration_and_preserves_pitch(tmp_wav, tmp_path: Path) -> None:
+    """P1-9: speed 0.8 must scale duration by 1/0.8 AND keep the dominant
+    frequency (within a few percent) — i.e. a pitch-preserving time-stretch."""
+    src = tmp_wav(48000, 2.0)
+    out = tmp_path / "slow.wav"
+    result = asyncio.run(
+        postprocess(
+            _artifact(src, 48000),
+            out,
+            AudioProcessingProfile(speed=0.8, target_sample_rate_hz=48000, channels=1),
+        )
+    )
+    assert result.duration_s == pytest.approx(2.0 / 0.8, rel=0.02)
+    assert sf.info(out).duration == pytest.approx(2.5, rel=0.02)
+    measured = _dominant_frequency(out)
+    assert measured == pytest.approx(440.0, rel=0.04)
+
+
+@_requires_ffmpeg
+def test_speed_above_two_chains_atempo(tmp_wav, tmp_path: Path) -> None:
+    src = tmp_wav(24000, 1.0)
+    out = tmp_path / "veryfast.wav"
+    result = asyncio.run(postprocess(_artifact(src, 24000), out, AudioProcessingProfile(speed=4.0)))
+    assert result.duration_s == pytest.approx(0.25, rel=0.05)
+    assert _dominant_frequency(out) == pytest.approx(440.0, rel=0.05)
+
+
+def test_atempo_chain_factors() -> None:
+    from notamusicbot.speech.postprocess import _atempo_chain
+
+    assert _atempo_chain(1.0) == ["1.000000"]
+    assert _atempo_chain(0.75) == ["0.750000"]
+    assert _atempo_chain(0.4) == ["0.500000", "0.800000"]
+    assert _atempo_chain(4.0) == ["2.0", "2.000000"]
+    # Every factor stays within ffmpeg's atempo range.
+    for factor in _atempo_chain(0.25):
+        assert 0.5 <= float(factor) <= 2.0

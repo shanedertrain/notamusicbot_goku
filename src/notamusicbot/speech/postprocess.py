@@ -1,7 +1,9 @@
 """Audio post-processing: resample/channels -> speed -> peak protection -> WAV.
 
 Intermediate audio between inference stages is always uncompressed PCM/WAV.
-Speed change is explicit here, never an opaque RVC side effect.
+Speed change is explicit here, never an opaque RVC side effect, and uses the
+FFmpeg ``atempo`` filter (chained for ratios outside [0.5, 2.0]) so duration
+scales without shifting pitch.
 """
 
 from __future__ import annotations
@@ -63,19 +65,51 @@ def _resample(
         return data[i0] * (1.0 - frac) + data[i1] * frac
 
 
-def _change_speed(data: npt.NDArray[np.floating], speed: float) -> npt.NDArray[np.floating]:
-    """Time-domain speed change by index interpolation (duration /= speed)."""
-    import numpy as np
+def _atempo_chain(speed: float) -> list[str]:
+    """Split ``speed`` into FFmpeg ``atempo`` factors (each within [0.5, 2.0])."""
+    factors: list[str] = []
+    remaining = speed
+    while remaining > 2.0:
+        factors.append("2.0")
+        remaining /= 2.0
+    while remaining < 0.5:
+        factors.append("0.500000")
+        remaining /= 0.5
+    factors.append(f"{remaining:.6f}")
+    return factors
 
-    if speed == 1.0:
-        return data
-    n = data.shape[0]
-    n_out = max(1, int(round(n / speed)))
-    idx = np.linspace(0, n - 1, num=n_out)
-    i0 = np.floor(idx).astype(int)
-    i1 = np.minimum(i0 + 1, n - 1)
-    frac = (idx - i0)[:, None]
-    return data[i0] * (1.0 - frac) + data[i1] * frac
+
+def _run_atempo(input_path: Path, output_path: Path, speed: float) -> None:
+    """Pitch-preserving time-stretch via the FFmpeg CLI (subprocess, blocking).
+
+    FFmpeg is a documented prerequisite of this project; a missing binary is a
+    clear configuration error, not a silent no-op.
+    """
+    import shutil
+    import subprocess
+
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        msg = (
+            "ffmpeg is required for speed != 1.0 (pitch-preserving atempo "
+            "time-stretch) but was not found on PATH"
+        )
+        raise RuntimeError(msg)
+    filter_chain = ",".join(f"atempo={factor}" for factor in _atempo_chain(speed))
+    cmd = [
+        ffmpeg,
+        "-y",
+        "-nostdin",
+        "-i",
+        str(input_path),
+        "-filter:a",
+        filter_chain,
+        str(output_path),
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        msg = f"ffmpeg atempo failed (exit {result.returncode}): {result.stderr[-500:]}"
+        raise RuntimeError(msg)
 
 
 def _apply_peak_protection(
@@ -108,10 +142,24 @@ async def postprocess(
     data, src_rate = await asyncio.to_thread(_load, source.path)
     data = _to_channels(data, profile.channels)
     data = _resample(data, src_rate, profile.target_sample_rate_hz)
-    data = _change_speed(data, profile.speed)
     data = _apply_peak_protection(data, profile.target_peak_dbfs)
-    await asyncio.to_thread(_write, output_path, data, profile.target_sample_rate_hz)
-    duration = float(data.shape[0] / profile.target_sample_rate_hz)
+    if profile.speed == 1.0:
+        await asyncio.to_thread(_write, output_path, data, profile.target_sample_rate_hz)
+        duration = float(data.shape[0] / profile.target_sample_rate_hz)
+    else:
+        # Pitch-preserving time-stretch: run FFmpeg atempo on temp WAV files
+        # instead of resampling-style interpolation (which shifts pitch).
+        tmp_in = output_path.with_name(output_path.stem + ".pre_speed.wav")
+        tmp_out = output_path.with_name(output_path.stem + ".post_speed.wav")
+        try:
+            await asyncio.to_thread(_write, tmp_in, data, profile.target_sample_rate_hz)
+            await asyncio.to_thread(_run_atempo, tmp_in, tmp_out, profile.speed)
+            stretched, out_rate = await asyncio.to_thread(_load, tmp_out)
+            duration = float(stretched.shape[0] / out_rate)
+            await asyncio.to_thread(_write, output_path, stretched, profile.target_sample_rate_hz)
+        finally:
+            tmp_in.unlink(missing_ok=True)
+            tmp_out.unlink(missing_ok=True)
     logger.info(
         "Postprocess done rate=%d channels=%d speed=%.2f duration=%.2fs latency=%.3fs",
         profile.target_sample_rate_hz,
