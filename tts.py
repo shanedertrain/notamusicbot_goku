@@ -7,7 +7,6 @@ from gtts import gTTS
 import configuration as cfg
 
 sys.path.append(str(cfg.FOLDER_ROOT / "tiktok_voice_tts"))
-from tiktok_voice_tts.tiktokvoice import TikTokVoiceTTS
 
 # from playht_tts.playht_voice_generator import PlayHTVoiceGenerator, VoiceManifest
 
@@ -88,26 +87,26 @@ class TextToSpeechConverter_gTTS(TextToSpeechConverter):
         print("gTTS doesn't provide voice options like pyttsx3")
 
 
-class TextToSpeechConverter_TikTok(TextToSpeechConverter):
-    def __init__(self, voice_name=TikTokVoiceTTS.Voices.en_us_001.name):
-        super().__init__()
-        self.converter = TikTokVoiceTTS()
-        self.voice = TikTokVoiceTTS.get_voice_by_name(voice_name)
+# class TextToSpeechConverter_TikTok(TextToSpeechConverter):
+#     def __init__(self, voice_name=TikTokVoiceTTS.Voices.en_us_001.name):
+#         super().__init__()
+#         self.converter = TikTokVoiceTTS()
+#         self.voice = TikTokVoiceTTS.get_voice_by_name(voice_name)
 
-    def text_to_speech(
-        self, text: str, output_folder: Path = cfg.FOLDER_OUTPUT, output_filestem: str = "test_ttv"
-    ) -> Path:
-        output_filepath = output_folder / (output_filestem + ".mp3")
+#     def text_to_speech(
+#         self, text: str, output_folder: Path = cfg.FOLDER_OUTPUT, output_filestem: str = "test_ttv"
+#     ) -> Path:
+#         output_filepath = output_folder / (output_filestem + ".mp3")
 
-        self.converter.tts(text, self.voice, output_filepath)
+#         self.converter.tts(text, self.voice, output_filepath)
 
-        cfg.LOGGER.debug(f"Audio saved as {output_filepath}")
+#         cfg.LOGGER.debug(f"Audio saved as {output_filepath}")
 
-        return output_filepath
+#         return output_filepath
 
-    def list_voices(self):
-        for voice_enum in self.converter.Voices.__members__.values():
-            print(f"{voice_enum.value}: {voice_enum.name}")
+#     def list_voices(self):
+#         for voice_enum in self.converter.Voices.__members__.values():
+#             print(f"{voice_enum.value}: {voice_enum.name}")
 
 
 # class TextToSpeechConverter_PlayHT(TextToSpeechConverter):
@@ -134,7 +133,7 @@ def get_tts_module(tts_packed: str) -> TextToSpeechConverter:
     tts_modules = {
         "gtts": TextToSpeechConverter_gTTS,
         "pyttsx3": TextToSpeechConverter_Pyttsx3,
-        "ttv": TextToSpeechConverter_TikTok,
+        # "ttv": TextToSpeechConverter_TikTok,
         # 'pyht': TextToSpeechConverter_PlayHT,
     }
 

@@ -8,6 +8,7 @@ from typing import Dict, Tuple, Union
 
 import discord
 import yt_dlp
+import yt_dlp_ejs  # Registers JS runtimes with yt-dlp
 from discord.ext import commands
 
 import configuration as cfg
@@ -41,12 +42,14 @@ LOCAL_DENO = Path(__file__).resolve().parent / "tools" / "deno" / ("deno.exe" if
 
 def _detect_js_runtimes():
     """Find available JS runtimes for yt-dlp (node/deno/quickjs)."""
-    runtimes = {}
+    runtimes: Dict[str, Dict[str, str]] = {}
     for name in ("node", "deno", "qjs", "quickjs"):
         found = shutil.which(name)
         if found:
             runtimes[name] = {"path": found}
-    if LOCAL_DENO.exists():
+
+    if LOCAL_DENO.exists() and os.access(LOCAL_DENO, os.X_OK):
+        # Ensure our bundled deno is included (and wins for deno)
         runtimes["deno"] = {"path": str(LOCAL_DENO)}
 
     if not runtimes:
@@ -54,7 +57,7 @@ def _detect_js_runtimes():
             "No JavaScript runtime found for yt-dlp. Install Node/Deno/QuickJS or place a runtime in tools/deno/."
         )
     else:
-        LOGGER.info("JS runtimes detected for yt-dlp: %s", {k: v.get("path") for k, v in runtimes.items()})
+        LOGGER.info("JS runtimes detected for yt-dlp: %s", {k: v.get('path') for k, v in runtimes.items()})
     return runtimes
 
 
