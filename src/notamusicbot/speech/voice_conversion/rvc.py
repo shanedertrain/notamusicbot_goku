@@ -328,9 +328,13 @@ class RvcVoiceConverter:
         if model is None:
             msg = "RVC voice conversion requires a model name in the profile"
             raise WorkerError(msg)
+        # Resolve the on-disk model name FIRST: profiles may carry legacy
+        # aliases (e.g. "GOKU" for the "Goku" directory), and comparing the
+        # raw profile name against the previously loaded canonical name
+        # would needlessly restart the worker on every utterance.
+        model = self._resolve_model_name(model)
         if self._loaded_model == model:
             return
-        model = self._resolve_model_name(model)
         if self._loaded_model is not None:
             # One model per worker: restart to switch voices.
             await self._restart()
