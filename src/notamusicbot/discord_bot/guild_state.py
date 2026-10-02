@@ -37,6 +37,19 @@ class GuildState:
             except asyncio.QueueEmpty:
                 return drained
 
+    def put_front(self, media: PlayableMedia) -> None:
+        """Insert an item at the HEAD of the queue.
+
+        Used for post-song content (interstitial/podcast segments) generated in
+        the player's completion hook: the hook is awaited before the next
+        dequeue, so inserting at the head guarantees song A → segment → song B
+        even when song B was already queued.
+        """
+        drained = self.drain_queue()
+        self.queue.put_nowait(media)
+        for item in drained:
+            self.queue.put_nowait(item)
+
     def request_stop(self) -> None:
         """Signal the playback loop to exit after the current item."""
         self.stop_event.set()

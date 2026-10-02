@@ -67,6 +67,7 @@ def make_player(
     source_factory=None,
     stream_downloader=None,
     on_now_playing=None,
+    on_playback_complete=None,
 ) -> GuildPlayer:
     return GuildPlayer(
         state,
@@ -74,6 +75,7 @@ def make_player(
         source_factory=source_factory or (lambda media: object()),
         stream_downloader=stream_downloader,
         on_now_playing=on_now_playing,
+        on_playback_complete=on_playback_complete,
     )
 
 
@@ -311,3 +313,160 @@ async def test_download_failure_cleans_only_played_media(tmp_path: Path) -> None
         vc.finish()
         await wait_until(lambda: not temp_media.source_path.exists())
     assert not temp_media.source_path.exists()
+
+
+# --- Round-3: post-song lifecycle, stop race, download ownership ------------
+
+
+async def test_completion_hook_fires_once_per_song_not_for_generated(
+    tmp_path: Path,
+) -> None:
+    """Round-3 P0: song A -> exactly one generated segment -> song B, and the
+    generated LOCAL segment never triggers another completion hook (no
+    recursion)."""
+    vc = FakeVoiceClient()
+    state = GuildState(1)
+    played_ids: list[str] = []
+    hook_calls: list[str] = []
+    segment_no = 0
+
+    def factory(media: PlayableMedia) -> object:
+        played_ids.append(media.media_id)
+        return object()
+
+    async def hook(media: PlayableMedia) -> None:
+        nonlocal segment_no
+        hook_calls.append(media.media_id)
+        segment_no += 1
+        state.put_front(make_media(f"seg-{segment_no}", tmp_path))
+
+    player = make_player(state, vc, source_factory=factory, on_playback_complete=hook)
+    state.queue.put_nowait(
+        PlayableMedia(media_id="song-a", kind=MediaKind.STREAM, stream_url="https://example/a")
+    )
+    state.queue.put_nowait(
+        PlayableMedia(media_id="song-b", kind=MediaKind.STREAM, stream_url="https://example/b")
+    )
+
+    async with running_player(player):
+        for count in range(1, 5):
+            await wait_until(lambda c=count: len(played_ids) >= c)
+            vc.finish()
+        await wait_until(lambda: state.queue.empty() and len(hook_calls) == 2)
+
+    # Interstitial segments are enqueued ahead of the next song, and each song
+    # produced exactly one segment (generated items fire nothing).
+    assert played_ids == ["song-a", "seg-1", "song-b", "seg-2"]
+    assert hook_calls == ["song-a", "song-b"]
+
+    # No leftover tasks after the queue drains (review section 9).
+    current = asyncio.current_task()
+    await asyncio.sleep(0)
+    leftover = [t for t in asyncio.all_tasks() if t is not current and not t.done()]
+    assert leftover == []
+
+
+async def test_completion_hook_not_fired_for_local_media(tmp_path: Path) -> None:
+    vc = FakeVoiceClient()
+    state = GuildState(1)
+    hook_calls: list[str] = []
+
+    async def hook(media: PlayableMedia) -> None:
+        hook_calls.append(media.media_id)
+
+    player = make_player(state, vc, on_playback_complete=hook)
+    state.queue.put_nowait(make_media("generated-speech", tmp_path))
+
+    async with running_player(player):
+        await wait_until(lambda: len(vc.played) == 1)
+        vc.finish()
+        await wait_until(lambda: state.queue.empty())
+    assert hook_calls == []
+
+
+async def test_completion_hook_awaited_before_next_dequeue(tmp_path: Path) -> None:
+    """The hook must complete (including its enqueue) before song B starts."""
+    vc = FakeVoiceClient()
+    state = GuildState(1)
+    events: list[str] = []
+
+    def factory(media: PlayableMedia) -> object:
+        events.append(f"play:{media.media_id}")
+        return object()
+
+    async def hook(media: PlayableMedia) -> None:
+        events.append("hook:start")
+        await asyncio.sleep(0.02)  # simulated LLM/TTS latency
+        state.put_front(make_media("interstitial", tmp_path))
+        events.append("hook:end")
+
+    player = make_player(state, vc, source_factory=factory, on_playback_complete=hook)
+    state.queue.put_nowait(
+        PlayableMedia(media_id="a", kind=MediaKind.STREAM, stream_url="https://example/a")
+    )
+    state.queue.put_nowait(
+        PlayableMedia(media_id="b", kind=MediaKind.STREAM, stream_url="https://example/b")
+    )
+
+    async with running_player(player):
+        await wait_until(lambda: "play:a" in events)
+        vc.finish()  # song A ends
+        await wait_until(lambda: "hook:end" in events)
+        assert "play:b" not in events  # B did not start before the hook finished
+        await wait_until(lambda: "play:interstitial" in events)
+        vc.finish()
+        await wait_until(lambda: "play:b" in events)
+        vc.finish()
+
+    assert events.index("hook:end") < events.index("play:b")
+    assert events.index("play:interstitial") < events.index("play:b")
+    assert events[:3] == ["play:a", "hook:start", "hook:end"]
+
+
+async def test_stop_recovers_completed_queue_get_item(tmp_path: Path) -> None:
+    """Round-3 P1 stop race: queue.get resolved while stop won — the removed
+    item is recovered and its temp file cleaned up, deterministically."""
+    vc = FakeVoiceClient()
+    state = GuildState(1)
+    player = make_player(state, vc)
+    orphan = make_media("orphan", tmp_path, temp=True)
+    state.queue.put_nowait(orphan)
+    # Stop is requested before the loop even waits, so the queue-get task and
+    # the stop wait complete in the same event-loop step.
+    state.request_stop()
+
+    task = asyncio.create_task(player.run())
+    await asyncio.wait_for(task, timeout=2.0)
+
+    assert state.queue.empty()
+    assert not orphan.source_path.exists()
+    assert vc.played == []
+
+
+async def test_source_factory_failure_after_download_removes_temp_file(
+    tmp_path: Path,
+) -> None:
+    """Round-3 P1 download leak: download succeeds, source_factory raises —
+    the downloaded temp file must not survive."""
+    vc = FakeVoiceClient()
+    state = GuildState(1)
+    downloaded = tmp_path / "fallback.m4a"
+    downloaded.write_bytes(b"audio")
+
+    def factory(media: PlayableMedia) -> object:
+        raise RuntimeError("source creation boom")
+
+    async def downloader(media: PlayableMedia) -> Path:
+        return downloaded
+
+    player = make_player(state, vc, source_factory=factory, stream_downloader=downloader)
+    state.queue.put_nowait(
+        PlayableMedia(media_id="yt", kind=MediaKind.STREAM, stream_url="https://example/stream")
+    )
+
+    async with running_player(player):
+        await wait_until(lambda: state.queue.empty())
+        await asyncio.sleep(0.05)  # allow the skip path to settle
+
+    assert not downloaded.exists()
+    assert vc.played == []  # item skipped, not played

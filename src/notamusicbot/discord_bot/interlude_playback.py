@@ -66,7 +66,10 @@ async def enqueue_profile_commentary(
     )
     if media is None:
         return False
-    host.guild_state(guild_id).queue.put_nowait(media)
+    # Post-song content goes to the HEAD of the queue: the completion hook is
+    # awaited before the next dequeue, so the segment plays before any song
+    # that was already queued (song A → segment → song B).
+    host.guild_state(guild_id).put_front(media)
     return True
 
 
@@ -80,7 +83,9 @@ async def fire_post_song_content(host: Any, guild_id: int) -> bool:
         if host.podcasts.active(guild_id):
             turns = await host.podcasts.segment_turns(guild_id)
             enqueued = False
-            for turn in turns:
+            # Each turn is inserted at the head, so enqueue in reverse to keep
+            # the conversation turn order.
+            for turn in reversed(turns):
                 if await enqueue_profile_commentary(
                     host, guild_id, turn.voice_profile_id, turn.text, requester="podcast"
                 ):

@@ -109,6 +109,18 @@ class FakeGuildState:
     def __init__(self) -> None:
         self.queue: asyncio.Queue = asyncio.Queue()
 
+    def put_front(self, media) -> None:  # noqa: ANN001
+        """Mirror GuildState.put_front (head insertion)."""
+        drained: list = []
+        while True:
+            try:
+                drained.append(self.queue.get_nowait())
+            except asyncio.QueueEmpty:
+                break
+        self.queue.put_nowait(media)
+        for item in drained:
+            self.queue.put_nowait(item)
+
 
 @dataclass
 class FakeInterstitialSettings:

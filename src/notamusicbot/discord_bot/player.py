@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 AudioSourceFactory = Callable[[PlayableMedia], Any]
 StreamDownloader = Callable[[PlayableMedia], Awaitable[Path | None]]
 NowPlayingHook = Callable[[PlayableMedia], Awaitable[None] | None]
+PlaybackCompleteHook = Callable[[PlayableMedia], Awaitable[None] | None]
 
 
 def ffmpeg_source_factory(media: PlayableMedia) -> Any:
@@ -61,12 +62,14 @@ class GuildPlayer:
         source_factory: AudioSourceFactory = ffmpeg_source_factory,
         stream_downloader: StreamDownloader | None = None,
         on_now_playing: NowPlayingHook | None = None,
+        on_playback_complete: PlaybackCompleteHook | None = None,
     ) -> None:
         self._state = state
         self._get_voice_client = get_voice_client
         self._source_factory = source_factory
         self._stream_downloader = stream_downloader
         self._on_now_playing = on_now_playing
+        self._on_playback_complete = on_playback_complete
         self._loop: asyncio.AbstractEventLoop | None = None
 
     @property
@@ -96,7 +99,19 @@ class GuildPlayer:
             finally:
                 stop_task.cancel()
             if state.stop_event.is_set():
-                get_task.cancel()
+                # Stop/get race: if the queue-get task already completed, the
+                # item has been removed from the queue and would otherwise be
+                # orphaned — recover it, clean it up, then exit.
+                if get_task.done() and not get_task.cancelled():
+                    recovered = get_task.result()
+                    logger.info(
+                        "Recovered dequeued media %s during stop in guild %s",
+                        recovered.media_id,
+                        state.guild_id,
+                    )
+                    cleanup_media(recovered)
+                else:
+                    get_task.cancel()
                 break
             media = await get_task
             play_media = media
@@ -114,6 +129,21 @@ class GuildPlayer:
                 # fell back to a downloaded copy, that LOCAL copy (temp_file)
                 # is the file to delete, not the original STREAM item.
                 cleanup_media(play_media)
+            # Post-song content hook (review Round-2 P0): awaited to completion
+            # BEFORE the next dequeue, so generated interstitial/podcast audio
+            # is enqueued ahead of song B. Fired only for STREAM (song) items —
+            # generated/local items must never recurse into post-song content.
+            if self._on_playback_complete is not None and media.kind is MediaKind.STREAM:
+                try:
+                    result = self._on_playback_complete(media)
+                    if inspect.isawaitable(result):
+                        await result
+                except Exception:
+                    logger.exception(
+                        "Playback-complete hook failed for media %s in guild %s; continuing",
+                        media.media_id,
+                        state.guild_id,
+                    )
         logger.info("Playback task exiting for guild %s", state.guild_id)
 
     async def _play_one(self, media: PlayableMedia) -> PlayableMedia:
@@ -138,9 +168,6 @@ class GuildPlayer:
             # stream URL to avoid mid-stream signature/403 failures.
             try:
                 path = await self._stream_downloader(media)
-                if path is not None and path.exists():
-                    play_media = media.as_local(path)
-                    source = self._source_factory(play_media)
             except Exception:
                 logger.warning(
                     "Download fallback failed for media %s in guild %s; trying the stream URL",
@@ -148,6 +175,25 @@ class GuildPlayer:
                     self._state.guild_id,
                     exc_info=True,
                 )
+                path = None
+            if path is not None and path.exists():
+                play_media = media.as_local(path)
+                try:
+                    source = self._source_factory(play_media)
+                except Exception:
+                    # P1: we own the downloaded temp file until playback
+                    # starts — remove it before falling back to the stream
+                    # URL so a source-creation failure cannot leak it.
+                    logger.warning(
+                        "Source creation failed for downloaded copy of media %s in guild %s; "
+                        "removing it and trying the stream URL",
+                        media.media_id,
+                        self._state.guild_id,
+                        exc_info=True,
+                    )
+                    cleanup_media(play_media)
+                    play_media = media
+                    source = None
         if source is None:
             source = self._source_factory(play_media)
 

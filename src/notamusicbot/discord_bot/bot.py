@@ -80,7 +80,6 @@ class NotAMusicBot(commands.Bot):
             provider_factory=app.build_content_provider,
             pipeline_factory=lambda: app.pipeline,
         )
-        self._post_song_tasks: set[asyncio.Task[None]] = set()
         if content_settings.enabled:
             logger.info(
                 "Content generation enabled; interstitials=%s podcast=%s",
@@ -132,15 +131,11 @@ class NotAMusicBot(commands.Bot):
             get_voice_client=lambda: guild.voice_client,
             stream_downloader=self._build_stream_downloader(guild.id),
             on_now_playing=self._make_now_playing_hook(guild.id),
+            on_playback_complete=self._make_playback_complete_hook(guild.id),
         )
 
     def _make_now_playing_hook(self, guild_id: int):
         async def _announce(media: PlayableMedia) -> None:
-            # Schedule the post-song content listener (interstitial/podcast):
-            # it waits for the current item's playback-completion event, which
-            # was cleared just before this hook runs, then fires content into
-            # the queue before/around the next track. Never blocks playback.
-            self._spawn_post_song_listener(guild_id)
             channel = self._announce_channels.get(guild_id)
             if channel is None or media.kind is not MediaKind.STREAM:
                 return
@@ -153,28 +148,27 @@ class NotAMusicBot(commands.Bot):
 
         return _announce
 
-    def _spawn_post_song_listener(self, guild_id: int) -> None:
-        """Wait for the just-started item to finish, then fire content."""
-        state = self.guild_state(guild_id)
+    def _make_playback_complete_hook(self, guild_id: int):
+        """Player completion hook (review Round-2 P0).
 
-        async def _listener() -> None:
+        Invoked by the player after a STREAM item finishes and before the next
+        dequeue, so generated interstitial/podcast audio is awaited into the
+        queue ahead of the next song. LOCAL/generated items never reach this
+        hook (the player gates on ``media.kind == STREAM``), so generated audio
+        cannot recurse into more post-song content.
+        """
+
+        async def _on_complete(media: PlayableMedia) -> None:
+            if media.kind is not MediaKind.STREAM:
+                return
             try:
-                await state.playback_done.wait()
-                if state.stop_event.is_set():
-                    return
                 await fire_post_song_content(self, guild_id)
-            except asyncio.CancelledError:
-                raise
             except Exception:
                 logger.warning(
                     "Post-song content hook failed in guild %s; continuing", guild_id, exc_info=True
                 )
 
-        task = asyncio.get_running_loop().create_task(
-            _listener(), name=f"post-song-content-{guild_id}"
-        )
-        self._post_song_tasks.add(task)
-        task.add_done_callback(self._post_song_tasks.discard)
+        return _on_complete
 
     async def setup_hook(self) -> None:
         # Load the persistent Qwen model off the event loop, then build the
@@ -192,8 +186,6 @@ class NotAMusicBot(commands.Bot):
 
     async def close(self) -> None:
         """discord.py teardown: close the gateway, then application lifecycle."""
-        for task in list(self._post_song_tasks):
-            task.cancel()
         try:
             await super().close()
         finally:
