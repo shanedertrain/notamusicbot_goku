@@ -14,7 +14,7 @@ from pathlib import Path
 
 from notamusicbot.config import AppSettings, SecretsSettings, load_app_settings
 from notamusicbot.content.base import ContentProvider
-from notamusicbot.domain.speech import AudioProcessingProfile
+from notamusicbot.domain.speech import AudioArtifact, AudioProcessingProfile, TtsRequest
 from notamusicbot.domain.users import UserProfile, UserRegistry, load_users_yaml
 from notamusicbot.domain.voice_profiles import load_voice_profiles
 from notamusicbot.speech.coordinator import InferenceCoordinator
@@ -31,6 +31,41 @@ def configure_logging(verbose: bool = False) -> None:
         level=logging.DEBUG if verbose else logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
+
+
+class _LazySpeechSynthesizer:
+    """Deferred-loading stand-in for the real synthesizer.
+
+    Installed when no enabled feature needs speech (review Round-2 P1: skip
+    expensive component loading). The real Qwen model is only constructed on
+    the first actual use; ``warmup`` is never scheduled for it (guarded in
+    :meth:`Application.startup`).
+    """
+
+    def __init__(self, app: Application) -> None:
+        self._app = app
+        self._real: QwenCustomVoiceSynthesizer | None = None
+
+    def _realize(self) -> QwenCustomVoiceSynthesizer:
+        if self._real is None:
+            s = self._app.settings.speech
+            logger.info("Lazy speech model load on first use (%s)", s.tts_model_id)
+            self._real = QwenCustomVoiceSynthesizer.from_settings(
+                model_id=s.tts_model_id,
+                device=s.tts_device,
+                dtype=s.tts_dtype,
+                attn_implementation=s.tts_attn_implementation,
+            )
+        return self._real
+
+    async def synthesize(self, request: TtsRequest, output_path: Path) -> AudioArtifact:
+        return await self._realize().synthesize(request, output_path)
+
+    def warmup(self, output_path: Path) -> AudioArtifact:
+        return self._realize().warmup(output_path)
+
+    def __getattr__(self, name: str):
+        return getattr(self._realize(), name)
 
 
 class Application:
@@ -55,7 +90,7 @@ class Application:
             max_concurrent=settings.speech.max_concurrent_inference,
             queue_size=settings.speech.queue_size,
         )
-        self._synthesizer: QwenCustomVoiceSynthesizer | None = None
+        self._synthesizer: QwenCustomVoiceSynthesizer | _LazySpeechSynthesizer | None = None
         # Composition-root dependency injection: tests install a spy/fake RVC
         # adapter factory here instead of the real worker-spawning adapter.
         self.converter: VoiceConverter = VoiceConverterRouter(
@@ -72,6 +107,21 @@ class Application:
         """The typed router behind :attr:`converter` (lifecycle entry point)."""
         assert isinstance(self.converter, VoiceConverterRouter)
         return self.converter
+
+    @property
+    def speech_features_enabled(self) -> bool:
+        """True when any enabled feature needs the speech pipeline or the LLM.
+
+        Review Round-2 P1: when neither commentary, content, interstitial nor
+        podcast is enabled, the expensive local models are not loaded at all.
+        """
+        s = self.settings
+        return (
+            s.speech.commentary_enabled
+            or s.content.enabled
+            or s.interstitial.enabled
+            or s.podcast.enabled
+        )
 
     def build_content_provider(self) -> ContentProvider | None:
         """Construct the content provider from settings (lazy; no model load here).
@@ -95,25 +145,51 @@ class Application:
         return self._content_provider
 
     def load_content_model(self) -> None:
-        """Load the local LLM off the event loop (call during startup)."""
+        """Load the local LLM off the event loop (call during startup).
+
+        Fail-soft (review Round-2 P1): any load failure (OOM, corrupted cache,
+        missing weights, CUDA error) is logged and a static fallback provider
+        is installed instead, so the bot still starts and content requests
+        return fallback text. Skipped entirely when no enabled feature needs
+        the LLM.
+        """
+        if not self.speech_features_enabled:
+            logger.info("Content/speech features disabled; skipping content model load")
+            return
         provider = self.build_content_provider()
         if provider is None:
             return
+        from notamusicbot.content.base import StaticTemplateProvider
         from notamusicbot.content.llm import LocalQwenLlmProvider
 
         if isinstance(provider, LocalQwenLlmProvider):
-            provider.load()
+            try:
+                provider.load()
+            except Exception:
+                logger.exception(
+                    "Local content model failed to load; installing static fallback provider"
+                )
+                self._content_provider = StaticTemplateProvider()
 
-    def load_speech_model(self) -> QwenCustomVoiceSynthesizer:
-        """Load the persistent Qwen model once (call during startup, not import)."""
+    def load_speech_model(self) -> QwenCustomVoiceSynthesizer | _LazySpeechSynthesizer:
+        """Load the persistent Qwen model once (call during startup, not import).
+
+        When no enabled feature needs speech, a lazy proxy is installed that
+        only loads the real model on first use (review Round-2 P1: skip
+        expensive components).
+        """
         if self._synthesizer is None:
-            s = self.settings.speech
-            self._synthesizer = QwenCustomVoiceSynthesizer.from_settings(
-                model_id=s.tts_model_id,
-                device=s.tts_device,
-                dtype=s.tts_dtype,
-                attn_implementation=s.tts_attn_implementation,
-            )
+            if not self.speech_features_enabled:
+                self._synthesizer = _LazySpeechSynthesizer(self)
+                logger.info("Speech features disabled; TTS model load deferred to first use")
+            else:
+                s = self.settings.speech
+                self._synthesizer = QwenCustomVoiceSynthesizer.from_settings(
+                    model_id=s.tts_model_id,
+                    device=s.tts_device,
+                    dtype=s.tts_dtype,
+                    attn_implementation=s.tts_attn_implementation,
+                )
         return self._synthesizer
 
     def build_pipeline(self) -> SpeechPipeline:
@@ -133,6 +209,8 @@ class Application:
             processing,
             coordinator=self.coordinator,
             output_dir=Path(s.output_dir),
+            keep_artifacts=s.keep_artifacts,
+            failed_job_retention_hours=s.failed_job_retention_hours,
         )
         return self.pipeline
 
@@ -146,7 +224,14 @@ class Application:
         ``rvc_unavailable_policy`` instead of killing startup.
         """
         await self.converter_router.startup()
-        if self.settings.speech.warmup_on_start:
+        # Warmup only when a feature will actually use the synthesizer and the
+        # setting asks for it; scheduled as a task so it never blocks startup.
+        # At most one warmup task is scheduled per startup cycle.
+        if (
+            self.settings.speech.warmup_on_start
+            and self.speech_features_enabled
+            and self._warmup_task is None
+        ):
             self._warmup_task = asyncio.create_task(self.warmup(), name="speech-warmup")
 
     async def shutdown(self) -> None:

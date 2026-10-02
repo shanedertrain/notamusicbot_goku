@@ -6,6 +6,7 @@ Discord and content code never performs these stages manually; they call
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 import uuid
@@ -21,7 +22,12 @@ from notamusicbot.domain.speech import (
     TtsRequest,
     VoiceConversionProfile,
 )
-from notamusicbot.speech.artifacts import mark_temp_artifact
+from notamusicbot.speech.artifacts import (
+    mark_failed_job,
+    mark_temp_artifact,
+    prune_expired_jobs,
+    remove_empty_job_dir,
+)
 from notamusicbot.speech.coordinator import InferenceCoordinator
 from notamusicbot.speech.postprocess import postprocess
 from notamusicbot.speech.tts.base import SpeechSynthesizer
@@ -48,6 +54,7 @@ class SpeechPipeline:
         output_dir: Path = Path("var/speech"),
         *,
         keep_artifacts: bool = False,
+        failed_job_retention_hours: float = 24.0,
     ) -> None:
         self._synthesizer = synthesizer
         self._converter = converter
@@ -63,6 +70,7 @@ class SpeechPipeline:
         # A failed stage retains what it produced so failures stay diagnosable;
         # ``keep_artifacts=True`` (debug/benchmark mode) retains everything.
         self._keep_artifacts = keep_artifacts
+        self._failed_job_retention_hours = failed_job_retention_hours
 
     def _paths(self, job_id: str) -> tuple[Path, Path, Path]:
         job_dir = self._output_dir / job_id
@@ -84,25 +92,50 @@ class SpeechPipeline:
         start = time.perf_counter()
         queue_start = time.perf_counter()
 
-        async with self._coordinator.slot():
-            queue_wait = time.perf_counter() - queue_start
-            tts_path, vc_path, final_path = self._paths(job_id)
-            tts_start = time.perf_counter()
-            source = await self._synthesizer.synthesize(request, tts_path)
-            tts_s = time.perf_counter() - tts_start
+        # Opportunistic housekeeping (review Round-2 P2): age out failed-job
+        # dirs past the retention window and empty dirs left behind after
+        # playback cleanup. Best-effort: never blocks or fails the job.
+        if not self._keep_artifacts:
+            try:
+                await asyncio.to_thread(
+                    prune_expired_jobs, self._output_dir, self._failed_job_retention_hours
+                )
+            except Exception:
+                logger.debug("Job-dir pruning failed", exc_info=True)
 
-            vc_start = time.perf_counter()
-            converted = await self._converter.convert(source, conversion, vc_path)
-            vc_s = time.perf_counter() - vc_start
-            if not self._keep_artifacts:
-                tts_path.unlink(missing_ok=True)
+        job_dir = self._output_dir / job_id
+        try:
+            async with self._coordinator.slot():
+                queue_wait = time.perf_counter() - queue_start
+                tts_path, vc_path, final_path = self._paths(job_id)
+                tts_start = time.perf_counter()
+                source = await self._synthesizer.synthesize(request, tts_path)
+                tts_s = time.perf_counter() - tts_start
 
-            pp_start = time.perf_counter()
-            final = await postprocess(converted, final_path, processing)
-            pp_s = time.perf_counter() - pp_start
-            if not self._keep_artifacts:
-                vc_path.unlink(missing_ok=True)
-                mark_temp_artifact(final.path)
+                vc_start = time.perf_counter()
+                converted = await self._converter.convert(source, conversion, vc_path)
+                vc_s = time.perf_counter() - vc_start
+                if not self._keep_artifacts:
+                    tts_path.unlink(missing_ok=True)
+
+                pp_start = time.perf_counter()
+                final = await postprocess(converted, final_path, processing)
+                pp_s = time.perf_counter() - pp_start
+                if not self._keep_artifacts:
+                    vc_path.unlink(missing_ok=True)
+                    mark_temp_artifact(final.path)
+        except Exception:
+            # Failed jobs keep their artifacts for diagnosis; record when the
+            # failure happened so retention pruning can age the dir out later.
+            mark_failed_job(job_dir)
+            logger.exception("Speech job %s failed; artifacts kept in %s", job_id, job_dir)
+            raise
+
+        # Review Round-2 P2: drop the per-job directory when nothing is left in
+        # it (final.wav normally survives until playback cleanup; the periodic
+        # prune then removes the emptied dir).
+        if not self._keep_artifacts:
+            remove_empty_job_dir(job_dir)
 
         total_s = time.perf_counter() - start
         out_duration = final.duration_s or _probe_duration(final.path)

@@ -116,7 +116,7 @@ def test_content_settings_defaults_match_local_qwen() -> None:
     assert settings.content.provider == "local_qwen"
     assert settings.content.model_id == "Qwen/Qwen3-4B-Instruct-2507"
     assert settings.content.max_concurrent_generations == 1
-    assert settings.content.enabled is False
+    assert settings.content.enabled is True
 
 
 def test_disabled_content_yields_no_provider() -> None:

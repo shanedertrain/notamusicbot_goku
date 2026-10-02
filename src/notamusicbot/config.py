@@ -50,10 +50,16 @@ class SpeechSettings(BaseModel):
     channels: int = 2
     default_speed: float = Field(default=1.0, ge=0.25, le=4.0)
     default_target_peak_dbfs: float = Field(default=-1.0, le=0.0)
-    commentary_enabled: bool = False
+    # Review Round-2 P1: the commentary flow is the primary feature of this
+    # rework, so fresh installs (config/app.example.yaml) start with it on.
+    commentary_enabled: bool = True
     # Debug/benchmark mode: retain tts_source.wav/converted.wav/final.wav in the
     # job directory instead of applying the standard artifact cleanup policy.
     keep_artifacts: bool = False
+    # Failed jobs keep their intermediate artifacts for diagnosis (marked with a
+    # ``.failed`` timestamp); directories older than this many hours are pruned
+    # opportunistically when the next speech job starts.
+    failed_job_retention_hours: float = Field(default=24.0, ge=0.0)
     # Voice-conversion backends the router may serve (see
     # speech/voice_conversion/router.py). Profiles requesting another backend
     # fail with a clear error instead of silently falling back.
@@ -97,7 +103,9 @@ class ContentSettings(BaseModel):
     startup — never at import time.
     """
 
-    enabled: bool = False
+    # Review Round-2 P1: enabled by default — a fresh setup must exercise the
+    # content -> Qwen TTS -> RVC path during ordinary music playback.
+    enabled: bool = True
     provider: str = "local_qwen"
     model_id: str = "Qwen/Qwen3-4B-Instruct-2507"
     device: str = "cuda"

@@ -14,6 +14,10 @@ speech:
   queue_size: 8
   warmup_on_start: false
 
+  # Failed speech jobs keep their intermediate WAVs for diagnosis; job dirs
+  # older than this many hours are pruned when the next job starts.
+  failed_job_retention_hours: 24.0
+
   sample_rate_hz: 48000
   channels: 2
   default_speed: 1.0
@@ -21,7 +25,8 @@ speech:
 
   # Generated song commentary via the speech pipeline (text from the content
   # provider below, or a static template when content is disabled).
-  commentary_enabled: false
+  # Review Round-2 P1: the commentary flow is the primary feature — on by default.
+  commentary_enabled: true
 
   # Voice-conversion backends the router may serve. Voice profiles
   # (config/voices/*.yaml) select the backend per profile via
@@ -37,7 +42,7 @@ speech:
 # Local content generation (Phase F). Fully offline: no LLM API key needed.
 # persona/style come from config/voices/*.yaml (persona.description).
 content:
-  enabled: false                       # true -> load Qwen3-4B on the GPU at startup
+  enabled: true                        # loads Qwen3-4B on the GPU at startup
   provider: local_qwen                 # local_qwen | static
   model_id: Qwen/Qwen3-4B-Instruct-2507
   device: cuda
