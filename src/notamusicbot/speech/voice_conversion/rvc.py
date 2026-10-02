@@ -307,12 +307,30 @@ class RvcVoiceConverter:
 
     # ------------------------------------------------------------------ model
 
+    @staticmethod
+    def _resolve_model_name(model: str) -> str:
+        """Resolve a profile model name to the on-disk model directory.
+
+        Legacy profiles store uppercased names (e.g. ``GOKU``) while the
+        model directories use mixed case (``Goku``). Resolve
+        case-insensitively against ``rvc_cli/models``; fall back to the
+        given name (the worker will produce a precise error if it is
+        genuinely unknown).
+        """
+        models_dir = Path(__file__).resolve().parents[4] / "rvc_cli" / "models"
+        if models_dir.is_dir():
+            for entry in sorted(models_dir.iterdir()):
+                if entry.is_dir() and entry.name.lower() == model.lower():
+                    return entry.name
+        return model
+
     async def _ensure_model(self, model: str | None) -> None:
         if model is None:
             msg = "RVC voice conversion requires a model name in the profile"
             raise WorkerError(msg)
         if self._loaded_model == model:
             return
+        model = self._resolve_model_name(model)
         if self._loaded_model is not None:
             # One model per worker: restart to switch voices.
             await self._restart()
