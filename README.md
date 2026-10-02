@@ -82,7 +82,7 @@ Copy `.env.example` to `.env` and fill in what you use:
 DISCORD_TOKEN=            # required to run the bot
 DISCORD_GUILD=            # optional: home guild
 NEWS_API_KEY=             # optional: news headline commentary
-REDDIT_CLIENT_ID/SECRET=  # optional (reddit content is currently a stub)
+REDDIT_CLIENT_ID/SECRET=  # optional: reddit interstitials / podcast topics
 SPOTIFY_CLIENT_ID/SECRET= # optional: better Spotify metadata search
 ```
 
@@ -129,9 +129,47 @@ Default prefix `!g` (configurable). Commands preserve legacy semantics:
 | `!gskip` | Skip the current song |
 | `!gstop` | Stop and disconnect |
 | `!gdeleteallmessages` | Clean up command chatter |
+| `!gpodcast start\|stop` | Toggle podcast conversation mode (see below) |
 
 Generated commentary can be queued ahead of a song; a speech failure never
 kills playback. yt-dlp runs off the event loop.
+
+### Interstitials (news / reddit between songs)
+
+Legacy behavior restored through the new abstractions: after a song finishes,
+with a configured probability (and at most once per interval), the bot picks a
+news headline or reddit text post at random, generates a commentary line with
+the `ContentProvider`, synthesizes it with the configured voice profile through
+the `SpeechPipeline`, and enqueues it ahead of the next track. Any fetch or
+speech failure is skipped silently — playback continues.
+
+```yaml
+interstitial:
+  enabled: true        # off by default
+  probability: 0.25
+  min_interval_s: 300
+  voice_profile: goku
+```
+
+Reddit fetching needs the optional extra and credentials in `.env`
+(`pip install 'notamusicbot-goku[reddit]'`); without them only news is used.
+
+### Podcast conversation mode (`!gpodcast`)
+
+`!gpodcast start` (stop with `!gpodcast stop`) puts the guild in podcast mode:
+after each finished song the bot generates a short two-voice conversation — the
+host persona from `podcast.host_profile` and the invoking user's voice profile
+as guest — about a freshly fetched reddit/news topic. Every turn's text goes
+through the shared `ContentProvider` and every turn is synthesized through the
+`SpeechPipeline` with the speaker's voice profile, then enqueued in order. A
+failure mid-segment aborts just that segment and playback continues.
+
+```yaml
+podcast:
+  enabled: true
+  host_profile: obama
+  turns: 2
+```
 
 ## CLI tools
 

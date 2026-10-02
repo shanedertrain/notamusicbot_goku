@@ -204,6 +204,36 @@ def setup_commands(bot: NotAMusicBot) -> None:
             await ctx.send("No song is currently playing.")
 
     @bot.command(
+        name="gpodcast",
+        help="Start or stop podcast mode: after each song the bot plays a short "
+        "two-voice conversation (!gpodcast start|stop)",
+    )
+    async def gpodcast(ctx: Context, action: str = "start") -> None:
+        action = action.lower()
+        if action not in ("start", "stop"):
+            await ctx.send("Usage: !gpodcast start|stop")
+            return
+        guild_id = ctx.guild.id if ctx.guild else 0
+        if action == "stop":
+            stopped = bot.podcasts.stop(guild_id)
+            await ctx.send("Podcast mode stopped." if stopped else "Podcast mode was not active.")
+            return
+        user = _requester(bot, ctx)
+        guest_profile = user.voice_profile or bot.app.settings.podcast.host_profile
+        started = bot.podcasts.start(
+            guild_id,
+            host_profile_id=bot.app.settings.podcast.host_profile,
+            guest_profile_id=guest_profile,
+        )
+        if started:
+            await ctx.send("Podcast mode on: after each song you'll hear a short conversation.")
+        else:
+            await ctx.send(
+                "Could not start podcast mode (disabled in settings, unknown voice "
+                "profile, or already active)."
+            )
+
+    @bot.command(
         name="deleteallmessages",
         help="Deletes all messages posted by this bot in the current channel",
     )

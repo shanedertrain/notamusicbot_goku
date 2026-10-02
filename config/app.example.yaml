@@ -48,6 +48,28 @@ content:
   max_concurrent_generations: 1        # single-threaded LLM generation
   system_prompt: ""                    # empty -> built-in radio-host prompt
 
+# Reddit fetching (optional extra: pip install 'notamusicbot-goku[reddit]').
+# Credentials live in .env (REDDIT_CLIENT_ID / REDDIT_CLIENT_SECRET).
+reddit:
+  subreddits: []                       # empty -> legacy behavior: front page
+  post_limit: 40
+
+# Randomized news/reddit interstitial between songs (legacy bot_manager
+# behavior). Off by default; enable explicitly.
+interstitial:
+  enabled: false
+  probability: 0.25                    # chance per finished song
+  min_interval_s: 300                  # never more often than this
+  voice_profile: goku                  # voice that reads the interstitial
+  news_country: us
+  news_category: null
+
+# Two-voice podcast conversation mode (!gpodcast start|stop).
+podcast:
+  enabled: false
+  host_profile: obama                  # voice profile id of the host persona
+  turns: 2                             # dialogue lines per finished song
+
 discord:
   command_prefix: "!g"
   # Optional sound played on first voice-channel join per session.
