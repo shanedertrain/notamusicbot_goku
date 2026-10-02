@@ -1,105 +1,130 @@
-# Discord Bot for Playing Audio
+# notamusicbot (Goku)
 
-This Discord bot is designed to play audio in a voice channel based on user requests. It supports adding videos or playlists to a queue and playing them sequentially. The bot also generates a pre-play audio file using text-to-speech synthesis for each video added to the queue.
+A Discord music bot with a local AI speech pipeline: it announces songs and
+talks in voice channels using **Qwen3-TTS** converted to a target voice with
+**RVC**, plus the usual `!gplay`-style media playback (YouTube / Spotify
+search). Everything runs locally on your GPU — **no LLM API key required**.
 
-## Features
+## Architecture
 
-- **Queue Management**: Add videos or playlists to the queue and start playing them in the voice channel.
-- **Pre-Play Audio**: Generate audio commentary for each video using text-to-speech synthesis.
-- **Playback Control**: Skip, stop, or leave the voice channel at any time during playback.
+```text
+Discord commands / content providers (news, local LLM commentary)
+        |
+        v
+SpeechPipeline            src/notamusicbot/speech/pipeline.py
+        |                 synthesize -> voice-convert -> post-process
+        v
+SpeechSynthesizer         protocol; backend:
+Qwen3-TTS 0.6B            Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice (persistent, bf16/sdpa/CUDA)
+        |
+        v
+VoiceConverter            protocol; backend:
+RVC adapter               JSON IPC -> legacy/rvc_worker.py (isolated Python 3.10 env) -> rvc_cli
+        |
+        v
+Post-processing           speed (time-stretch), resample, peak normalize (WAV/PCM throughout)
+        |
+        v
+Discord playback          guild-scoped, event-driven asyncio.Queue player
+```
+
+Key layout:
+
+- `src/notamusicbot/` — the application package (`app.py` composition root,
+  `config.py` typed settings, `discord_bot/`, `media/`, `content/`, `speech/`,
+  `domain/`, `tools/`).
+- `config/` — voice profiles (`config/voices/goku.yaml`) and `users.yaml`.
+- `legacy/` — the isolated legacy RVC worker (JSON over stdin/stdout).
+- `rvc_cli/` — vendored legacy RVC stack (Python 3.10, fairseq), never imported
+  by the application.
+- `scripts/setup.sh` — one-command setup for a fresh machine.
+- `benchmark/` — retained voice-conversion benchmark runs.
 
 ## Setup
 
-### Prerequisites
+Prerequisites: git, curl, ffmpeg, an NVIDIA GPU (recommended), and `deno`
+(for yt-dlp's JS challenges; the setup script checks for it).
 
-- Python 3.9 >=< 3.10
-- `ffmpeg` installed and added to the system PATH: https://ffmpeg.org/download.html
-- Windows 10 SDK installed to build fairseq: https://developer.microsoft.com/en-us/windows/downloads/windows-sdk/
-- hubert_base.pt placed into in the root directory: https://huggingface.co/lj1995/VoiceConversionWebUI/blob/main/hubert_base.pt
-- A JS runtime for yt-dlp (Node 18+/Deno/QuickJS). Install once on the host so yt-dlp can solve YouTube signatures.
+```bash
+./scripts/setup.sh              # full setup + non-GPU sanity checks
+./scripts/setup.sh --gpu-check  # additionally run Qwen TTS + RVC smoke tests
+./scripts/setup.sh --no-rvc     # skip the legacy Python 3.10 RVC environment
+```
 
-### Installation
+The script is idempotent: it installs uv + Python 3.12, creates `.venv-main`,
+installs the package with the `discord` and `media` extras, downloads the Qwen
+TTS/LLM weights, and seeds `.env` from `.env.example`. It does not print or
+store any secret.
 
-1. Clone this repository to your local machine:
+### Configuration (`.env`)
 
-    git clone <repository_url>
+Copy `.env.example` to `.env` and fill in what you use:
 
-2A.
+```text
+DISCORD_TOKEN=            # required to run the bot
+DISCORD_GUILD=            # optional: home guild
+NEWS_API_KEY=             # optional: news headline commentary
+REDDIT_CLIENT_ID/SECRET=  # optional (reddit content is currently a stub)
+SPOTIFY_CLIENT_ID/SECRET= # optional: better Spotify metadata search
+```
 
-        1. Run the `setup.sh` script:
+There is **no LLM API key**: song commentary is generated locally by
+Qwen3-4B-Instruct on the GPU, falling back to static template lines if the
+LLM cannot load. Non-secret settings live in `config/app.example.yaml`
+(speech defaults, output dir, warmup, etc.). Old user configs are migrated
+with the `migrate_users` tool (`src/notamusicbot/tools/migrate_users.py`).
 
-            ./setup.sh
+## Voice profiles
 
-OR
+A voice profile pairs a Qwen CustomVoice source speaker (e.g. `Aiden`, `Ryan`)
+with an RVC target model name and post-processing defaults
+(`config/voices/goku.yaml`). Speech is always generated from the configured
+source speaker, then converted to the target voice — the source speaker is
+per-profile, never hard-coded, and sample rates are taken from the TTS return
+value rather than assumed.
 
-2B.
+## Commands
 
-        1. Initialize and update submodules:
+Default prefix `!g` (configurable). Commands preserve legacy semantics:
 
-            git submodule update --init --recursive
+| Command | Effect |
+|---|---|
+| `!gplay <query>` | Search YouTube, enqueue and play |
+| `!gplaynow <query>` | Enqueue and skip straight to it |
+| `!gplay_spotify <query>` | Spotify metadata search → YouTube → shared queue |
+| `!gjoin` | Join your voice channel |
+| `!gskip` | Skip the current song |
+| `!gstop` | Stop and disconnect |
+| `!gdeleteallmessages` | Clean up command chatter |
 
+Generated commentary can be queued ahead of a song; a speech failure never
+kills playback. yt-dlp runs off the event loop.
 
-        2. Install the required Python packages:
+## CLI tools
 
-            pip install -r requirements.txt
+```bash
+.venv-main/bin/speech-test --help        # synthesize one line through the full pipeline
+.venv-main/bin/benchmark-voices --help   # RTF/latency benchmark over a corpus
+.venv-main/bin/python -m notamusicbot    # run the bot
+```
 
-        3. (YouTube reliability) Ensure yt-dlp has external JS support installed in the same environment:
+## RVC legacy worker notes
 
-            pip install -U yt-dlp yt-dlp-ejs
+RVC (fairseq 0.12.2, torch 2.5.0+cu121) only runs on Python 3.10, so it is
+isolated in the repo-root `.venv` legacy environment behind
+`legacy/rvc_worker.py`. The main app speaks a line-based JSON protocol to it:
+one process, one persistently loaded model, `load-model` / `convert` /
+`health` actions. The root-level legacy modules `tts.py` and
+`configuration.py` exist solely for that worker's imports — the modernized
+bot itself lives entirely in `src/notamusicbot/`. See `LEGACY_VENV.md`.
 
-           Optional but recommended: export your YouTube cookies to `input/youtube_cookies.txt` so age/region-gated videos can play.
+## Testing
 
+```bash
+.venv-main/bin/python -m pytest tests/unit                                  # 105 tests
+.venv-main/bin/python -m pytest tests/integration -m "rvc and integration"  # needs GPU + RVC models
+.venv-main/bin/ruff check src tests && .venv-main/bin/ruff format --check src tests
+```
 
-3. Update the `.env` file in the root directory of the project:
-
-    DISCORD_TOKEN=<your_discord_token>  
-    DISCORD_GUILD=<discord_server_name>  
-        As it appears in the Discord client  
-    FILENAME_START_SOUND=<startup_sound>  
-        This plays when the bot first runs or joins a channel
-    GENERATOR=<gpu_or_cpu>  
-        GPU or CPU depending on what you want to use. If no CUDA cores (NVIDIA), then use CPU
-    NEWS_API_KEY=<news_api_key>
-        API key for newsapi: https://newsapi.org/
-    REDDIT_CLIENT_ID=<reddit_client_id>
-        Client ID for reddit bot: https://www.reddit.com/prefs/apps/
-    REDDIT_CLIENT_SECRET=<reddit_client_secret>
-        Client secret for reddit bot: https://www.reddit.com/prefs/apps/
-    GEMENI_API_KEY=<your_api_key>
-        API Key for Gemeni
-
-4. Update the `.env` file in the rvc_cli directory of the project:  
-    ESTIMATE_MULTIPLIER=<estimate_multiplier>
-        Time it takes times the length of the file. Ex. 4.22 = 422% longer than length of file.
-
-5. Add your models into the rvc_cli/models folder. 
-    1. Each model you are using is placed into its own folder 
-    2. You can set up different models with differing parameters by supplying multiple .yaml files.
-    3. Specify the .yaml file's name for users in the `users.json`. ex: dat_boi123 for dat_boi123.yaml
-
-6. Run `main.py` and then update the `users.json` file with the backgrounds of the users in your Discord server. 
-
-7. Restart `main.py` for the changes to take effect. 
-
-## Adding models 
-
-1. 
-
-## Usage
-
-1. Start the bot by running the `goku.py` script:
-
-2. Use the command prefix `!g` followed by the desired command to interact with the bot. For example:
-
-- `!gplay <video_url>`: Add a video or playlist to the queue and start playing.
-- `!gstop`: Stop playing the audio and disconnect from the voice channel.
-- `!gskip`: Skip the current song and move to the next in the playlist.
-
-## Contributors
-
-- Guy Man - Developer | https://github.com/shanedertrain 
-- AshtonScalise - Developer | https://github.com/AshtonScalise
-
-## License
-
-This project is licensed under the [MIT License](LICENSE).
+Evidence from the rework: `IMPLEMENTATION_REPORT.md`, `TEST_RESULTS.md`,
+`BENCHMARK_RESULTS.md`, `DEPENDENCY_NOTES.md`.
