@@ -1,0 +1,67 @@
+"""Typed configuration layer.
+
+Secrets come from environment variables (loaded from ``.env``); non-secret
+application configuration comes from YAML.  No settings object is constructed
+at import time.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from pydantic import BaseModel, Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class SecretsSettings(BaseSettings):
+    """Secret values read from the environment / ``.env`` file."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    discord_token: str | None = Field(default=None, alias="DISCORD_TOKEN")
+    discord_guild: str | None = Field(default=None, alias="DISCORD_GUILD")
+    gemini_api_key: str | None = Field(default=None, alias="GEMINI_API_KEY")
+    news_api_key: str | None = Field(default=None, alias="NEWS_API_KEY")
+    reddit_client_id: str | None = Field(default=None, alias="REDDIT_CLIENT_ID")
+    reddit_client_secret: str | None = Field(default=None, alias="REDDIT_CLIENT_SECRET")
+    spotify_client_id: str | None = Field(default=None, alias="SPOTIFY_CLIENT_ID")
+    spotify_client_secret: str | None = Field(default=None, alias="SPOTIFY_CLIENT_SECRET")
+
+
+class SpeechSettings(BaseModel):
+    """Speech pipeline configuration (non-secret)."""
+
+    voices_dir: Path = Path("config/voices")
+    users_config: Path = Path("config/users.yaml")
+    output_dir: Path = Path("var/speech")
+    tts_device: str = "cuda"
+    tts_dtype: str = "bfloat16"
+    tts_attn_implementation: str = "sdpa"
+    tts_model_id: str = "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
+    max_concurrent_inference: int = Field(default=1, ge=1)
+    queue_size: int = Field(default=8, ge=1)
+    warmup_on_start: bool = False
+    sample_rate_hz: int = 48000
+    channels: int = 2
+    default_speed: float = Field(default=1.0, ge=0.25, le=4.0)
+    default_target_peak_dbfs: float = Field(default=-1.0, le=0.0)
+
+
+class AppSettings(BaseModel):
+    """Non-secret application settings, normally loaded from ``config/app.yaml``."""
+
+    speech: SpeechSettings = SpeechSettings()
+
+
+def load_app_settings(path: Path | None = None) -> AppSettings:
+    """Load app settings from YAML (or defaults when the file is absent)."""
+    if path is None or not path.is_file():
+        return AppSettings()
+    import yaml
+
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return AppSettings.model_validate(data)

@@ -1,0 +1,20 @@
+# Non-secret application configuration. Copy to config/app.yaml and edit.
+# Secrets belong in .env only (see .env.example).
+
+speech:
+  voices_dir: config/voices
+  users_config: config/users.yaml
+  output_dir: var/speech
+
+  tts_model_id: Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice
+  tts_device: cuda
+  tts_dtype: bfloat16
+  tts_attn_implementation: sdpa  # sdpa everywhere; flash_attention_2 where supported
+  max_concurrent_inference: 1
+  queue_size: 8
+  warmup_on_start: false
+
+  sample_rate_hz: 48000
+  channels: 2
+  default_speed: 1.0
+  default_target_peak_dbfs: -1.0
