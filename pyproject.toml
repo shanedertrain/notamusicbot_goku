@@ -9,6 +9,10 @@ description = "Discord music bot with Qwen3-TTS speech pipeline, voice conversio
 requires-python = ">=3.12"
 dependencies = [
     "qwen-tts",
+    # Declared explicitly: application code (content/llm.py, speech/) imports
+    # torch/transformers directly, not only via qwen-tts's transitive graph.
+    "torch>=2.6",
+    "transformers>=4.55",
     "soundfile>=0.12",
     "soxr>=0.5",
     "numpy>=1.26",
