@@ -115,11 +115,21 @@ class NotAMusicBot(commands.Bot):
         # shared speech pipeline that commands use for generated commentary.
         await asyncio.to_thread(self.app.load_speech_model)
         self.app.build_pipeline()
+        # Start the voice-conversion router (RVC worker spawn + health check)
+        # and the optional non-blocking warmup; both fail soft (logged).
+        await self.app.startup()
         # Local LLM (content provider) loads only when content generation is
         # enabled; never at import time, always off the event loop.
         await asyncio.to_thread(self.app.load_content_model)
         setup_commands(self)
         logger.info("Commands registered with prefix %r", self.command_prefix)
+
+    async def close(self) -> None:
+        """discord.py teardown: close the gateway, then application lifecycle."""
+        try:
+            await super().close()
+        finally:
+            await self.app.shutdown()
 
     async def on_ready(self) -> None:
         logger.info(

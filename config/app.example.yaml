@@ -23,6 +23,17 @@ speech:
   # provider below, or a static template when content is disabled).
   commentary_enabled: false
 
+  # Voice-conversion backends the router may serve. Voice profiles
+  # (config/voices/*.yaml) select the backend per profile via
+  # voice_conversion.backend: passthrough | rvc. Requesting an unknown or
+  # disabled backend fails with a clear error (no silent fallback).
+  voice_conversion_backends: [passthrough, rvc]
+  # Behavior when a profile asks for 'rvc' but the RVC worker is unavailable
+  # (no GPU, missing worker runtime):
+  #   error       -> commentary generation is skipped; playback continues
+  #   passthrough -> emit the un-converted source voice with a warning
+  rvc_unavailable_policy: error
+
 # Local content generation (Phase F). Fully offline: no LLM API key needed.
 # persona/style come from config/voices/*.yaml (persona.description).
 content:

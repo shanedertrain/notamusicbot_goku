@@ -25,7 +25,7 @@ from notamusicbot.discord_bot.commentary import (
 from notamusicbot.domain.media import MediaKind, PlayableMedia
 from notamusicbot.domain.speech import TtsRequest
 from notamusicbot.domain.users import UserProfile
-from notamusicbot.domain.voice_profiles import to_conversion_profile
+from notamusicbot.domain.voice_profiles import to_conversion_profile, to_processing_profile
 
 if TYPE_CHECKING:
     from notamusicbot.discord_bot.bot import NotAMusicBot
@@ -117,6 +117,13 @@ async def _enqueue_commentary(
         to_conversion_profile(profile),
         guild_id=ctx.guild.id,
         requester=user.screen_name,
+        # Per-profile audio settings (speed, target peak) — same mapping the
+        # speech_test CLI uses, so the production path matches the tested one.
+        processing=to_processing_profile(
+            profile,
+            sample_rate_hz=speech_settings.sample_rate_hz,
+            channels=speech_settings.channels,
+        ),
     )
     if media is not None:
         bot.guild_state(ctx.guild.id).queue.put_nowait(media)

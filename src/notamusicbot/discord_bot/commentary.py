@@ -52,10 +52,15 @@ async def generate_commentary_media(
     *,
     guild_id: int,
     requester: str = "bot",
+    processing: Any | None = None,
 ) -> PlayableMedia | None:
-    """Run one speech job and return it as queueable media, or ``None`` on failure."""
+    """Run one speech job and return it as queueable media, or ``None`` on failure.
+
+    ``processing`` is the voice profile's :class:`AudioProcessingProfile`
+    (speed, target peak, output format); ``None`` uses the pipeline default.
+    """
     try:
-        artifact, _metrics = await pipeline.run(request, conversion)
+        artifact, _metrics = await pipeline.run(request, conversion, processing)
     except Exception:
         logger.exception(
             "Commentary generation failed in guild %s; skipping commentary and continuing playback",

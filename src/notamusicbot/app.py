@@ -7,7 +7,9 @@ expensive is constructed at import time.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections.abc import Callable
 from pathlib import Path
 
 from notamusicbot.config import AppSettings, SecretsSettings, load_app_settings
@@ -19,7 +21,7 @@ from notamusicbot.speech.coordinator import InferenceCoordinator
 from notamusicbot.speech.pipeline import SpeechPipeline
 from notamusicbot.speech.tts.qwen_custom_voice import QwenCustomVoiceSynthesizer
 from notamusicbot.speech.voice_conversion.base import VoiceConverter
-from notamusicbot.speech.voice_conversion.passthrough import PassthroughVoiceConverter
+from notamusicbot.speech.voice_conversion.router import VoiceConverterRouter
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +36,13 @@ def configure_logging(verbose: bool = False) -> None:
 class Application:
     """Owns all long-lived components; constructed once per process."""
 
-    def __init__(self, settings: AppSettings, secrets: SecretsSettings | None = None) -> None:
+    def __init__(
+        self,
+        settings: AppSettings,
+        secrets: SecretsSettings | None = None,
+        *,
+        rvc_factory: Callable[[], VoiceConverter] | None = None,
+    ) -> None:
         self.settings = settings
         self.secrets = secrets or SecretsSettings()
         self.voice_profiles = load_voice_profiles(Path(settings.speech.voices_dir))
@@ -48,9 +56,22 @@ class Application:
             queue_size=settings.speech.queue_size,
         )
         self._synthesizer: QwenCustomVoiceSynthesizer | None = None
-        self.converter: VoiceConverter = PassthroughVoiceConverter()
+        # Composition-root dependency injection: tests install a spy/fake RVC
+        # adapter factory here instead of the real worker-spawning adapter.
+        self.converter: VoiceConverter = VoiceConverterRouter(
+            enabled_backends=settings.speech.voice_conversion_backends,
+            rvc_factory=rvc_factory,
+            rvc_unavailable_policy=settings.speech.rvc_unavailable_policy,
+        )
         self.pipeline: SpeechPipeline | None = None
         self._content_provider: ContentProvider | None = None
+        self._warmup_task: asyncio.Task[None] | None = None
+
+    @property
+    def converter_router(self) -> VoiceConverterRouter:
+        """The typed router behind :attr:`converter` (lifecycle entry point)."""
+        assert isinstance(self.converter, VoiceConverterRouter)
+        return self.converter
 
     def build_content_provider(self) -> ContentProvider | None:
         """Construct the content provider from settings (lazy; no model load here).
@@ -115,9 +136,42 @@ class Application:
         )
         return self.pipeline
 
+    async def startup(self) -> None:
+        """Application lifecycle entry point (call from the bot's ``setup_hook``).
+
+        Starts the voice-conversion router (spawns + health-checks the RVC
+        worker when the ``rvc`` backend is enabled) and schedules the optional
+        non-blocking warmup task. RVC start failure is logged, not raised, so
+        a missing GPU/worker runtime degrades per the configured
+        ``rvc_unavailable_policy`` instead of killing startup.
+        """
+        await self.converter_router.startup()
+        if self.settings.speech.warmup_on_start:
+            self._warmup_task = asyncio.create_task(self.warmup(), name="speech-warmup")
+
+    async def shutdown(self) -> None:
+        """Application lifecycle teardown (call when the bot closes)."""
+        task = self._warmup_task
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        self._warmup_task = None
+        await self.converter_router.shutdown()
+
     async def warmup(self) -> None:
-        if self.settings.speech.warmup_on_start and self._synthesizer is not None:
-            self._synthesizer.warmup(Path(self.settings.speech.output_dir) / "warmup.wav")
+        """Best-effort model warmup; failures are logged and never fatal."""
+        if self._synthesizer is None:
+            return
+        try:
+            await asyncio.to_thread(
+                self._synthesizer.warmup,
+                Path(self.settings.speech.output_dir) / "warmup.wav",
+            )
+        except Exception:
+            logger.exception("Speech warmup failed; continuing without a warmed model")
 
     def run_discord(self) -> None:
         """Startup path for the Discord bot (handoff section 19).

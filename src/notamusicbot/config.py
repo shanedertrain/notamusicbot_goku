@@ -51,6 +51,16 @@ class SpeechSettings(BaseModel):
     default_speed: float = Field(default=1.0, ge=0.25, le=4.0)
     default_target_peak_dbfs: float = Field(default=-1.0, le=0.0)
     commentary_enabled: bool = False
+    # Voice-conversion backends the router may serve (see
+    # speech/voice_conversion/router.py). Profiles requesting another backend
+    # fail with a clear error instead of silently falling back.
+    voice_conversion_backends: list[str] = Field(default_factory=lambda: ["passthrough", "rvc"])
+    # What to do when a profile requests the 'rvc' backend but the RVC worker
+    # is unavailable (no GPU, missing worker runtime):
+    #   error       -> raise; commentary generation is skipped (default: never
+    #                  emit un-converted source voice)
+    #   passthrough -> degrade to passthrough with a warning
+    rvc_unavailable_policy: str = "error"
 
 
 class DiscordSettings(BaseModel):
