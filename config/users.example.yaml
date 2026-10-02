@@ -1,0 +1,12 @@
+users:
+  "123456789012345678":
+    screen_name: example_user
+    real_name: Example Name
+    background: Example background text used by the content-generation prompts.
+    voice_profile: goku
+  "234567890123456789":
+    screen_name: another_user
+    real_name: Another Name
+    background: Another background.
+    voice_profile: obama
+    legacy_model_name: OBAMA
