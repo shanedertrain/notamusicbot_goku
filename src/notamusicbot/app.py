@@ -11,6 +11,7 @@ import logging
 from pathlib import Path
 
 from notamusicbot.config import AppSettings, SecretsSettings, load_app_settings
+from notamusicbot.content.base import ContentProvider
 from notamusicbot.domain.speech import AudioProcessingProfile
 from notamusicbot.domain.users import UserProfile, UserRegistry, load_users_yaml
 from notamusicbot.domain.voice_profiles import load_voice_profiles
@@ -49,6 +50,38 @@ class Application:
         self._synthesizer: QwenCustomVoiceSynthesizer | None = None
         self.converter: VoiceConverter = PassthroughVoiceConverter()
         self.pipeline: SpeechPipeline | None = None
+        self._content_provider: ContentProvider | None = None
+
+    def build_content_provider(self) -> ContentProvider | None:
+        """Construct the content provider from settings (lazy; no model load here).
+
+        Returns ``None`` when content generation is disabled; commentary then
+        uses the static template (pre-Phase-F behavior).
+        """
+        if self._content_provider is not None:
+            return self._content_provider
+        content = self.settings.content
+        if not content.enabled:
+            return None
+        if content.provider == "local_qwen":
+            from notamusicbot.content.llm import LocalQwenLlmProvider
+
+            self._content_provider = LocalQwenLlmProvider.from_settings(content)
+        else:
+            from notamusicbot.content.base import StaticTemplateProvider
+
+            self._content_provider = StaticTemplateProvider()
+        return self._content_provider
+
+    def load_content_model(self) -> None:
+        """Load the local LLM off the event loop (call during startup)."""
+        provider = self.build_content_provider()
+        if provider is None:
+            return
+        from notamusicbot.content.llm import LocalQwenLlmProvider
+
+        if isinstance(provider, LocalQwenLlmProvider):
+            provider.load()
 
     def load_speech_model(self) -> QwenCustomVoiceSynthesizer:
         """Load the persistent Qwen model once (call during startup, not import)."""

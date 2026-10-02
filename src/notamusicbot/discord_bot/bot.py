@@ -115,6 +115,9 @@ class NotAMusicBot(commands.Bot):
         # shared speech pipeline that commands use for generated commentary.
         await asyncio.to_thread(self.app.load_speech_model)
         self.app.build_pipeline()
+        # Local LLM (content provider) loads only when content generation is
+        # enabled; never at import time, always off the event loop.
+        await asyncio.to_thread(self.app.load_content_model)
         setup_commands(self)
         logger.info("Commands registered with prefix %r", self.command_prefix)
 

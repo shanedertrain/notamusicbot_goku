@@ -19,9 +19,23 @@ speech:
   default_speed: 1.0
   default_target_peak_dbfs: -1.0
 
-  # Generated song commentary via the speech pipeline (content provider lands
-  # in Phase F; until then commentary text is a static template).
+  # Generated song commentary via the speech pipeline (text from the content
+  # provider below, or a static template when content is disabled).
   commentary_enabled: false
+
+# Local content generation (Phase F). Fully offline: no LLM API key needed.
+# persona/style come from config/voices/*.yaml (persona.description).
+content:
+  enabled: false                       # true -> load Qwen3-4B on the GPU at startup
+  provider: local_qwen                 # local_qwen | static
+  model_id: Qwen/Qwen3-4B-Instruct-2507
+  device: cuda
+  dtype: bfloat16
+  attn_implementation: sdpa
+  max_new_tokens: 120
+  temperature: 0.8
+  max_concurrent_generations: 1        # single-threaded LLM generation
+  system_prompt: ""                    # empty -> built-in radio-host prompt
 
 discord:
   command_prefix: "!g"

@@ -24,7 +24,8 @@ class SecretsSettings(BaseSettings):
 
     discord_token: str | None = Field(default=None, alias="DISCORD_TOKEN")
     discord_guild: str | None = Field(default=None, alias="DISCORD_GUILD")
-    gemini_api_key: str | None = Field(default=None, alias="GEMINI_API_KEY")
+    # No LLM API key: content generation runs locally (Qwen3-4B, handoff 14
+    # override). Legacy GEMINI/GEMENI_API_KEY values are simply ignored.
     news_api_key: str | None = Field(default=None, alias="NEWS_API_KEY")
     reddit_client_id: str | None = Field(default=None, alias="REDDIT_CLIENT_ID")
     reddit_client_secret: str | None = Field(default=None, alias="REDDIT_CLIENT_SECRET")
@@ -75,12 +76,33 @@ class MediaSettings(BaseModel):
     )
 
 
+class ContentSettings(BaseModel):
+    """Local content-generation settings (handoff section 14 override: no cloud LLM).
+
+    ``provider`` selects the implementation: ``local_qwen`` (LLM on the local
+    GPU) or ``static`` (template only). Model loading is always deferred to
+    startup — never at import time.
+    """
+
+    enabled: bool = False
+    provider: str = "local_qwen"
+    model_id: str = "Qwen/Qwen3-4B-Instruct-2507"
+    device: str = "cuda"
+    dtype: str = "bfloat16"
+    attn_implementation: str = "sdpa"
+    max_new_tokens: int = Field(default=120, ge=1)
+    temperature: float = Field(default=0.8, ge=0.0, le=2.0)
+    max_concurrent_generations: int = Field(default=1, ge=1)
+    system_prompt: str = ""  # empty -> prompts.RADIO_SYSTEM_PROMPT
+
+
 class AppSettings(BaseModel):
     """Non-secret application settings, normally loaded from ``config/app.yaml``."""
 
     speech: SpeechSettings = SpeechSettings()
     discord: DiscordSettings = DiscordSettings()
     media: MediaSettings = MediaSettings()
+    content: ContentSettings = ContentSettings()
 
 
 def load_app_settings(path: Path | None = None) -> AppSettings:

@@ -1,9 +1,9 @@
-"""Generated commentary audio, enqueued through the speech pipeline.
+"""Commentary text generation and its conversion to queueable audio.
 
-The speech pipeline (TTS -> VC -> post-process) already exists; this module
-only turns its :class:`AudioArtifact` output into queueable media. A failure
-here must never kill the media queue: per handoff section 20 we log, skip the
-commentary, and continue with the media itself.
+Text comes from a :class:`~notamusicbot.content.base.ContentProvider` (local
+LLM when enabled, otherwise the static template). A provider failure falls
+back to the static template per handoff section 20: log, degrade, continue —
+playback itself is never at risk.
 """
 
 from __future__ import annotations
@@ -12,10 +12,37 @@ import logging
 import uuid
 from typing import Any
 
+from notamusicbot.content import prompts
+from notamusicbot.content.base import ContentRequest
 from notamusicbot.domain.media import MediaKind, PlayableMedia
 from notamusicbot.domain.speech import TtsRequest, VoiceConversionProfile
 
 logger = logging.getLogger(__name__)
+
+
+async def resolve_commentary_text(provider: Any, request: ContentRequest) -> str:
+    """Generate commentary text via the provider, falling back to the template.
+
+    ``provider is None`` (content disabled) and provider failures both yield
+    the static template text, so the result is always speakable.
+    """
+    if provider is None:
+        return _static_for(request)
+    try:
+        return await provider.generate(request)
+    except Exception:
+        logger.warning(
+            "Content provider failed (%s); using static template commentary",
+            request.kind.name,
+            exc_info=True,
+        )
+        return _static_for(request)
+
+
+def _static_for(request: ContentRequest) -> str:
+    if request.song_name:
+        return prompts.static_song_comment(request.song_name, request.requester_name)
+    return prompts.static_article_comment(request.post_title or request.article_text[:60])
 
 
 async def generate_commentary_media(

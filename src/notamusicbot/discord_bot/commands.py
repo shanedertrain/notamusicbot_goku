@@ -17,7 +17,11 @@ from typing import TYPE_CHECKING
 from discord.ext import commands
 from discord.ext.commands import Context
 
-from notamusicbot.discord_bot.commentary import generate_commentary_media
+from notamusicbot.content.base import ContentKind, ContentRequest
+from notamusicbot.discord_bot.commentary import (
+    generate_commentary_media,
+    resolve_commentary_text,
+)
 from notamusicbot.domain.media import MediaKind, PlayableMedia
 from notamusicbot.domain.speech import TtsRequest
 from notamusicbot.domain.users import UserProfile
@@ -63,15 +67,25 @@ async def _join_and_start(bot: NotAMusicBot, ctx: Context) -> None:
 
 
 async def _enqueue_commentary(
-    bot: NotAMusicBot, ctx: Context, user: UserProfile, text: str
+    bot: NotAMusicBot,
+    ctx: Context,
+    user: UserProfile,
+    *,
+    song_name: str = "",
+    artist_name: str = "",
+    post_title: str = "",
+    article_text: str = "",
 ) -> None:
-    """Generate commentary through the shared speech pipeline and enqueue it.
+    """Generate commentary via the ContentProvider, then TTS, and enqueue it.
 
-    Failures are logged and the commentary skipped; the caller's media is
+    The provider receives the persona description from the user's voice
+    profile and the requester's background from ``config/users.yaml``. Text
+    generation failures fall back to the static template (handoff section 20);
+    speech failures skip the commentary entirely — the caller's media is
     enqueued regardless.
     """
-    settings = bot.app.settings.speech
-    if not settings.commentary_enabled or bot.app.pipeline is None:
+    speech_settings = bot.app.settings.speech
+    if not speech_settings.commentary_enabled or bot.app.pipeline is None:
         return
     profile = bot.app.voice_profiles.get(user.voice_profile)
     if profile is None:
@@ -79,6 +93,23 @@ async def _enqueue_commentary(
             "No voice profile %r for user %s; skipping commentary", user.voice_profile, user.user_id
         )
         return
+    requester_name = user.real_name or user.screen_name
+    if song_name:
+        kind = ContentKind.SONG
+        artist_name = artist_name or "an unknown artist"
+    else:
+        kind = ContentKind.NEWS
+    content_request = ContentRequest(
+        kind=kind,
+        persona_description=profile.persona.description,
+        song_name=song_name,
+        artist_name=artist_name,
+        requester_name=requester_name,
+        requester_background=user.background,
+        post_title=post_title,
+        article_text=article_text,
+    )
+    text = await resolve_commentary_text(bot.app.build_content_provider(), content_request)
     request = TtsRequest(text=text, language=profile.tts.language, speaker=profile.tts.speaker)
     media = await generate_commentary_media(
         bot.app.pipeline,
@@ -135,8 +166,8 @@ def setup_commands(bot: NotAMusicBot) -> None:
                 bot,
                 ctx,
                 user,
-                f"Here is {track.name} by {first_artist}, "
-                f"requested by {user.real_name or user.screen_name}.",
+                song_name=track.name,
+                artist_name=first_artist,
             )
             bot.guild_state(ctx.guild.id).queue.put_nowait(media)
         except commands.CommandError:
@@ -198,10 +229,5 @@ async def _enqueue_youtube(bot: NotAMusicBot, ctx: Context, url: str, *, quick: 
     media.requester = user.screen_name
     media.guild_id = ctx.guild.id
     if not quick:
-        await _enqueue_commentary(
-            bot,
-            ctx,
-            user,
-            f"Next up: {media.title}, requested by {user.real_name or user.screen_name}.",
-        )
+        await _enqueue_commentary(bot, ctx, user, song_name=media.title)
     bot.guild_state(ctx.guild.id).queue.put_nowait(media)
