@@ -8,7 +8,7 @@ from pathlib import Path
 
 from notamusicbot.discord_bot.guild_state import GuildState
 from notamusicbot.discord_bot.player import GuildPlayer
-from notamusicbot.domain.media import MediaKind, PlayableMedia
+from notamusicbot.domain.media import MediaKind, PlayableMedia, PlaybackOutcome
 
 
 class FakeVoiceClient:
@@ -46,6 +46,14 @@ class FakeVoiceClient:
             cb = self.after_callback
             self.after_callback = None
             cb(None)
+
+    def crash(self, error: Exception) -> None:
+        """Simulate a Discord/FFmpeg playback error ending playback."""
+        self._playing = False
+        if self.after_callback is not None:
+            cb = self.after_callback
+            self.after_callback = None
+            cb(error)
 
 
 def make_media(name: str, tmp_path: Path, *, temp: bool = False) -> PlayableMedia:
@@ -334,7 +342,7 @@ async def test_completion_hook_fires_once_per_song_not_for_generated(
         played_ids.append(media.media_id)
         return object()
 
-    async def hook(media: PlayableMedia) -> None:
+    async def hook(media: PlayableMedia, outcome: PlaybackOutcome) -> None:
         nonlocal segment_no
         hook_calls.append(media.media_id)
         segment_no += 1
@@ -371,7 +379,7 @@ async def test_completion_hook_not_fired_for_local_media(tmp_path: Path) -> None
     state = GuildState(1)
     hook_calls: list[str] = []
 
-    async def hook(media: PlayableMedia) -> None:
+    async def hook(media: PlayableMedia, outcome: PlaybackOutcome) -> None:
         hook_calls.append(media.media_id)
 
     player = make_player(state, vc, on_playback_complete=hook)
@@ -394,7 +402,7 @@ async def test_completion_hook_awaited_before_next_dequeue(tmp_path: Path) -> No
         events.append(f"play:{media.media_id}")
         return object()
 
-    async def hook(media: PlayableMedia) -> None:
+    async def hook(media: PlayableMedia, outcome: PlaybackOutcome) -> None:
         events.append("hook:start")
         await asyncio.sleep(0.02)  # simulated LLM/TTS latency
         state.put_front(make_media("interstitial", tmp_path))
@@ -470,3 +478,183 @@ async def test_source_factory_failure_after_download_removes_temp_file(
 
     assert not downloaded.exists()
     assert vc.played == []  # item skipped, not played
+
+
+# ------------------------------------------------------- playback outcomes (R3)
+
+
+def stream_media(media_id: str) -> PlayableMedia:
+    return PlayableMedia(
+        media_id=media_id, kind=MediaKind.STREAM, stream_url=f"https://example/{media_id}"
+    )
+
+
+async def test_outcome_natural_fires_hook_exactly_once(tmp_path: Path) -> None:
+    vc = FakeVoiceClient()
+    state = GuildState(1)
+    calls: list[tuple[str, PlaybackOutcome]] = []
+
+    async def hook(media: PlayableMedia, outcome: PlaybackOutcome) -> None:
+        calls.append((media.media_id, outcome))
+
+    player = make_player(state, vc, on_playback_complete=hook)
+    state.queue.put_nowait(stream_media("song"))
+
+    async with running_player(player):
+        await wait_until(lambda: len(vc.played) == 1)
+        vc.finish()
+        await wait_until(lambda: not vc.is_playing())
+        await asyncio.sleep(0.05)  # let the run loop finish the item
+    assert calls == [("song", PlaybackOutcome.NATURAL)]
+
+
+async def test_outcome_skipped_no_hook_next_song_proceeds(tmp_path: Path) -> None:
+    vc = FakeVoiceClient()
+    state = GuildState(1)
+    calls: list[tuple[str, PlaybackOutcome]] = []
+    played: list[str] = []
+
+    def factory(media: PlayableMedia) -> object:
+        played.append(media.media_id)
+        return object()
+
+    async def hook(media: PlayableMedia, outcome: PlaybackOutcome) -> None:
+        calls.append((media.media_id, outcome))
+
+    player = make_player(state, vc, source_factory=factory, on_playback_complete=hook)
+    state.queue.put_nowait(stream_media("a"))
+    state.queue.put_nowait(stream_media("b"))
+
+    async with running_player(player):
+        await wait_until(lambda: len(vc.played) == 1)
+        # skip() must record the interruption reason BEFORE voice_client.stop()
+        assert player.skip() is True
+        assert state.interrupt_reason is PlaybackOutcome.SKIPPED
+        await wait_until(lambda: len(played) == 2)  # next song proceeds directly
+        vc.finish()
+        await wait_until(lambda: not vc.is_playing())
+        await asyncio.sleep(0.05)
+    assert calls == [("b", PlaybackOutcome.NATURAL)]  # skipped song fired nothing
+    assert played == ["a", "b"]
+
+
+async def test_outcome_stopped_no_hook_player_exits_promptly(tmp_path: Path) -> None:
+    vc = FakeVoiceClient()
+    state = GuildState(1)
+    calls: list[tuple[str, PlaybackOutcome]] = []
+
+    async def hook(media: PlayableMedia, outcome: PlaybackOutcome) -> None:
+        calls.append((media.media_id, outcome))
+
+    player = make_player(state, vc, on_playback_complete=hook)
+    state.queue.put_nowait(stream_media("a"))
+    state.queue.put_nowait(stream_media("b"))
+
+    task = asyncio.create_task(player.run())
+    await wait_until(lambda: len(vc.played) == 1)
+    await asyncio.wait_for(player.stop(timeout=2.0), timeout=2.0)
+    await asyncio.wait_for(task, timeout=2.0)  # exits promptly
+    assert calls == []  # no post-song generation on stop
+    assert state.queue.empty()
+
+
+async def test_outcome_playback_error_yields_failed_no_hook(tmp_path: Path) -> None:
+    """An after-callback playback error reports FAILED — no post-song hook."""
+    vc = FakeVoiceClient()
+    state = GuildState(1)
+    calls: list[tuple[str, PlaybackOutcome]] = []
+    played: list[str] = []
+
+    def factory(media: PlayableMedia) -> object:
+        played.append(media.media_id)
+        return object()
+
+    async def hook(media: PlayableMedia, outcome: PlaybackOutcome) -> None:
+        calls.append((media.media_id, outcome))
+
+    player = make_player(state, vc, source_factory=factory, on_playback_complete=hook)
+    state.queue.put_nowait(stream_media("a"))
+    state.queue.put_nowait(stream_media("b"))
+
+    async with running_player(player):
+        await wait_until(lambda: len(vc.played) == 1)
+        vc.crash(RuntimeError("ffmpeg exploded"))
+        await wait_until(lambda: len(played) == 2)  # queue survives the failure
+        vc.finish()
+        await wait_until(lambda: not vc.is_playing())
+        await asyncio.sleep(0.05)
+    assert calls == [("b", PlaybackOutcome.NATURAL)]
+
+
+async def test_outcome_source_error_yields_failed_no_hook(tmp_path: Path) -> None:
+    """A source-creation failure (unplayable dequeued item) fires no hook."""
+    vc = FakeVoiceClient()
+    state = GuildState(1)
+    calls: list[tuple[str, PlaybackOutcome]] = []
+    attempts: list[str] = []
+
+    def factory(media: PlayableMedia) -> object:
+        attempts.append(media.media_id)
+        if media.media_id == "broken":
+            raise RuntimeError("bad source")
+        return object()
+
+    async def hook(media: PlayableMedia, outcome: PlaybackOutcome) -> None:
+        calls.append((media.media_id, outcome))
+
+    player = make_player(state, vc, source_factory=factory, on_playback_complete=hook)
+    state.queue.put_nowait(stream_media("broken"))
+    state.queue.put_nowait(stream_media("good"))
+
+    async with running_player(player):
+        await wait_until(lambda: "good" in attempts)
+        vc.finish()
+        await wait_until(lambda: not vc.is_playing())
+        await asyncio.sleep(0.05)  # let the run loop finish the item
+    assert calls == [("good", PlaybackOutcome.NATURAL)]
+
+
+async def test_outcome_dropped_when_no_voice_client(tmp_path: Path) -> None:
+    """A dequeued item with no connected voice client is DROPPED, no hook."""
+    vc = FakeVoiceClient()
+    vc.connected = False
+    state = GuildState(1)
+    calls: list[tuple[str, PlaybackOutcome]] = []
+
+    async def hook(media: PlayableMedia, outcome: PlaybackOutcome) -> None:
+        calls.append((media.media_id, outcome))
+
+    player = make_player(state, vc, on_playback_complete=hook)
+    state.queue.put_nowait(stream_media("orphan"))
+
+    async with running_player(player):
+        await wait_until(lambda: state.queue.empty())
+    assert calls == []
+    assert vc.played == []
+
+
+async def test_cleanup_of_speech_artifact_removes_job_dir(tmp_path: Path) -> None:
+    """Round-3 P1: playing a generated speech artifact removes the final file
+    AND the now-empty per-job directory (full helper, no dir buildup)."""
+    from notamusicbot.discord_bot.player import cleanup_media_item
+    from notamusicbot.speech.artifacts import (
+        clear_registry,
+        mark_temp_artifact,
+        mark_temporary_job,
+    )
+
+    clear_registry()
+    try:
+        job_dir = tmp_path / "job"
+        job_dir.mkdir()
+        final = job_dir / "final.wav"
+        final.write_bytes(b"RIFFfake")
+        mark_temp_artifact(final)
+        mark_temporary_job(job_dir, status="generated")
+
+        media = PlayableMedia(media_id="commentary", kind=MediaKind.LOCAL, source_path=final)
+        cleanup_media_item(media)
+        assert not final.exists()
+        assert not job_dir.exists()  # marker + file gone, dir removed
+    finally:
+        clear_registry()

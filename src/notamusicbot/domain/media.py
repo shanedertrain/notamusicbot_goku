@@ -20,6 +20,21 @@ class MediaKind(StrEnum):
     STREAM = "stream"  # a remote URL handed to ffmpeg (stream headers attached)
 
 
+class PlaybackOutcome(StrEnum):
+    """Why one queue item's playback ended (review Round-3 P0).
+
+    ``_play_one()`` reports this alongside the media whose file actually
+    played, so the post-song content hook can distinguish a song that really
+    finished from one that was skipped, stopped, or failed.
+    """
+
+    NATURAL = "natural"  # reached the end of the audio
+    SKIPPED = "skipped"  # user skipped the item
+    STOPPED = "stopped"  # user stopped the bot/player
+    FAILED = "failed"  # source/FFmpeg/Discord playback error
+    DROPPED = "dropped"  # dequeued but never played (e.g. no voice client)
+
+
 @dataclass(slots=True)
 class PlayableMedia:
     """One unit of work for the guild playback queue.

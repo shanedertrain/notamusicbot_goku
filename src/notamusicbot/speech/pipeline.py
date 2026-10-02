@@ -25,6 +25,7 @@ from notamusicbot.domain.speech import (
 from notamusicbot.speech.artifacts import (
     mark_failed_job,
     mark_temp_artifact,
+    mark_temporary_job,
     prune_expired_jobs,
     remove_empty_job_dir,
 )
@@ -104,7 +105,18 @@ class SpeechPipeline:
                 logger.debug("Job-dir pruning failed", exc_info=True)
 
         job_dir = self._output_dir / job_id
+        # Persist ownership on disk (review Round-3 P1): the .temporary marker
+        # carries a timestamp+status so a crash after successful generation —
+        # when the in-memory registry is lost — still leaves an identifiable
+        # stale temporary job for retention/startup cleanup to prune.
+        if not self._keep_artifacts:
+            mark_temporary_job(job_dir, status="pending")
         try:
+            # Review Round-3 P1: the shared slot is deliberately held across
+            # TTS -> VC -> postprocess. The RVC backend runs in a separate
+            # process no in-process lock can reach, so keeping the slot for the
+            # whole VC round-trip is what prevents the RVC subprocess from
+            # overlapping main-process LLM/TTS inference on the same GPU.
             async with self._coordinator.slot():
                 queue_wait = time.perf_counter() - queue_start
                 tts_path, vc_path, final_path = self._paths(job_id)
@@ -124,6 +136,13 @@ class SpeechPipeline:
                 if not self._keep_artifacts:
                     vc_path.unlink(missing_ok=True)
                     mark_temp_artifact(final.path)
+        except asyncio.CancelledError:
+            # Cancellation is not an error (review Round-3 P1): never swallow
+            # it. The job keeps its .temporary marker (status "pending") and
+            # whatever partial artifacts exist, so retention pruning removes
+            # the directory deterministically once past the retention window.
+            logger.warning("Speech job %s cancelled; artifacts left under temporary marker", job_id)
+            raise
         except Exception:
             # Failed jobs keep their artifacts for diagnosis; record when the
             # failure happened so retention pruning can age the dir out later.
@@ -133,8 +152,11 @@ class SpeechPipeline:
 
         # Review Round-2 P2: drop the per-job directory when nothing is left in
         # it (final.wav normally survives until playback cleanup; the periodic
-        # prune then removes the emptied dir).
+        # prune then removes the emptied dir). Refresh the temporary marker to
+        # status "generated" so a crash-before-playback is identifiable as a
+        # stale successful temporary job (Round-3 P1).
         if not self._keep_artifacts:
+            mark_temporary_job(job_dir, status="generated")
             remove_empty_job_dir(job_dir)
 
         total_s = time.perf_counter() - start

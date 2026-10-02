@@ -9,6 +9,7 @@ every enqueue site to remember to set ``temp_file=True``.
 
 from __future__ import annotations
 
+import json
 import logging
 import shutil
 from datetime import UTC, datetime
@@ -21,6 +22,14 @@ _TEMP_ARTIFACTS: set[Path] = set()
 # Marker written into a job directory when the pipeline job failed; it records
 # the failure time so expired diagnostic directories can be pruned later.
 FAILED_MARKER_NAME = ".failed"
+
+# Marker written into a job directory at creation (review Round-3 P1): a JSON
+# blob with a timestamp and status ("pending" while running, "generated" once
+# the final artifact exists and is registered for playback). If the process
+# crashes after generation but before queue playback cleanup, the in-memory
+# registry is lost — this on-disk marker lets retention/startup cleanup
+# identify and prune the stale successful-but-unplayed temporary job.
+TEMP_MARKER_NAME = ".temporary"
 
 
 def mark_temp_artifact(path: Path) -> None:
@@ -63,6 +72,40 @@ def mark_failed_job(job_dir: Path, *, timestamp: datetime | None = None) -> Path
     return marker
 
 
+def mark_temporary_job(
+    job_dir: Path, *, timestamp: datetime | None = None, status: str = "pending"
+) -> Path:
+    """Write the ``.temporary`` ownership marker into ``job_dir``.
+
+    Called at speech-job creation (status ``"pending"``) and refreshed on
+    success (status ``"generated"``). Never overwrites a ``.failed`` marker.
+    """
+    job_dir = Path(job_dir)
+    marker = job_dir / TEMP_MARKER_NAME
+    if (job_dir / FAILED_MARKER_NAME).is_file():
+        return marker  # failed jobs keep their diagnostics marker instead
+    stamp = (timestamp or datetime.now(UTC)).isoformat()
+    try:
+        job_dir.mkdir(parents=True, exist_ok=True)
+        marker.write_text(json.dumps({"timestamp": stamp, "status": status}), encoding="utf-8")
+    except OSError:
+        logger.warning("Could not write temporary marker in %s", job_dir, exc_info=True)
+    return marker
+
+
+def _marker_time(job_dir: Path, name: str) -> tuple[datetime | None, bool]:
+    """(timestamp, has marker) for a named JSON marker file."""
+    marker = job_dir / name
+    if not marker.is_file():
+        return None, False
+    try:
+        data = json.loads(marker.read_text(encoding="utf-8"))
+        return datetime.fromisoformat(str(data["timestamp"])), True
+    except (OSError, ValueError, KeyError, TypeError):
+        logger.debug("Unparseable %s marker in %s; falling back to mtime", name, job_dir)
+        return None, True
+
+
 def _job_failure_time(job_dir: Path) -> tuple[datetime | None, bool]:
     """(failure time, has marker) for a job dir; mtime fallback when unmarked."""
     marker = job_dir / FAILED_MARKER_NAME
@@ -91,9 +134,10 @@ def cleanup_temp_artifact(path: Path) -> None:
     """Full play-once cleanup for a registered temp artifact.
 
     Discards the registry entry, deletes the file, and removes the containing
-    job directory when the deletion leaves it empty. Production callers
-    (media.downloader) currently discard + unlink separately; this helper is
-    the one-call equivalent and also used by tests.
+    job directory when the deletion leaves it empty (removing the job's
+    ``.temporary`` marker first, since the marker itself keeps the directory
+    non-empty). Production callers (the Discord player's cleanup path) use
+    this helper so successful playback leaves no job directory behind.
     """
     path = Path(path)
     discard_temp_speech_artifact(path)
@@ -102,7 +146,12 @@ def cleanup_temp_artifact(path: Path) -> None:
     except OSError:
         logger.warning("Failed to delete temporary speech artifact %s", path, exc_info=True)
         return
-    remove_empty_job_dir(path.parent)
+    job_dir = path.parent
+    try:
+        (job_dir / TEMP_MARKER_NAME).unlink(missing_ok=True)
+    except OSError:
+        logger.debug("Could not remove temporary marker in %s", job_dir, exc_info=True)
+    remove_empty_job_dir(job_dir)
 
 
 def prune_expired_jobs(
@@ -114,9 +163,13 @@ def prune_expired_jobs(
     """Age out stale job directories under ``output_dir``.
 
     Removes (a) failed-job directories whose failure is older than
-    ``max_age_hours`` (recursively — they keep diagnostic artifacts) and
-    (b) empty job directories older than ``max_age_hours`` (left behind after
-    the player deleted the final artifact). Returns the removed paths.
+    ``max_age_hours`` (recursively — they keep diagnostic artifacts), (b)
+    ``.temporary``-marked job directories older than ``max_age_hours``
+    (recursively — crash orphans: successful-but-unplayed temporary jobs whose
+    in-memory registry was lost on restart), and (c) empty job directories
+    older than ``max_age_hours`` (left behind after playback cleanup).
+    Unmarked non-empty directories (e.g. a live job or ``keep_artifacts``
+    debug output) are never touched. Returns the removed paths.
     """
     output_dir = Path(output_dir)
     if not output_dir.is_dir():
@@ -134,14 +187,28 @@ def prune_expired_jobs(
             is_empty = not any(entry.iterdir())
         except OSError:
             continue
+        try:
+            mtime = datetime.fromtimestamp(entry.stat().st_mtime, tz=UTC)
+        except OSError:
+            continue
+        # .failed takes precedence: failed jobs keep diagnostics until their
+        # own marker ages out, regardless of any temporary marker.
         failure_time, has_marker = _job_failure_time(entry)
-        if failure_time is None:
+        if has_marker:
+            time_ref = failure_time or mtime
+        else:
+            temp_time, has_temp = _marker_time(entry, TEMP_MARKER_NAME)
+            if has_temp:
+                # Marked temporary job (crash orphan or unplayed artifact):
+                # remove recursively once past the retention threshold.
+                time_ref = temp_time or mtime
+            elif is_empty:
+                time_ref = mtime
+            else:
+                continue
+        if time_ref is None:
             continue
-        # Only failed jobs (marker present) are removed recursively; unmarked
-        # directories are only ever dropped when already empty.
-        if not has_marker and not is_empty:
-            continue
-        age_h = (current - failure_time).total_seconds() / 3600.0
+        age_h = (current - time_ref).total_seconds() / 3600.0
         if age_h < max_age_hours:
             continue
         try:

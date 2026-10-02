@@ -21,7 +21,7 @@ from notamusicbot.discord_bot.commands import setup_commands
 from notamusicbot.discord_bot.guild_state import GuildState, GuildStateRegistry
 from notamusicbot.discord_bot.interlude_playback import fire_post_song_content
 from notamusicbot.discord_bot.player import GuildPlayer
-from notamusicbot.domain.media import MediaKind, PlayableMedia
+from notamusicbot.domain.media import MediaKind, PlayableMedia, PlaybackOutcome
 from notamusicbot.media.downloader import download_media_audio
 from notamusicbot.media.spotify import SpotifyResolver
 from notamusicbot.media.youtube import YouTubeResolver
@@ -149,17 +149,19 @@ class NotAMusicBot(commands.Bot):
         return _announce
 
     def _make_playback_complete_hook(self, guild_id: int):
-        """Player completion hook (review Round-2 P0).
+        """Player completion hook (review Round-2 P0, Round-3 P0).
 
-        Invoked by the player after a STREAM item finishes and before the next
-        dequeue, so generated interstitial/podcast audio is awaited into the
-        queue ahead of the next song. LOCAL/generated items never reach this
-        hook (the player gates on ``media.kind == STREAM``), so generated audio
-        cannot recurse into more post-song content.
+        Invoked by the player ONLY after a STREAM item ended NATURAL (see
+        ``player.run``), with the outcome of that attempt; the bot-side caller
+        double-checks ``outcome is NATURAL`` before generating post-song
+        content, so skip/stop/failure never start an LLM → TTS → RVC run.
+        LOCAL/generated items never reach this hook (the player gates on
+        ``media.kind == STREAM``), so generated audio cannot recurse into more
+        post-song content.
         """
 
-        async def _on_complete(media: PlayableMedia) -> None:
-            if media.kind is not MediaKind.STREAM:
+        async def _on_complete(media: PlayableMedia, outcome: PlaybackOutcome) -> None:
+            if media.kind is not MediaKind.STREAM or outcome is not PlaybackOutcome.NATURAL:
                 return
             try:
                 await fire_post_song_content(self, guild_id)

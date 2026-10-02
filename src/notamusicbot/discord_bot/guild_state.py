@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from notamusicbot.domain.media import PlayableMedia
+from notamusicbot.domain.media import PlayableMedia, PlaybackOutcome
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +26,11 @@ class GuildState:
         self.queue: asyncio.Queue[PlayableMedia] = asyncio.Queue()
         self.stop_event = asyncio.Event()
         self.playback_done = asyncio.Event()
+        # Interruption reason for the item currently playing (review Round-3
+        # P0): skip()/stop() record it BEFORE calling voice_client.stop() so
+        # the after-callback/_play_one can report SKIPPED/STOPPED instead of
+        # mistaking an interruption for natural completion.
+        self.interrupt_reason: PlaybackOutcome | None = None
         self.player_task: asyncio.Task[None] | None = None
 
     def drain_queue(self) -> list[PlayableMedia]:
@@ -58,6 +63,7 @@ class GuildState:
         """Prepare the state for a fresh session (new stop cycle)."""
         self.stop_event.clear()
         self.playback_done.clear()
+        self.interrupt_reason = None
 
 
 class GuildStateRegistry:

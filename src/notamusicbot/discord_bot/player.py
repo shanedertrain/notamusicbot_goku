@@ -8,6 +8,21 @@ same callback) plus a stop event; the queue is drained explicitly.
 
 Any playback failure is logged and the item skipped — the queue survives
 (behavioral requirement from handoff section 20).
+
+Playback outcomes (review Round-3 P0): ``_play_one()`` returns
+``(played_media, PlaybackOutcome)``. ``skip()``/``stop()`` record the
+interruption reason in ``state.interrupt_reason`` BEFORE calling
+``voice_client.stop()``, so the after-callback/``_play_one`` can report
+SKIPPED/STOPPED; an after-callback playback error with no recorded
+interruption yields FAILED; a dequeued item with no connected voice client is
+DROPPED.
+
+Completion-hook contract (review Round-3 P0): the player invokes
+``on_playback_complete(media, outcome)`` ONLY when ``media.kind == STREAM``
+AND ``outcome == NATURAL`` — a song that was skipped, stopped, failed, or
+dropped (and any generated/LOCAL media, which can never recurse into
+post-song content) never triggers post-song generation. The outcome is still
+passed to the hook so the bot-side caller can assert/log the completion kind.
 """
 
 from __future__ import annotations
@@ -20,16 +35,31 @@ from pathlib import Path
 from typing import Any
 
 from notamusicbot.discord_bot.guild_state import GuildState
-from notamusicbot.domain.media import MediaKind, PlayableMedia
+from notamusicbot.domain.media import MediaKind, PlayableMedia, PlaybackOutcome
 from notamusicbot.media.downloader import cleanup_media
 from notamusicbot.media.youtube import FFMPEG_BEFORE_OPTIONS, FFMPEG_OPTIONS
+from notamusicbot.speech.artifacts import cleanup_temp_artifact, is_temp_speech_artifact
 
 logger = logging.getLogger(__name__)
 
 AudioSourceFactory = Callable[[PlayableMedia], Any]
 StreamDownloader = Callable[[PlayableMedia], Awaitable[Path | None]]
 NowPlayingHook = Callable[[PlayableMedia], Awaitable[None] | None]
-PlaybackCompleteHook = Callable[[PlayableMedia], Awaitable[None] | None]
+PlaybackCompleteHook = Callable[[PlayableMedia, PlaybackOutcome], Awaitable[None] | None]
+
+
+def cleanup_media_item(media: PlayableMedia) -> None:
+    """Full play-once cleanup for a played/dropped queue item.
+
+    Generated speech artifacts go through the full temporary-artifact helper
+    (deletes the final file AND the emptied per-job directory — review Round-3
+    P1); every other temp item uses the plain media cleanup.
+    """
+    path = media.source_path
+    if path is not None and is_temp_speech_artifact(path):
+        cleanup_temp_artifact(path)
+        return
+    cleanup_media(media)
 
 
 def ffmpeg_source_factory(media: PlayableMedia) -> Any:
@@ -109,14 +139,18 @@ class GuildPlayer:
                         recovered.media_id,
                         state.guild_id,
                     )
-                    cleanup_media(recovered)
+                    cleanup_media_item(recovered)
                 else:
                     get_task.cancel()
                 break
             media = await get_task
             play_media = media
+            outcome = PlaybackOutcome.FAILED
             try:
-                play_media = await self._play_one(media)
+                play_media, outcome = await self._play_one(media)
+            except asyncio.CancelledError:
+                cleanup_media_item(play_media)
+                raise
             except Exception:
                 logger.exception(
                     "Playback failed for media %s (%r) in guild %s; skipping it",
@@ -124,18 +158,25 @@ class GuildPlayer:
                     media.title,
                     state.guild_id,
                 )
-            finally:
+                outcome = PlaybackOutcome.FAILED
+            else:
                 # Clean up the item that was actually played: when a stream
                 # fell back to a downloaded copy, that LOCAL copy (temp_file)
                 # is the file to delete, not the original STREAM item.
-                cleanup_media(play_media)
-            # Post-song content hook (review Round-2 P0): awaited to completion
-            # BEFORE the next dequeue, so generated interstitial/podcast audio
-            # is enqueued ahead of song B. Fired only for STREAM (song) items —
-            # generated/local items must never recurse into post-song content.
-            if self._on_playback_complete is not None and media.kind is MediaKind.STREAM:
+                cleanup_media_item(play_media)
+            # Never let a stale interruption reason leak into the next item.
+            state.interrupt_reason = None
+            # Post-song content hook (review Round-2 P0, Round-3 P0): awaited
+            # to completion BEFORE the next dequeue. Fired only for STREAM
+            # items that ended NATURAL — skip/stop/failure/drop (and any
+            # generated/LOCAL item) never trigger post-song generation.
+            if (
+                self._on_playback_complete is not None
+                and media.kind is MediaKind.STREAM
+                and outcome is PlaybackOutcome.NATURAL
+            ):
                 try:
-                    result = self._on_playback_complete(media)
+                    result = self._on_playback_complete(media, outcome)
                     if inspect.isawaitable(result):
                         await result
                 except Exception:
@@ -146,11 +187,15 @@ class GuildPlayer:
                     )
         logger.info("Playback task exiting for guild %s", state.guild_id)
 
-    async def _play_one(self, media: PlayableMedia) -> PlayableMedia:
-        """Play one item; return the media item whose file was actually played.
+    async def _play_one(self, media: PlayableMedia) -> tuple[PlayableMedia, PlaybackOutcome]:
+        """Play one item; return the media whose file played plus the outcome.
 
         When a STREAM item is downloaded first, the returned copy is the LOCAL
         temp file backing playback so the caller cleans that file up.
+        Outcomes (review Round-3 P0): DROPPED when there is no connected voice
+        client; SKIPPED/STOPPED when skip()/stop() recorded an interruption
+        before ``voice_client.stop()``; FAILED when the after-callback reports
+        a playback error with no recorded interruption; NATURAL otherwise.
         """
         voice_client = self._get_voice_client()
         if voice_client is None or not voice_client.is_connected():
@@ -159,7 +204,7 @@ class GuildPlayer:
                 self._state.guild_id,
                 media.media_id,
             )
-            return media
+            return media, PlaybackOutcome.DROPPED
 
         play_media = media
         source: Any = None
@@ -205,7 +250,12 @@ class GuildPlayer:
             if inspect.isawaitable(result):
                 await result
         await done.wait()
-        return play_media
+        state = self._state
+        if state.interrupt_reason is not None:
+            outcome, state.interrupt_reason = state.interrupt_reason, None
+        else:
+            outcome = PlaybackOutcome.NATURAL
+        return play_media, outcome
 
     def _make_after_callback(self, media: PlayableMedia) -> Callable[[Exception | None], None]:
         def _after(error: Exception | None) -> None:
@@ -216,6 +266,11 @@ class GuildPlayer:
                     self._state.guild_id,
                     error,
                 )
+                # Playback error (review Round-3 P0): report FAILED unless an
+                # interruption (skip/stop) was already recorded — the recorded
+                # reason wins because it was set BEFORE voice_client.stop().
+                if self._state.interrupt_reason is None:
+                    self._state.interrupt_reason = PlaybackOutcome.FAILED
             if self._loop is not None:
                 self._loop.call_soon_threadsafe(self._state.playback_done.set)
 
@@ -225,6 +280,9 @@ class GuildPlayer:
         """Stop the current item; the queue loop advances to the next one."""
         voice_client = self._get_voice_client()
         if voice_client is not None and voice_client.is_playing():
+            # Record the interruption reason BEFORE stopping playback so the
+            # after-callback reports SKIPPED, not natural completion.
+            self._state.interrupt_reason = PlaybackOutcome.SKIPPED
             voice_client.stop()
             return True
         return False
@@ -235,9 +293,12 @@ class GuildPlayer:
         state.request_stop()
         voice_client = self._get_voice_client()
         if voice_client is not None:
+            # Record the interruption reason BEFORE stopping playback so the
+            # after-callback reports STOPPED, not natural completion.
+            state.interrupt_reason = PlaybackOutcome.STOPPED
             voice_client.stop()  # fires the after-callback; unblocks _play_one
         for media in state.drain_queue():
-            cleanup_media(media)
+            cleanup_media_item(media)
         task = state.player_task
         if task is not None and not task.done():
             try:
