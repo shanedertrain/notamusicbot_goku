@@ -9,3 +9,4 @@ genai/logs/*
 *.log
 tools/deno/
 var/
+benchmark/
