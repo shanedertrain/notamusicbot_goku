@@ -1,0 +1,5 @@
+model=Goku
+load_seconds=2.747
+convert_seconds=1.534
+output_duration=1.980
+peak=0.4497

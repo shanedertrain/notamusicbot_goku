@@ -1,0 +1,18 @@
+id: vegeta
+
+persona:
+  display_name: Vegeta
+  description: Test persona 2.
+
+tts:
+  backend: qwen_custom_voice
+  model: Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice
+  language: English
+  speaker: Aiden
+
+voice_conversion:
+  backend: passthrough
+
+audio:
+  speed: 1.5
+  target_peak_dbfs: -3.0

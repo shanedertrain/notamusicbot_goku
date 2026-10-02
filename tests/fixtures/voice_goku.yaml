@@ -1,0 +1,20 @@
+id: goku
+
+persona:
+  display_name: Goku
+  description: Test persona.
+
+tts:
+  backend: qwen_custom_voice
+  model: Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice
+  language: English
+  speaker: Ryan
+
+voice_conversion:
+  backend: rvc
+  model: GOKU
+  pitch_shift: 0
+
+audio:
+  speed: 1.0
+  target_peak_dbfs: -1.0
