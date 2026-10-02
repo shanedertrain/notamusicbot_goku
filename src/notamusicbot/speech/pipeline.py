@@ -21,6 +21,7 @@ from notamusicbot.domain.speech import (
     TtsRequest,
     VoiceConversionProfile,
 )
+from notamusicbot.speech.artifacts import mark_temp_artifact
 from notamusicbot.speech.coordinator import InferenceCoordinator
 from notamusicbot.speech.postprocess import postprocess
 from notamusicbot.speech.tts.base import SpeechSynthesizer
@@ -45,12 +46,23 @@ class SpeechPipeline:
         processing: AudioProcessingProfile | None = None,
         coordinator: InferenceCoordinator | None = None,
         output_dir: Path = Path("var/speech"),
+        *,
+        keep_artifacts: bool = False,
     ) -> None:
         self._synthesizer = synthesizer
         self._converter = converter
         self._processing = processing or AudioProcessingProfile()
         self._coordinator = coordinator or InferenceCoordinator()
         self._output_dir = output_dir
+        # Artifact cleanup policy (review P1-11):
+        #   tts_source.wav  deleted after VC succeeds
+        #   converted.wav   deleted after post-processing succeeds
+        #   final.wav       registered as play-once queue media; the Discord
+        #                   player deletes it after playback (see
+        #                   speech/artifacts.py + media.downloader.cleanup_media)
+        # A failed stage retains what it produced so failures stay diagnosable;
+        # ``keep_artifacts=True`` (debug/benchmark mode) retains everything.
+        self._keep_artifacts = keep_artifacts
 
     def _paths(self, job_id: str) -> tuple[Path, Path, Path]:
         job_dir = self._output_dir / job_id
@@ -82,10 +94,15 @@ class SpeechPipeline:
             vc_start = time.perf_counter()
             converted = await self._converter.convert(source, conversion, vc_path)
             vc_s = time.perf_counter() - vc_start
+            if not self._keep_artifacts:
+                tts_path.unlink(missing_ok=True)
 
             pp_start = time.perf_counter()
             final = await postprocess(converted, final_path, processing)
             pp_s = time.perf_counter() - pp_start
+            if not self._keep_artifacts:
+                vc_path.unlink(missing_ok=True)
+                mark_temp_artifact(final.path)
 
         total_s = time.perf_counter() - start
         out_duration = final.duration_s or _probe_duration(final.path)

@@ -51,6 +51,9 @@ class SpeechSettings(BaseModel):
     default_speed: float = Field(default=1.0, ge=0.25, le=4.0)
     default_target_peak_dbfs: float = Field(default=-1.0, le=0.0)
     commentary_enabled: bool = False
+    # Debug/benchmark mode: retain tts_source.wav/converted.wav/final.wav in the
+    # job directory instead of applying the standard artifact cleanup policy.
+    keep_artifacts: bool = False
     # Voice-conversion backends the router may serve (see
     # speech/voice_conversion/router.py). Profiles requesting another backend
     # fail with a clear error instead of silently falling back.
@@ -106,6 +109,40 @@ class ContentSettings(BaseModel):
     system_prompt: str = ""  # empty -> prompts.RADIO_SYSTEM_PROMPT
 
 
+class RedditSettings(BaseModel):
+    """Reddit fetching settings (credentials live in secrets)."""
+
+    # Empty list -> legacy behavior: the reddit front page.
+    subreddits: list[str] = Field(default_factory=list)
+    post_limit: int = Field(default=40, ge=1)
+    user_agent: str = "windows:reddit_access:v1.0 (by u/Proud-Election-4152)"
+    request_timeout_s: float = Field(default=10.0, gt=0.0)
+
+
+class InterstitialSettings(BaseModel):
+    """Randomized news/reddit interstitials between songs (legacy behavior).
+
+    Disabled by default so defaults stay safe; enable explicitly in
+    ``config/app.yaml``. Fires after a finished song with ``probability`` and
+    at most once per ``min_interval_s``.
+    """
+
+    enabled: bool = False
+    probability: float = Field(default=0.25, ge=0.0, le=1.0)
+    min_interval_s: float = Field(default=300.0, ge=0.0)
+    voice_profile: str = "goku"
+    news_country: str = "us"
+    news_category: str | None = None
+
+
+class PodcastSettings(BaseModel):
+    """Two-voice podcast conversation mode (``!gpodcast``)."""
+
+    enabled: bool = False
+    host_profile: str = "obama"
+    turns: int = Field(default=2, ge=1, le=6)
+
+
 class AppSettings(BaseModel):
     """Non-secret application settings, normally loaded from ``config/app.yaml``."""
 
@@ -113,6 +150,9 @@ class AppSettings(BaseModel):
     discord: DiscordSettings = DiscordSettings()
     media: MediaSettings = MediaSettings()
     content: ContentSettings = ContentSettings()
+    reddit: RedditSettings = RedditSettings()
+    interstitial: InterstitialSettings = InterstitialSettings()
+    podcast: PodcastSettings = PodcastSettings()
 
 
 DEFAULT_APP_CONFIG_PATH = Path("config/app.yaml")

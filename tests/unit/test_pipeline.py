@@ -59,7 +59,9 @@ def test_artifact_naming_deterministic_layout(tmp_path) -> None:
     )
     assert final.path.parent == tmp_path / "speech" / metrics.job_id
     assert final.path.name == "final.wav"
-    assert (tmp_path / "speech" / metrics.job_id / "tts_source.wav").exists()
+    # P1-11 cleanup: the TTS intermediate is deleted once VC has consumed it.
+    assert not (tmp_path / "speech" / metrics.job_id / "tts_source.wav").exists()
+    assert not (tmp_path / "speech" / metrics.job_id / "converted.wav").exists()
 
 
 def test_queue_ordering_and_serialization(tmp_path) -> None:
@@ -117,3 +119,82 @@ def test_empty_text_raises(tmp_path) -> None:
     assert normalize_text("  hello   world ") == "hello world"
     # Quotes and punctuation are preserved (section 7.6)
     assert normalize_text('"Hey, it\'s me!"') == '"Hey, it\'s me!"'
+
+
+# --- Artifact cleanup policy (review P1-11) -------------------------------
+
+
+def test_pipeline_cleans_intermediates_and_marks_final_temp(tmp_path) -> None:
+    """Successful job: tts_source.wav deleted after VC, converted.wav deleted
+    after postprocess, final.wav registered as play-once queue media."""
+    from notamusicbot.speech.artifacts import (
+        clear_registry,
+        is_temp_speech_artifact,
+    )
+
+    clear_registry()
+    pipeline = _pipeline(tmp_path, FakeSynthesizer(), FakeConverter())
+    final, _metrics = asyncio.run(
+        pipeline.run(TtsRequest(text="x", language="English", speaker="Ryan"), CONVERSION)
+    )
+    job_dir = final.path.parent
+    assert not (job_dir / "tts_source.wav").exists()
+    assert not (job_dir / "converted.wav").exists()
+    assert (job_dir / "final.wav").exists()
+    assert is_temp_speech_artifact(final.path)
+    clear_registry()
+
+
+def test_pipeline_keep_artifacts_retains_everything(tmp_path) -> None:
+    from notamusicbot.speech.artifacts import (
+        clear_registry,
+        is_temp_speech_artifact,
+    )
+
+    clear_registry()
+    pipeline = SpeechPipeline(
+        FakeSynthesizer(),
+        FakeConverter(),
+        PROCESSING,
+        output_dir=tmp_path / "speech",
+        keep_artifacts=True,
+    )
+    final, _metrics = asyncio.run(
+        pipeline.run(TtsRequest(text="x", language="English", speaker="Ryan"), CONVERSION)
+    )
+    job_dir = final.path.parent
+    assert (job_dir / "tts_source.wav").exists()
+    assert (job_dir / "converted.wav").exists()
+    assert (job_dir / "final.wav").exists()
+    assert not is_temp_speech_artifact(final.path)
+    clear_registry()
+
+
+def test_pipeline_vc_failure_retains_tts_source(tmp_path) -> None:
+    """Failure policy: when VC fails, tts_source.wav is retained for
+    diagnostics (the only reproducible input for the failed stage)."""
+    from notamusicbot.speech.artifacts import clear_registry
+
+    class FailingConverter:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def convert(self, source, profile, output_path):  # noqa: ANN001
+            self.calls += 1
+            raise RuntimeError("vc boom")
+
+    clear_registry()
+    failing = FailingConverter()
+    pipeline = _pipeline(tmp_path, FakeSynthesizer(), failing)
+    try:
+        asyncio.run(
+            pipeline.run(TtsRequest(text="x", language="English", speaker="Ryan"), CONVERSION)
+        )
+        raised = False
+    except RuntimeError:
+        raised = True
+    assert raised and failing.calls == 1
+    job_dir = tmp_path / "speech"
+    sources = list(job_dir.glob("*/tts_source.wav"))
+    assert len(sources) == 1 and sources[0].exists()
+    clear_registry()
