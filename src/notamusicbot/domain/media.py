@@ -24,10 +24,13 @@ class MediaKind(StrEnum):
 class PlayableMedia:
     """One unit of work for the guild playback queue.
 
-    ``kind=LOCAL`` requires ``source_path``; ``kind=STREAM`` requires
-    ``stream_url``. ``temp_file=True`` marks files the player must delete after
-    playback (download-cache entries); generated speech artifacts are owned by
-    the speech pipeline's per-job directories and are cleaned up by its policy.
+    ``kind=LOCAL`` requires ``source_path``; ``kind=STREAM`` requires a
+    ``stream_url`` (direct media URL for ffmpeg) or at least a ``source_url``
+    (canonical webpage URL) — when only the source URL is available the player
+    downloads via that URL before playback. ``temp_file=True`` marks files the
+    player must delete after playback (download-cache entries); generated
+    speech artifacts are owned by the speech pipeline's per-job directories and
+    are cleaned up by its policy.
     """
 
     media_id: str
@@ -37,14 +40,15 @@ class PlayableMedia:
     guild_id: int | None = None
     source_path: Path | None = None
     stream_url: str | None = None
+    source_url: str | None = None  # canonical/webpage URL used by the download fallback
     stream_headers: Mapping[str, str] = field(default_factory=dict)
     temp_file: bool = False
 
     def __post_init__(self) -> None:
         if self.kind is MediaKind.LOCAL and self.source_path is None:
             raise ValueError("LOCAL media requires source_path")
-        if self.kind is MediaKind.STREAM and not self.stream_url:
-            raise ValueError("STREAM media requires stream_url")
+        if self.kind is MediaKind.STREAM and not self.stream_url and not self.source_url:
+            raise ValueError("STREAM media requires stream_url or source_url")
 
     def as_local(self, path: Path) -> PlayableMedia:
         """Return a copy of this item backed by a downloaded local file."""
@@ -55,5 +59,6 @@ class PlayableMedia:
             requester=self.requester,
             guild_id=self.guild_id,
             source_path=path,
+            source_url=self.source_url,
             temp_file=True,
         )

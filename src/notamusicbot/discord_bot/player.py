@@ -99,8 +99,9 @@ class GuildPlayer:
                 get_task.cancel()
                 break
             media = await get_task
+            play_media = media
             try:
-                await self._play_one(media)
+                play_media = await self._play_one(media)
             except Exception:
                 logger.exception(
                     "Playback failed for media %s (%r) in guild %s; skipping it",
@@ -109,10 +110,18 @@ class GuildPlayer:
                     state.guild_id,
                 )
             finally:
-                cleanup_media(media)
+                # Clean up the item that was actually played: when a stream
+                # fell back to a downloaded copy, that LOCAL copy (temp_file)
+                # is the file to delete, not the original STREAM item.
+                cleanup_media(play_media)
         logger.info("Playback task exiting for guild %s", state.guild_id)
 
-    async def _play_one(self, media: PlayableMedia) -> None:
+    async def _play_one(self, media: PlayableMedia) -> PlayableMedia:
+        """Play one item; return the media item whose file was actually played.
+
+        When a STREAM item is downloaded first, the returned copy is the LOCAL
+        temp file backing playback so the caller cleans that file up.
+        """
         voice_client = self._get_voice_client()
         if voice_client is None or not voice_client.is_connected():
             logger.info(
@@ -120,8 +129,9 @@ class GuildPlayer:
                 self._state.guild_id,
                 media.media_id,
             )
-            return
+            return media
 
+        play_media = media
         source: Any = None
         if media.kind is MediaKind.STREAM and self._stream_downloader is not None:
             # Legacy behavior preserved: prefer a downloaded copy over the raw
@@ -129,7 +139,8 @@ class GuildPlayer:
             try:
                 path = await self._stream_downloader(media)
                 if path is not None and path.exists():
-                    source = self._source_factory(media.as_local(path))
+                    play_media = media.as_local(path)
+                    source = self._source_factory(play_media)
             except Exception:
                 logger.warning(
                     "Download fallback failed for media %s in guild %s; trying the stream URL",
@@ -138,7 +149,7 @@ class GuildPlayer:
                     exc_info=True,
                 )
         if source is None:
-            source = self._source_factory(media)
+            source = self._source_factory(play_media)
 
         done = self._state.playback_done
         done.clear()
@@ -148,6 +159,7 @@ class GuildPlayer:
             if inspect.isawaitable(result):
                 await result
         await done.wait()
+        return play_media
 
     def _make_after_callback(self, media: PlayableMedia) -> Callable[[Exception | None], None]:
         def _after(error: Exception | None) -> None:

@@ -102,3 +102,85 @@ def test_cleanup_media_only_deletes_temp_items(tmp_path: Path) -> None:
     cleanup_media(local_media)
     assert not temp.exists()
     assert kept.exists()
+
+
+def _media(**kwargs) -> PlayableMedia:
+    defaults = {"media_id": "m", "kind": MediaKind.STREAM}
+    return PlayableMedia(**{**defaults, **kwargs})
+
+
+class UrlAwareYdl(FakeYdl):
+    """FakeYdl that also records downloaded URLs and can fail on specific ones."""
+
+    def __init__(self, fail_urls: set[str] | None = None) -> None:
+        super().__init__()
+        self.fail_urls = fail_urls or set()
+        self.urls: list[str] = []
+
+    def download(self, urls: list[str]) -> None:
+        self.urls.extend(urls)
+        if urls[0] in self.fail_urls:
+            raise RuntimeError("expired stream URL")
+        Path(self.current["outtmpl"]).write_bytes(b"audio")
+
+
+async def _download_media(media, ydl, cache_dir: Path) -> Path:
+    from notamusicbot.media.downloader import download_media_audio
+
+    return await download_media_audio(
+        media,
+        build_opts=lambda client: {"extractor_args": {"youtube": {"player_client": [client]}}},
+        clients=("default", "web"),
+        cache_dir=cache_dir,
+        ydl_factory=lambda opts: ydl(opts),
+    )
+
+
+async def test_download_media_audio_uses_source_url_when_no_stream(tmp_path: Path) -> None:
+    ydl = UrlAwareYdl()
+    media = _media(source_url="https://youtube.com/watch?v=abc")
+    path = await _download_media(media, ydl, tmp_path)
+    assert path.exists()
+    assert ydl.urls == ["https://youtube.com/watch?v=abc"]
+
+
+async def test_download_media_audio_prefers_webpage_over_expired_stream(
+    tmp_path: Path,
+) -> None:
+    """Expired/dying direct stream URL: the canonical webpage URL is used."""
+    ydl = UrlAwareYdl(fail_urls={"https://media/expired"})
+    media = _media(stream_url="https://media/expired", source_url="https://youtube.com/watch?v=x")
+    path = await _download_media(media, ydl, tmp_path)
+    assert path.exists()
+    assert ydl.urls == ["https://youtube.com/watch?v=x"]
+
+
+async def test_download_media_audio_without_any_url_raises(tmp_path: Path) -> None:
+    ydl = UrlAwareYdl()
+    media = _media(stream_url="https://media/tmp", source_url="https://youtube.com/watch?v=1")
+    media.stream_url = None
+    media.source_url = None
+    with pytest.raises(ValueError):
+        await _download_media(media, ydl, tmp_path)
+
+
+def test_cleanup_media_deletes_registered_speech_artifact(tmp_path: Path) -> None:
+    """Final commentary artifacts registered by the speech pipeline are deleted
+    by the standard player cleanup path even without temp_file=True."""
+    from notamusicbot.speech.artifacts import (
+        clear_registry,
+        is_temp_speech_artifact,
+        mark_temp_artifact,
+    )
+
+    clear_registry()
+    final = tmp_path / "final.wav"
+    final.write_bytes(b"audio")
+    mark_temp_artifact(final)
+    assert is_temp_speech_artifact(final)
+
+    media = PlayableMedia(media_id="c", kind=MediaKind.LOCAL, title="commentary", source_path=final)
+    cleanup_media(media)
+    assert not final.exists()
+    assert not is_temp_speech_artifact(final)
+    clear_registry()

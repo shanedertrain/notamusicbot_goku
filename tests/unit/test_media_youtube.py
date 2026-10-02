@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
+from notamusicbot.domain.media import MediaKind
 from notamusicbot.media.youtube import (
     DESKTOP_UA,
-    YouTubeResolutionError,
     YouTubeResolver,
     build_yt_opts,
     discover_js_runtimes,
@@ -126,11 +126,33 @@ def test_resolve_ytsearch_takes_first_entry() -> None:
     assert media.title == "Hit"
 
 
-def test_resolve_raises_when_no_stream_url() -> None:
-    ydl = FakeYdl({"u": {"title": "t", "webpage_url": "u", "url": ""}})
+def test_resolve_without_stream_url_returns_source_url_item() -> None:
+    """Missing stream URL no longer raises: the item carries the webpage URL
+    and the player's download fallback fetches audio via that URL."""
+    ydl = FakeYdl({"u": {"title": "t", "webpage_url": "https://youtube.com/watch?v=u", "url": ""}})
     resolver = YouTubeResolver(ydl_factory=ydl)
-    with pytest.raises(YouTubeResolutionError):
-        resolver_sync(resolver, "u")
+    media = resolver_sync(resolver, "u")
+    assert media.kind is MediaKind.STREAM
+    assert media.stream_url is None
+    assert media.source_url == "https://youtube.com/watch?v=u"
+
+
+def test_resolve_with_stream_url_prefers_direct_stream() -> None:
+    ydl = FakeYdl(
+        {
+            "u": {
+                "title": "t",
+                "webpage_url": "https://youtube.com/watch?v=u",
+                "url": "https://media/stream",
+                "http_headers": {"User-Agent": "x"},
+            }
+        }
+    )
+    resolver = YouTubeResolver(ydl_factory=ydl)
+    media = resolver_sync(resolver, "u")
+    assert media.stream_url == "https://media/stream"
+    assert media.source_url == "https://youtube.com/watch?v=u"
+    assert media.stream_headers == {"User-Agent": "x"}
 
 
 def test_resolve_raises_when_all_clients_fail() -> None:

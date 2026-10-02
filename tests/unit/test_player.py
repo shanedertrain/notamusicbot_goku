@@ -254,3 +254,60 @@ async def test_no_voice_client_drops_item_without_crash(tmp_path: Path) -> None:
     async with running_player(player):
         await wait_until(lambda: state.queue.empty())
     assert vc.played == []
+
+
+async def test_downloaded_fallback_file_deleted_after_playback(tmp_path: Path) -> None:
+    """P1-6: the LOCAL copy created for a stream fallback must be cleaned up,
+    not the original STREAM item."""
+    vc = FakeVoiceClient()
+    state = GuildState(1)
+    downloaded = tmp_path / "fallback.m4a"
+    downloaded.write_bytes(b"audio")
+    seen: list[PlayableMedia] = []
+
+    def factory(media: PlayableMedia) -> object:
+        seen.append(media)
+        return object()
+
+    async def downloader(media: PlayableMedia) -> Path:
+        return downloaded
+
+    player = make_player(state, vc, source_factory=factory, stream_downloader=downloader)
+    stream_media = PlayableMedia(
+        media_id="yt",
+        kind=MediaKind.STREAM,
+        title="yt",
+        stream_url="https://example/stream",
+        source_url="https://youtube.com/watch?v=yt",
+    )
+    state.queue.put_nowait(stream_media)
+
+    async with running_player(player):
+        await wait_until(lambda: len(vc.played) == 1)
+        vc.finish()
+        await wait_until(lambda: not downloaded.exists())
+
+    # The local copy (temp) was played, and the downloaded file is gone.
+    assert seen[0].kind is MediaKind.LOCAL
+    assert seen[0].source_path == downloaded
+    assert not downloaded.exists()
+    # The original STREAM item has no backing file to delete.
+    assert stream_media.source_path is None
+
+
+async def test_download_failure_cleans_only_played_media(tmp_path: Path) -> None:
+    vc = FakeVoiceClient()
+    state = GuildState(1)
+
+    async def downloader(media: PlayableMedia) -> Path:
+        raise RuntimeError("yt-dlp down")
+
+    player = make_player(state, vc, stream_downloader=downloader)
+    temp_media = make_media("local-temp", tmp_path, temp=True)
+    state.queue.put_nowait(temp_media)
+
+    async with running_player(player):
+        await wait_until(lambda: len(vc.played) == 1)
+        vc.finish()
+        await wait_until(lambda: not temp_media.source_path.exists())
+    assert not temp_media.source_path.exists()

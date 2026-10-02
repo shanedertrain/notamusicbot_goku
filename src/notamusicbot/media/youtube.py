@@ -214,14 +214,14 @@ class YouTubeResolver:
         when it is empty or fails mid-stream (see the player layer).
         """
         info = await self.resolve_info(url)
-        if not info.stream_url:
-            raise YouTubeResolutionError(
-                f"no stream URL for {info.title!r} ({info.webpage_url}); download fallback required"
-            )
         return PlayableMedia(
             media_id=media_id or uuid.uuid4().hex[:12],
             kind=MediaKind.STREAM,
             title=info.title,
-            stream_url=info.stream_url,
+            # The direct stream URL is best-effort; when it is absent the item
+            # still resolves with the canonical webpage URL and the player's
+            # download fallback fetches audio via that URL.
+            stream_url=info.stream_url or None,
+            source_url=info.webpage_url,
             stream_headers=info.http_headers,
         )

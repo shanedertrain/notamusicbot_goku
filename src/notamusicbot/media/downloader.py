@@ -16,6 +16,7 @@ from typing import Any
 
 from notamusicbot.domain.media import PlayableMedia
 from notamusicbot.media.youtube import default_ydl_factory
+from notamusicbot.speech.artifacts import discard_temp_speech_artifact, is_temp_speech_artifact
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +73,32 @@ async def download_audio(
     )
 
 
+async def download_media_audio(
+    media: PlayableMedia,
+    *,
+    build_opts: Callable[[str], dict[str, Any]],
+    clients: Iterable[str],
+    cache_dir: Path,
+    ydl_factory: Any = None,
+) -> Path:
+    """Download a resolved media item via its canonical URL, off the event loop.
+
+    The canonical ``source_url`` (the original webpage) is preferred over the
+    direct ``stream_url``: yt-dlp re-extracts from the page, so an expired or
+    missing direct stream URL never breaks the fallback.
+    """
+    url = media.source_url or media.stream_url
+    if not url:
+        raise ValueError(f"media {media.media_id} has no downloadable URL")
+    return await download_audio(
+        url,
+        build_opts=build_opts,
+        clients=clients,
+        cache_dir=cache_dir,
+        ydl_factory=ydl_factory,
+    )
+
+
 def cleanup_file(path: Path | None) -> None:
     """Explicitly delete one temp artifact, tolerating a missing file."""
     if path is None:
@@ -83,6 +110,18 @@ def cleanup_file(path: Path | None) -> None:
 
 
 def cleanup_media(media: PlayableMedia) -> None:
-    """Delete the backing file of a temp media item after playback."""
-    if media.temp_file and media.source_path is not None:
+    """Delete the backing file of a temp media item after playback.
+
+    Two sources of temp files are honored: items explicitly marked
+    ``temp_file=True`` (download-cache entries), and generated speech artifacts
+    the speech pipeline registered as play-once queue media (see
+    :mod:`notamusicbot.speech.artifacts`).
+    """
+    if media.source_path is None:
+        return
+    if media.temp_file:
+        cleanup_file(media.source_path)
+        return
+    if is_temp_speech_artifact(media.source_path):
+        discard_temp_speech_artifact(media.source_path)
         cleanup_file(media.source_path)
