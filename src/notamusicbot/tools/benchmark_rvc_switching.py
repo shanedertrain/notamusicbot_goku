@@ -18,6 +18,7 @@ import argparse
 import asyncio
 import time
 from pathlib import Path
+from typing import TypedDict
 
 import numpy as np
 import soundfile as sf
@@ -46,20 +47,29 @@ def available_models(candidates: list[str]) -> list[str]:
     return ok
 
 
+class AlternationRow(TypedDict):
+    """One recorded conversion: model, switch flag, wall-clock seconds."""
+
+    turn: int
+    model: str
+    switch: bool
+    seconds: float
+
+
 async def run_alternation(
     models: list[str],
     *,
     output_dir: Path,
     turns: int = 1,
     seconds: float = 2.0,
-) -> list[dict[str, float | str | bool]]:
+) -> list[AlternationRow]:
     """Alternate conversions and record per-call timings.
 
     Returns one row per conversion: model, switch (model changed vs the
     worker's previously loaded model), seconds (full convert call).
     """
     converter = RvcVoiceConverter()
-    rows: list[dict[str, float | str | bool]] = []
+    rows: list[AlternationRow] = []
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     try:
@@ -86,7 +96,7 @@ async def run_alternation(
     return rows
 
 
-def summarize(rows: list[dict[str, float | str | bool]]) -> dict[str, float]:
+def summarize(rows: list[AlternationRow]) -> dict[str, float]:
     switch_times = [r["seconds"] for r in rows if r["switch"]]
     warm_times = [r["seconds"] for r in rows if not r["switch"]]
     return {

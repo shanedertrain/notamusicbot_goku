@@ -84,7 +84,8 @@ class InferenceCoordinator:
         self._holders: set[asyncio.Task[None]] = set()
         # Strong references to detached holder tasks so a cancelled caller's
         # lease holder cannot be garbage-collected mid-flight.
-        self._detached: set[asyncio.Task[None]] = set()
+        # Task[Any]: holders return the (ok, outcome) pair unpacked below.
+        self._detached: set[asyncio.Task[Any]] = set()
 
     @asynccontextmanager
     async def slot(self) -> AsyncIterator[None]:

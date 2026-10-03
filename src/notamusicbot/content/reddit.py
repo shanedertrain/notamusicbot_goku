@@ -17,6 +17,10 @@ import logging
 import random
 from collections import deque
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from praw.models import Front, Subreddit
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +121,10 @@ class RedditPostFetcher:
                 check_for_async=False,
             )
             reddit.read_only = True
+
+            # praw.models is only needed for static typing; importing it at
+            # runtime would break the lightweight praw test double.
+            subreddit: Subreddit | Front
             if self._subreddits:
                 subreddit = reddit.subreddit("+".join(self._subreddits))
             else:

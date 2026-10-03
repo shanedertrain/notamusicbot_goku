@@ -14,6 +14,7 @@ import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from discord import Guild, VoiceClient
 from discord.ext import commands
 from discord.ext.commands import Context
 
@@ -35,8 +36,20 @@ logger = logging.getLogger(__name__)
 YOUTUBE_HOSTS = ("youtube.com", "youtu.be")
 
 
+def _guild(ctx: Context) -> Guild:
+    """Return the invocation guild or raise (legacy commands are guild-only).
+
+    ``Context.guild`` is ``Guild | None`` in discord.py 2.x; every command
+    below only runs in a guild, so narrow it once instead of per-attribute.
+    """
+    guild = ctx.guild
+    if guild is None:
+        raise commands.CommandError("command must be used inside a guild")
+    return guild
+
+
 def _requester(bot: NotAMusicBot, ctx: Context) -> UserProfile:
-    user = bot.app.users.lookup(ctx.author.id)
+    user = bot.app.users.lookup(str(ctx.author.id))
     if user is not None:
         return user
     return UserProfile(user_id=str(ctx.author.id), screen_name=getattr(ctx.author, "name", ""))
@@ -44,26 +57,28 @@ def _requester(bot: NotAMusicBot, ctx: Context) -> UserProfile:
 
 async def _join_and_start(bot: NotAMusicBot, ctx: Context) -> None:
     """Legacy ``play_init_funcs``: connect to voice and ensure the player runs."""
-    voice_client = ctx.guild.voice_client
+    voice_client = _guild(ctx).voice_client
     if not voice_client:
-        if ctx.author.voice is None or ctx.author.voice.channel is None:
+        # In a guild the author is a Member, which carries .voice.
+        voice = getattr(ctx.author, "voice", None)
+        if voice is None or voice.channel is None:
             await ctx.send("You need to be in a voice channel.")
             raise commands.CommandError("invoker is not in a voice channel")
-        await ctx.author.voice.channel.connect()
+        await voice.channel.connect()
         start_sound = bot.app.settings.discord.start_sound
         if start_sound is not None and Path(start_sound).is_file():
-            state = bot.guild_state(ctx.guild.id)
+            state = bot.guild_state(_guild(ctx).id)
             state.queue.put_nowait(
                 PlayableMedia(
                     media_id="start_sound",
                     kind=MediaKind.LOCAL,
                     title="start sound",
-                    guild_id=ctx.guild.id,
+                    guild_id=_guild(ctx).id,
                     source_path=Path(start_sound),
                 )
             )
-    bot.set_announce_channel(ctx.guild.id, ctx.channel)
-    bot.get_player(ctx.guild).start()
+    bot.set_announce_channel(_guild(ctx).id, ctx.channel)
+    bot.get_player(_guild(ctx)).start()
 
 
 async def _enqueue_commentary(
@@ -115,7 +130,7 @@ async def _enqueue_commentary(
         bot.app.pipeline,
         request,
         to_conversion_profile(profile),
-        guild_id=ctx.guild.id,
+        guild_id=_guild(ctx).id,
         requester=user.screen_name,
         # Per-profile audio settings (speed, target peak) — same mapping the
         # speech_test CLI uses, so the production path matches the tested one.
@@ -126,7 +141,7 @@ async def _enqueue_commentary(
         ),
     )
     if media is not None:
-        bot.guild_state(ctx.guild.id).queue.put_nowait(media)
+        bot.guild_state(_guild(ctx).id).queue.put_nowait(media)
 
 
 def setup_commands(bot: NotAMusicBot) -> None:
@@ -167,7 +182,7 @@ def setup_commands(bot: NotAMusicBot) -> None:
                 f"ytsearch1:{track.search_query}", media_id=uuid.uuid4().hex[:12]
             )
             media.requester = user.screen_name
-            media.guild_id = ctx.guild.id
+            media.guild_id = _guild(ctx).id
             first_artist = track.artists[0] if track.artists else "unknown artist"
             # Unify through media.artist (review Round-4 P1): the queued media
             # carries the artist too, not just the commentary call.
@@ -179,7 +194,7 @@ def setup_commands(bot: NotAMusicBot) -> None:
                 song_name=track.name,
                 artist_name=first_artist,
             )
-            bot.guild_state(ctx.guild.id).queue.put_nowait(media)
+            bot.guild_state(_guild(ctx).id).queue.put_nowait(media)
         except commands.CommandError:
             raise
         except Exception as exc:
@@ -192,16 +207,17 @@ def setup_commands(bot: NotAMusicBot) -> None:
 
     @bot.command(name="stop", help="Stops playing the audio and disconnects from the voice channel")
     async def stop(ctx: Context) -> None:
-        await bot.get_player(ctx.guild).stop()
+        await bot.get_player(_guild(ctx)).stop()
         await _leave(bot, ctx)
 
     @bot.command(name="skip", help="Skip the current song and move to the next in the playlist")
     async def skip(ctx: Context) -> None:
-        voice_client = ctx.guild.voice_client
-        if voice_client is not None and voice_client.is_playing():
-            bot.get_player(ctx.guild).skip()
+        voice_client = _guild(ctx).voice_client
+        # VoiceClient (not the abstract VoiceProtocol) carries is_playing().
+        if isinstance(voice_client, VoiceClient) and voice_client.is_playing():
+            bot.get_player(_guild(ctx)).skip()
             await ctx.send("Skipping current song.")
-            if bot.guild_state(ctx.guild.id).queue.empty():
+            if bot.guild_state(_guild(ctx).id).queue.empty():
                 await ctx.send("No more songs in queue!")
         else:
             await ctx.send("No song is currently playing.")
@@ -241,7 +257,9 @@ def setup_commands(bot: NotAMusicBot) -> None:
         help="Deletes all messages posted by this bot in the current channel",
     )
     async def delete_bot_messages(ctx: Context) -> None:
-        if not ctx.author.guild_permissions.administrator:
+        # In a guild the author is a Member with guild_permissions.
+        permissions = getattr(ctx.author, "guild_permissions", None)
+        if permissions is None or not permissions.administrator:
             return
         delay = bot.app.settings.discord.message_delete_delay_s
         async for message in ctx.channel.history(limit=None):
@@ -251,8 +269,8 @@ def setup_commands(bot: NotAMusicBot) -> None:
 
 
 async def _leave(bot: NotAMusicBot, ctx: Context) -> None:
-    voice_client = ctx.guild.voice_client
-    if voice_client is not None and voice_client.is_connected():
+    voice_client = _guild(ctx).voice_client
+    if isinstance(voice_client, VoiceClient) and voice_client.is_connected():
         await voice_client.disconnect()
         await ctx.send("Disconnected from voice channel.")
     else:
@@ -267,11 +285,11 @@ async def _enqueue_youtube(bot: NotAMusicBot, ctx: Context, url: str, *, quick: 
     media_id = uuid.uuid4().hex[:12]
     media = await bot.resolver.resolve(url, media_id=media_id)
     media.requester = user.screen_name
-    media.guild_id = ctx.guild.id
+    media.guild_id = _guild(ctx).id
     if not quick:
         # Review Round-4 P1: preserve the YouTube uploader as the commentary
         # artist (legacy parity) instead of "an unknown artist".
         await _enqueue_commentary(
             bot, ctx, user, song_name=media.title, artist_name=media.artist or ""
         )
-    bot.guild_state(ctx.guild.id).queue.put_nowait(media)
+    bot.guild_state(_guild(ctx).id).queue.put_nowait(media)

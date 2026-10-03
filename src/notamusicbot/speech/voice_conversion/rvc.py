@@ -124,10 +124,10 @@ class RvcVoiceConverter:
         convert_timeout_s: float | None = None,
     ) -> None:
         self._worker_python = Path(
-            worker_python or os.environ.get("RVC_WORKER_PYTHON", DEFAULT_WORKER_PYTHON)
+            worker_python or os.environ.get("RVC_WORKER_PYTHON") or DEFAULT_WORKER_PYTHON
         )
         self._worker_script = Path(
-            worker_script or os.environ.get("RVC_WORKER_SCRIPT", DEFAULT_WORKER_SCRIPT)
+            worker_script or os.environ.get("RVC_WORKER_SCRIPT") or DEFAULT_WORKER_SCRIPT
         )
         self._start_timeout = float(
             start_timeout_s or os.environ.get("RVC_WORKER_START_TIMEOUT", "30")

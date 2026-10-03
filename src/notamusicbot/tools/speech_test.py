@@ -15,6 +15,7 @@ import asyncio
 import logging
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from notamusicbot.config import load_app_settings
 from notamusicbot.domain.speech import (
@@ -24,7 +25,11 @@ from notamusicbot.domain.speech import (
 )
 from notamusicbot.domain.voice_profiles import VoiceProfileError, load_voice_profiles
 from notamusicbot.speech.pipeline import SpeechPipeline
+from notamusicbot.speech.tts.base import SpeechSynthesizer
 from notamusicbot.speech.voice_conversion.passthrough import PassthroughVoiceConverter
+
+if TYPE_CHECKING:
+    from notamusicbot.speech.voice_conversion.rvc import RvcVoiceConverter
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +77,7 @@ def run(args: argparse.Namespace) -> int:
         target_peak_dbfs=profile.audio.target_peak_dbfs,
     )
 
+    converter: RvcVoiceConverter | PassthroughVoiceConverter
     if not args.no_vc and conversion.backend != "passthrough":
         from notamusicbot.speech.voice_conversion.rvc import RvcVoiceConverter
 
@@ -99,7 +105,7 @@ def run(args: argparse.Namespace) -> int:
     return 0
 
 
-def _build_synthesizer(settings: object) -> object:
+def _build_synthesizer(settings: object) -> SpeechSynthesizer:
     """Load the persistent Qwen model through the production path."""
     from notamusicbot.app import Application
 

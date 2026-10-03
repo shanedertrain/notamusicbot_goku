@@ -73,3 +73,23 @@ explicit_package_bases = true
 mypy_path = "src"
 check_untyped_defs = true
 warn_unused_ignores = true
+
+# Third-party modules installed without stubs or a py.typed marker (no
+# stubs distribution is available in this offline venv). Each entry is a
+# targeted ignore_missing_imports only — no code suppression involved.
+[[tool.mypy.overrides]]
+# yaml: PyYAML ships no py.typed; types-PyYAML not installable offline.
+# yt_dlp / yt_dlp_ejs: untyped upstream; no stub package exists.
+# spotipy: untyped upstream.
+# soundfile / soxr: C-extension audio libs, untyped.
+# qwen_tts: internal-vendored TTS package, untyped.
+module = [
+    "yaml",
+    "yt_dlp",
+    "yt_dlp_ejs",
+    "spotipy.*",
+    "soundfile",
+    "soxr",
+    "qwen_tts",
+]
+ignore_missing_imports = true

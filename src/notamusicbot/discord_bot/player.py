@@ -74,6 +74,9 @@ def ffmpeg_source_factory(media: PlayableMedia) -> Any:
             f"{key}: {value}\\r\\n" for key, value in media.stream_headers.items()
         )
         header_opts = f' -headers "{header_blob}"'
+    if media.stream_url is None:
+        # Validated in PlayableMedia: non-LOCAL media must carry a stream URL.
+        raise ValueError(f"STREAM media {media.media_id} has no stream_url")
     return discord.FFmpegPCMAudio(
         media.stream_url,
         before_options=f"{FFMPEG_BEFORE_OPTIONS}{header_opts}",

@@ -15,10 +15,14 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from notamusicbot.content import prompts
 from notamusicbot.content.base import ContentRequest
 from notamusicbot.speech.coordinator import InferenceCoordinator, shared_gpu_coordinator
+
+if TYPE_CHECKING:
+    from transformers import PreTrainedModel
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +81,7 @@ class LocalQwenLlmProvider:
         self._temperature = temperature
         self._system_prompt = system_prompt
         self._gpu = gpu_coordinator or shared_gpu_coordinator()
-        self._model = None
+        self._model: PreTrainedModel | None = None
         self._tokenizer = None
         self.load_info: LlmLoadInfo | None = None
 
@@ -112,12 +116,14 @@ class LocalQwenLlmProvider:
         start = time.perf_counter()
         logger.info("Loading local LLM %s on %s (%s)...", self._model_id, self._device, self._dtype)
         tokenizer = AutoTokenizer.from_pretrained(self._model_id)
-        model = AutoModelForCausalLM.from_pretrained(
+        model: PreTrainedModel = AutoModelForCausalLM.from_pretrained(
             self._model_id,
             dtype=dtype,
             attn_implementation=self._attn_implementation,
         )
-        model.to(self._device)
+        # transformers' wrapped .to stub rejects a plain str device even
+        # though it is accepted at runtime (PreTrainedModel.to/_Wrapped).
+        model.to(self._device)  # type: ignore[arg-type]
         model.eval()
         load_s = time.perf_counter() - start
         used, total = _vram_mib(self._device)

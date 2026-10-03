@@ -59,10 +59,10 @@ def parse_users(raw: Any) -> dict[str, UserProfile]:
     ``id``/``user_id`` key). Returns users keyed by string user ID.
     """
     users: dict[str, UserProfile] = {}
+    items: list[tuple[Any, Any]] = []
     if isinstance(raw, dict):
-        items = raw.items()
+        items.extend(raw.items())
     elif isinstance(raw, list):
-        items = []
         for entry in raw:
             if not isinstance(entry, dict):
                 continue
