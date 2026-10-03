@@ -1,0 +1,86 @@
+{
+  "timestamp": "2026-10-03T05:41:54+00:00",
+  "commit": "6e011bf62136a2a7d78023f043d858bdb02c1621",
+  "gpu": "NVIDIA GeForce RTX 4070 Ti SUPER",
+  "driver": "617.14",
+  "torch": "2.14.1+cu130",
+  "cuda_available": "True",
+  "test": "test_shared_coordinator_serializes_llm_and_tts_rvc",
+  "iterations": 3,
+  "timeline": [
+    {
+      "stage": "iter0:llm",
+      "start": 176310.511894567,
+      "end": 176335.34635014,
+      "duration_s": 24.834455573000014
+    },
+    {
+      "stage": "iter0:tts",
+      "start": 176310.511975367,
+      "end": 176321.246738863,
+      "duration_s": 10.734763496002415
+    },
+    {
+      "stage": "iter0:rvc",
+      "start": 176321.246738863,
+      "end": 176332.021055559,
+      "duration_s": 10.774316695984453
+    },
+    {
+      "stage": "iter1:llm",
+      "start": 176335.34887554,
+      "end": 176346.387321811,
+      "duration_s": 11.03844627100625
+    },
+    {
+      "stage": "iter1:tts",
+      "start": 176335.35058464,
+      "end": 176341.13479912,
+      "duration_s": 5.784214479994262
+    },
+    {
+      "stage": "iter1:rvc",
+      "start": 176341.13479912,
+      "end": 176343.360301615,
+      "duration_s": 2.225502495013643
+    },
+    {
+      "stage": "iter2:llm",
+      "start": 176346.387410511,
+      "end": 176359.33528259,
+      "duration_s": 12.947872079006629
+    },
+    {
+      "stage": "iter2:tts",
+      "start": 176346.387450611,
+      "end": 176353.8540403,
+      "duration_s": 7.46658968902193
+    },
+    {
+      "stage": "iter2:rvc",
+      "start": 176353.8540403,
+      "end": 176356.197033697,
+      "duration_s": 2.342993397003738
+    }
+  ],
+  "lease_busy_intervals": [
+    {
+      "start": 176310.513657367,
+      "end": 176335.34636604,
+      "duration_s": 24.832708672998706
+    },
+    {
+      "start": 176335.35116604,
+      "end": 176343.360333515,
+      "duration_s": 8.009167475014692
+    },
+    {
+      "start": 176343.365183415,
+      "end": 176359.33789949,
+      "duration_s": 15.972716074989876
+    }
+  ],
+  "timeline_note": "stage spans include queue wait; lease_busy_intervals are the exclusivity evidence",
+  "max_new_tokens": 60,
+  "pass": true
+}
