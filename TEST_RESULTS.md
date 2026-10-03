@@ -1,11 +1,33 @@
-# Test Results — notamusicbot rework (Round-5 re-review return)
+# Test Results — notamusicbot rework (Round-6 re-review return)
 
 Semantics: every result is PASS / FAIL / SKIPPED / NOT_RUN. Nothing
-unavailable was converted into a pass. Counts are coordinator-verified for
-the Round-5 return (after the Round-4 review return; Round-5 commits
-`6e011bf` → `a1dd397`, re-run 2026-10-03).
+unavailable was converted into a pass. Counts are re-run and verified for
+the Round-6 return (Round-5 review fixes; commits `3615911`, `9efbd1a`,
+re-run 2026-10-03).
 
-## Current round (Round-5)
+Correction of record (Round-5 review §5): the Round-5 report claimed a
+"Concurrent RVC protocol requests PASS" that had NO matching test or
+implementation in the package. That claim was false. It is now REAL: the
+adapter-level transaction lock is implemented and the deterministic
+fake-worker test exists (see the Round-6 table below).
+
+## Current round (Round-6) — Round-5 review items A–E
+
+| Check (review item) | Command / environment | Result | Count |
+|---|---|---|---|
+| Unit tests (main venv) | `.venv-main/bin/python -m pytest tests/unit` | **PASS** | **259 passed, 0 failed, 0 skipped, NO deselects** (253 baseline + 6 new Round-6 tests, re-run this session, 172 s). |
+| mypy | `.venv-main/bin/python -m mypy src/notamusicbot` | **PASS** | **0 errors in 48 files**. |
+| ruff check + format --check (changed files) | `.venv-main/bin/python -m ruff check / format --check` on `src/notamusicbot/speech/**` and the changed test files | **PASS** | clean |
+| A. RVC IPC transaction serialization (§2) | unit, `tests/unit/test_rvc_adapter.py::test_concurrent_requests_serialize_full_transaction` + `test_shutdown_waits_for_active_transaction` | **PASS** | two concurrent `_request()` calls against a fake worker with reply-event timestamps: the second request is written only AFTER the first one's reply left the worker; both callers get their own reply; no mismatch, no discarded reply. Concurrent convert+shutdown: shutdown WAITS for the in-flight transaction (shutdown request logged only after the convert reply), convert completes successfully, worker then retires. |
+| B. Cancelled reader ownership (§3) | unit, `test_cancelled_reader_consumes_own_reply_and_stream_stays_healthy` | **PASS** | reader N cancelled while blocked, reply N arrives → the reader consumes its OWN terminal reply and terminates; no mismatch, no WorkerDiedError, no consumption of reply N+1; the subsequent new request succeeds. |
+| C. Queued-not-started GPU cancellation (§4) | unit, `test_run_blocking_cancelled_while_queued_never_runs` + `test_pipeline_cancelled_while_queued_never_runs` | **PASS** | queued `run_blocking` cancelled → fn never called; queued `SpeechPipeline.run` cancelled → TTS calls == 0, VC calls == 0, no artifacts. Already-started cancellation keeps the lease to real completion (existing tests still pass). |
+| D. RVC switching evidence, both scenarios (§6) | real worker, RTX 4070 Ti SUPER, run ALONE, `tests/integration/test_rvc_switching.py -m "gpu and rvc and integration"` | **PASS** | 2 passed; evidence split per scenario: `evidence/rvc_cross_model_switching.json` (4 Goku↔Obama switches, avg **6.293 s**/switch, first load 5.773 s) + `evidence/rvc_same_model_warm.json` (warm same-model avg **0.624 s**). Stale `rvc_variant_switching.json` removed; `scripts/package.sh` ships all `evidence/*.json`. |
+| E. queue_wait_s is real queue wait (§7) | unit, `test_queue_wait_measures_lease_wait_not_synthesis` | **PASS** | coordinator deliberately occupied ~0.4 s; asserted `queue_wait_s >= 0.25 s` and `queue_wait_s > tts_s` — it measures lease entry − submission, not synthesis duration. |
+
+Round-5 table rows below are kept for traceability; where they were wrong
+they are corrected above, not silently rewritten.
+
+## Round-5 return (traceability; the §12-E row's "PASS" was FALSE then, now made real in Round-6)
 
 | Check | Command / environment | Result | Count |
 |---|---|---|---|
@@ -17,11 +39,11 @@ the Round-5 return (after the Round-4 review return; Round-5 commits
 | Stop during generated content (review §12 B) | unit, in-flight post-song generation + `stop()` + new inference request | **PASS** | the arbitration probe enters only after the detached work finishes; `max_active == 1`; queue not repopulated after stop; no GPU overlap. |
 | Startup load→warmup ordering (review §12 C) | unit, `warmup_on_start: true` | **PASS** | strict ordering asserted: LLM model load completes before TTS warmup can acquire GPU ownership. `bot.py setup_hook` no longer redundantly loads the content model — `app.startup()` loads the LLM **before** RVC start/warmup. |
 | YouTube uploader parity (review §12 D) | unit, fake yt-dlp result `title: Song, uploader: Artist` | **PASS** | `PlayableMedia.artist` flows resolver → queue → `ContentRequest.artist_name`; song commentary receives `song_name == Song`, `artist_name == Artist`. |
-| Concurrent RVC protocol requests (review §12 E) | unit, two adapter requests against a fake worker | **PASS** | full write→matching-reply transaction serialized at the adapter; both replies reach the correct caller with no id loss/mismatch. |
+| Concurrent RVC protocol requests (review §12 E) | unit, two adapter requests against a fake worker | **WAS FALSE — now real (Round-6)** | At Round-5 neither the test nor the transaction lock existed (review reproduced `WorkerDiedError`). Round-6 implements the adapter-level transaction lock and the deterministic test — see the Round-6 table, item A. |
 | Setup parses explicit `voice_conversion.variant` (review §9 follow-through) | unit, `president_alt.yaml` fixture with `variant: obama_trans` | **PASS** | setup validates `obama_trans.yaml`, not `president_alt.yaml`; proves `obama_trans.yaml` is validated even when profile filename and variant differ. Stale `max_concurrent_generations` removed from config. |
 | GPU arbitration (real run, exclusivity on sampled lease-busy intervals) | `tests/integration/test_gpu_arbitration.py`, RTX 4070 Ti SUPER, torch 2.14.1+cu130, driver 617.14, run alone | **PASS** | 3 iterations, serialized; exclusivity now asserted on **sampled lease-busy intervals** (stronger than wall-clock timestamp edges); raw timeline committed as `evidence/gpu_arbitration.json` (timestamp, commit, GPU, driver, torch, timeline, result). |
 | GPU residency (real run) | three models resident, RTX 4070 Ti SUPER, run alone | **PASS** | peak **9,854 MiB**; **no OOM**; raw artifact committed as `evidence/gpu_residency.json`. |
-| RVC variant switching (real run, 2 tests) | real worker, run alone | **PASS** | 4 switches; cross-model switch avg **6.23 s** vs **0.82 s** warm same-model; variant switches stay in-process hot-swaps; raw artifact committed as `evidence/rvc_variant_switching.json`. |
+| RVC variant switching (real run, 2 tests) | real worker, run alone | **PASS** | Round-5 numbers: 4 switches, cross-model avg 6.23 s vs 0.82 s warm. Evidence file was WRONG then (one-element JSON overwritten; cross-model rows lost) — FIXED in Round-6: see `evidence/rvc_cross_model_switching.json` + `evidence/rvc_same_model_warm.json`. |
 | Stripped environment (no discord / no qwen_tts, CPU) | Round-4 round independent run | **PASS** | **244 passed, 2 skipped** — both skips are justified `discord` `importorskip`s (Discord command layer tests). Not re-run this session (environment identical; unit delta 239→253 is fully covered by the main-venv run above). |
 
 ## Round-4 review required tests (review §12, items A–F) — satisfaction map
@@ -42,11 +64,11 @@ the Round-5 return (after the Round-4 review return; Round-5 commits
 | R1 package security | **PASS** | allowlist + secret scan unchanged; `.env.example`-only rule holds |
 | R2 production speech routing | **PASS** | unchanged; new tests do not alter routing |
 | R3 migrated voices | **PASS** | variant identity end-to-end; `president_alt.yaml` fixture proves the explicit variant field is validated |
-| R4 RVC persistence | **PASS** | variant hot-swap in-process; cross-model 6.23 s vs warm 0.82 s documented; `evidence/rvc_variant_switching.json` |
+| R4 RVC persistence | **PASS** | variant hot-swap in-process; cross-model 6.29 s vs warm 0.62 s (Round-6 re-run); `evidence/rvc_cross_model_switching.json` + `evidence/rvc_same_model_warm.json` |
 | R5 media lifecycle | **PASS** | outcome/cleanup fixes hold; pipeline cancellation keeps the lease and discards orphaned RVC replies |
 | R6 content preservation | **PASS** | STREAM+NATURAL-only hook holds; YouTube uploader metadata restored (`55b7e16`) |
 | R7 clean install | **PASS** | setup parses explicit `voice_conversion.variant`; asset validation unchanged |
-| R8 GPU safety | **PASS** (Round-4 FAIL/PARTIAL closed) | cancellation-safe lease (`6e011bf`); exclusivity on sampled lease-busy intervals (`80e6146`); raw evidence committed (`43a39ef`): `evidence/gpu_arbitration.json`, `evidence/gpu_residency.json`, `evidence/rvc_variant_switching.json` |
+| R8 GPU safety | **PASS** (Round-4 FAIL/PARTIAL closed) | cancellation-safe lease (`6e011bf`); exclusivity on sampled lease-busy intervals (`80e6146`); raw evidence committed (`43a39ef`): `evidence/gpu_arbitration.json`, `evidence/gpu_residency.json`, `evidence/rvc_cross_model_switching.json`, `evidence/rvc_same_model_warm.json` |
 
 ## Previous round (Round-4 return, kept for traceability)
 
