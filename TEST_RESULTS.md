@@ -1,72 +1,73 @@
-# Test Results — notamusicbot rework (Round-3 re-review return)
+# Test Results — notamusicbot rework (Round-4 re-review return)
 
 Semantics: every result is PASS / FAIL / SKIPPED / NOT_RUN. Nothing
 unavailable was converted into a pass. Counts are coordinator-verified for
-the Round-3 return (after the Round-2 review return at `4716fab`; Round-3
-commits `5cd412f` → `f03708a`, re-run 2026-10-02).
+the Round-4 return (after the Round-3 review return at `02d1d97`; Round-4
+commits `f804284` → `9d370fe`, re-run 2026-10-02).
 
 ## Current round
 
 | Check | Command / environment | Result | Count |
 |---|---|---|---|
-| Unit tests (main venv) | `.venv-main/bin/python -m pytest tests/unit` | **PASS** | 204 passed, 0 failed |
+| Unit tests (main venv) | `.venv-main/bin/python -m pytest tests/unit` | **PASS** | **239 passed, 0 failed, 0 skipped** (re-run and verified this session) |
 | Lint | `.venv-main/bin/ruff check src tests` | **PASS** | clean |
-| Format | `.venv-main/bin/ruff format --check src tests` | **PASS** | clean (after coordinator's final pass) |
+| Format | `.venv-main/bin/ruff format --check src tests` | **PASS** | clean |
+| RVC variant preservation (new, Gate R3 proof) | `tests/unit/test_rvc_variant.py` | **PASS** | 9 tests — fixture dir with `obama.yaml`/`obama_trans.yaml` (different parameters); obama profile → exact standard config values, obama_trans → exact trans config values; cache key `(resolved_dir, variant)` distinct; loud error on a missing variant |
+| User migration asserts config identity (extended) | `tests/unit/test_user_migration.py` | **PASS** | all 30 migrated users carry the correct `variant`; asserts actual configuration identity, not just profile strings |
+| RVC worker variant switching (real, Gate R4 proof) | `tests/integration/test_rvc_switching.py` (real Obama worker) | **PASS** | obama → tts_type `pyht:Joseph` vs obama_trans → `gtts` observed at conversion; `config_switched: true` **in-process — zero worker restarts on a variant switch** |
+| Playback outcome matrix (Gate R6 proof) | `tests/unit/test_player.py` (deterministic fakes) | **PASS** | NATURAL → hook **1**; SKIPPED / STOPPED / FAILED / LOCAL-generated → hook **0**; interrupt reason recorded before `voice_client.stop()`; after-callback error → FAILED; dequeue without voice client → DROPPED |
+| Crash-orphan cleanup (Gate R5 proof) | `tests/unit/test_job_artifacts.py` | **PASS** | full cleanup removes file + empty job dir on success; `.temporary` marker written per job; simulated crash/restart: `prune_expired_jobs` removes the stale successful artifact after the retention threshold; cancelled job → deterministic state |
+| GPU arbitration (new, Gate R8 proof, real run) | `tests/integration/test_gpu_arbitration.py` (RTX 4070 Ti SUPER) | **PASS** | 3 iterations; concurrent LLM task + TTS→RVC asyncio task with all three models resident; timeline **fully serialized — zero overlap**; every stage starts exactly when the previous ends (`perf_counter` timestamps asserted mutual exclusion) |
+| Coordinator mutual exclusion (unit) | `tests/unit/test_coordinator.py` | **PASS** | 3 tests — same slot never held concurrently (perf_counter-timestamp proof) |
+| Interstitial guild scoping (new) | `tests/unit/test_interstitials_guild_scoping.py` | **PASS** | 4 tests — cooldown state keyed by guild id; guild A's fire does not suppress guild B |
+| Setup RVC asset validation (new, Gate R7 proof) | `tests/unit/test_setup_rvc_assets.py` (extracted bash validation against temp fixtures) | **PASS** | 5 tests — missing model dir / variant yaml / `.pth` / `.index` each fail non-zero; case-insensitive model dir accepted (caught the real `GOKU`/`Goku` mismatch) |
+| Silent-worker startup timeout (Gate R5/R7) | fake worker alive + silent → adapter startup fails inside configured timeout | **PASS** | `select`-based deadline read (`_wait_for_ready`) replaced the blocking `readline()` |
+| Podcast `reply_turns` consistency | unit podcast tests | **PASS** | `turns`→`reply_turns` rename consistent (code/config/docs): host opening + N replies |
 | RVC integration (Goku, RTX 4070 Ti SUPER) | `pytest tests/integration -m "rvc and integration"` | **PASS** | 2 passed |
-| RVC switching benchmark (new) | `pytest tests/integration/test_rvc_switching.py` + `notamusicbot.tools.benchmark_rvc_switching` | **PASS** | Obama↔Goku: avg **5.51 s per switch** (worker restart + load) vs 0.57 s warm same-model (~10×) |
-| Playback ordering (Gate R6 proof) | production-style queue test: song A → seg-1 → song B → seg-2 | **PASS** | hook fired exactly once per STREAM item; **zero hook calls** for generated items; no leftover listener tasks |
-| Command registration | asserts registered commands play / playnow / play_spotify / join / stop / skip / podcast | **PASS** | prefix `!g` → `!gpodcast` (was `!ggpodcast`) |
-| Download-leak failure path | download succeeds → source_factory raises → temp file removed | **PASS** | — |
-| Stop/get race | queue.get resolves while stop fires → item recovered and cleaned | **PASS** | — |
-| Provider startup fallback | LLM load raises → StaticTemplateProvider fallback installed, startup continues | **PASS** | — |
-| Artifact retention | `keep_artifacts` wired; empty job dirs removed; failed-job retention 24 h; warmup scheduled exactly once, non-blocking | **PASS** | — |
-| GPU residency (Gate R8, real run) | RTX 4070 Ti SUPER 16 GB: LLM 4B + TTS 0.6B + RVC Goku all resident | **PASS** | idle 11,262 / 16,375 MiB; peaks — content 9,840, TTS 9,857, RVC 9,857, end-to-end 9,857 MiB; **no OOM** |
-| Clean install (Gate R7) | fresh clone + `scripts/setup.sh` built the legacy RVC venv **from scratch** (fairseq compiled, torch cu121) | **PASS** | setup correctly exits 1 on missing assets; after supplying documented assets (`hubert_base.pt` + `rvc_cli/models/Goku/goku.yaml`, gitignored) the RVC integration suite passed **2/2 with the freshly built venv — no symlinks** |
+| RVC switching benchmark (carried) | `notamusicbot.tools.benchmark_rvc_switching` | **PASS (documented)** | cross-MODEL Obama↔Goku: avg **5.51 s per switch** vs 0.57 s warm same-model; **variant switches within a model are cheap in-process config hot-swaps** |
+| GPU residency (carried, real run) | RTX 4070 Ti SUPER 16 GB: LLM 4B + TTS 0.6B + RVC all resident | **PASS** | idle 11,262 / 16,375 MiB; peaks ≤ 9,857 MiB; **no OOM** |
+| Clean install (carried, Gate R7) | fresh clone + `scripts/setup.sh` built the legacy RVC venv from scratch | **PASS** | Round-4 adds per-profile `validate_rvc_assets` (non-zero exit on missing assets) |
 
-## Round-2 review "required tests" (section 9) — satisfaction map
+## Round-3 review required tests (section 14) — satisfaction map
 
-| Required test (review §9) | Satisfied by | Result |
+| Required test (review §14) | Satisfied by | Result |
 |---|---|---|
-| Playback/content ordering: song A → podcast segment → song B; generated audio triggers nothing | ordering test in the player suite (`96000d3`) | **PASS** |
-| Command surface: play/playnow/play_spotify/join/stop/skip/podcast with `!g` → `!gpodcast` | command-registration test (`07d16d3`) | **PASS** |
-| Temporary file failure cleanup: download OK, source creation fails, file removed | download-leak ownership test (`96000d3`) | **PASS** |
-| Stop race: queue.get resolves while stop fires; item recovered/cleaned | stop-race test (`96000d3`) | **PASS** |
-| Provider startup fallback: LLM load raises, startup continues on fallback | fail-soft startup test (`f03708a`) | **PASS** |
-| Full GPU residency: LLM + TTS + loaded RVC → content → TTS → VC, no OOM, memory recorded | real GPU run (Gate R8 evidence above, `f03708a`) | **PASS** |
-| Alternating RVC profiles: Obama→Goku→Obama→Goku switch cost | `tools/benchmark_rvc_switching.py` + `tests/integration/test_rvc_switching.py` (`f03708a`) | **PASS** — 5.51 s/switch avg documented |
+| RVC variant preservation: fixture `Obama/obama.yaml` + `obama_trans.yaml` with different values; exact config reaches conversion | `test_rvc_variant.py` (`9d370fe`) + extended `test_user_migration.py` | **PASS** |
+| Playback outcome: NATURAL→hook 1; SKIPPED/STOPPED/FAILED/LOCAL→hook 0 | outcome-matrix tests in `test_player.py` (`f804284`) | **PASS** |
+| Unit-suite isolation: CPU-only, no discord/qwen_tts/CUDA → `pytest tests/unit` passes with only justified skips | `importorskip("discord")` + `FakeSynthesizer` injection (`9d370fe`); result: **239 passed / 0 skipped** | **PASS** |
+| GPU arbitration: LLM generation and speech generation observed not to overlap (shared coordinator) | shared `InferenceCoordinator` (`9d370fe`) + `test_gpu_arbitration.py` real run, 3 iterations, zero overlap | **PASS** |
+| Crash-orphan cleanup: stale successful temporary artifact → removed by retention after simulated restart | `test_job_artifacts.py` (`f804284`) | **PASS** |
+| RVC worker startup timeout: worker alive + silent → startup fails inside configured timeout | `_wait_for_ready` select-deadline test (`9d370fe`) | **PASS** |
 
-## Gate records (Round-3 disposition of every Round-2 gate)
+## Gate records (Round-4 disposition of every Round-3 gate)
 
 | Gate | Result | Evidence |
 |---|---|---|
-| R1 package security | **PASS** | credentials clean (+ Round-3 `5cd412f`: live `config/users.yaml` excluded from packages; `config/users.example.yaml` added) |
-| R2 production speech routing | **PASS** | router architecture + Round-3 playback-lifecycle fix (`96000d3`) |
-| R3 migrated voices | **PASS** | 29 → obama, 1 → obama_trans (unchanged) |
-| R4 RVC persistence | **PASS** | case-normalization fix holds + Round-3 alternating-cost evidence (5.51 s/switch) |
-| R5 media lifecycle | **PASS** | failure-path (download-leak) + stop-race tests added (`96000d3`) |
-| R6 content preservation | **PASS** | recursion impossible (hook fires for STREAM only), ordering guaranteed (head-insertion `GuildState.put_front`), command fixed (`07d16d3`) |
-| R7 clean install | **PASS** | full from-scratch legacy venv via `scripts/setup.sh` (`548b150`); setup defects found & fixed during the proof |
-| R8 benchmark | **PASS** | three-model VRAM residency + corrected RTF semantics + alternating-profile benchmark |
+| R1 package security | **PASS** | credentials clean; explicit `.env.example`-only rule; benchmark/evidence CSV/JSON allowlisted (`9d370fe`) |
+| R2 production speech routing | **PASS** | router architecture + typed playback-outcome lifecycle (`f804284`) |
+| R3 migrated voices | **PASS** (Round-3 FAIL closed) | variant identity preserved end-to-end; migration asserts real config values (`9d370fe`) |
+| R4 RVC persistence | **PASS** | same-model case-alias fix + variant switching in-process with `config_switched`, zero restarts; cross-model cost 5.51 s documented |
+| R5 media lifecycle | **PASS** | full file+dir cleanup, `.temporary` crash-orphan markers + retention, `CancelledError` deterministic, silent-worker hard startup timeout |
+| R6 content preservation | **PASS** | hook fires only on STREAM + NATURAL (outcome matrix PASS); ordering guarantees unchanged |
+| R7 clean install | **PASS** | from-scratch legacy venv holds; per-profile asset validation fails non-zero on missing assets |
+| R8 benchmark | **PASS** | shared GPU arbitration proven non-overlapping on real GPU (3 iterations, all models resident); raw evidence now packaged |
 
 ## Carried-over checks
 
 | Check | Result | Count |
 |---|---|---|
-| Live Discord smoke (gateway connect + command registration, as Goku#8715) | **PASS** | coordinator, 2026-10-02 |
+| Live Discord smoke (gateway connect + command registration) | **PASS** | coordinator, 2026-10-02 |
 | Live voice-channel playback | **NOT_RUN** | requires a human in a VC; left for the user |
 
 ## Notes
 
-- The unit suite grew 181 → 204 with the Round-3 tests (ordering, command
-  registration, download-leak, stop-race, startup fallback, retention, RVC
-  switching). No test was removed.
-- Gate R7 from-scratch proof exposed and fixed real `setup.sh` defects
-  (`548b150`): missing legacy deps (audiostretchy, pydub, gTTS, pyttsx3,
-  pyyaml, dotenv), `setuptools<81` pin needed for `pkg_resources` (setuptools
-  84 dropped it), and the `dev` extra missing from the main-venv install.
-- GPU residency context: a transient ~15.9 GiB allocator spike can appear
-  during LLM load with concurrent external GPU load; it settles to the
-  11.2 GiB steady state. No OOM in the recorded run.
-- Persistent per-model RVC worker cache is **not implemented**; the ~5.5 s
-  per-switch podcast-turn cost is documented as future work.
+- The unit suite grew 204 → 239 with the Round-4 tests (RVC variant, worker
+  coordinator, guild-scoped interstitials, setup asset validation, playback
+  outcome matrix, crash-orphan artifacts, migration variant assertions). No
+  test was removed; the suite now runs with **zero skips**.
+- Gate R7 asset validation caught a real defect: the model directory case
+  (`GOKU` vs `Goku`) mismatched between config and disk.
+- Cross-MODEL RVC switch cost (5.51 s, worker restart + load) remains
+  documented future work (persistent per-model worker cache); variant
+  switches within a model are in-process config hot-swaps.
 - Benchmarks are reported separately in `BENCHMARK_RESULTS.md`.

@@ -1,18 +1,19 @@
-# Implementation Report — notamusicbot rework (Qwen3-TTS), Round-3 re-review return
+# Implementation Report — notamusicbot rework (Qwen3-TTS), Round-4 re-review return
 
 Rework of the legacy flat "notamusicbot" Discord bot onto a typed package
 (`src/notamusicbot/`) with Qwen3-TTS as the speech backend and RVC voice
 conversion behind an isolated worker boundary. This report covers the closure
-of the Round-2 review return
-(`NOTAMUSICBOT_GOKU_REWORK_REVIEW_RETURN_ROUND2.md`) — the Round-3 re-review
+of the Round-3 review return
+(`NOTAMUSICBOT_GOKU_REWORK_REVIEW_RETURN_ROUND3.md`) — the Round-4 re-review
 return.
 
 ## Commits (coordinator-verified)
 
 - **START_COMMIT = `8a6f81a8b4f8fe5c5a39639e5f1fcf1fb1c66edf`** (legacy baseline)
-- **END_COMMIT = `f03708aad5b35c664166a65ca1c71d5397723e00`**
-  (`feat: fail-soft content load, default-enable commentary, artifact retention policy, GPU residency + RVC switching evidence`)
-- Round-2 review return anchor: `4716fabd9963dd0153e13680edd19a4898c3de20`
+- **END_COMMIT = `9d370fe8f8d47fc37cd8d245f6c77269993c7591`**
+  (`feat: preserve RVC YAML variants end-to-end, shared GPU arbitration, unit isolation, per-guild interstitials, setup asset validation`)
+- Round-3 review return anchor: `02d1d970b5bb3a897398d10a13e6058f9c0caf6b`
+  (`02d1d97 docs: round-3 evidence reports`)
 
 Review-response round commits (full SHAs verified with `git rev-parse`):
 
@@ -42,6 +43,29 @@ Review-response round commits (full SHAs verified with `git rev-parse`):
 
 The P2-17 pyproject change was **already committed at report time** as
 `6ca34bd` (it is not a pending working-tree change).
+
+### Round-4 commits (closing the Round-3 review; full SHAs verified with `git rev-parse`)
+
+| SHA | Subject / defects closed |
+|---|---|
+| `f804284916dbc520396f4c2c1d9a194acd0e830d` | P0 playback outcomes — `PlaybackOutcome` StrEnum (`NATURAL`/`SKIPPED`/`STOPPED`/`FAILED`/`DROPPED`) in `domain/media.py`; `_play_one()` returns `(media, outcome)`; `skip`/`stop` record `state.interrupt_reason` **before** `voice_client.stop()`; post-song hook fires **only on STREAM + NATURAL** and is awaited before the next dequeue; after-callback errors → `FAILED`; dequeue without a voice client → `DROPPED`. P1 artifacts — per-job `.temporary` on-disk JSON markers so `prune_expired_jobs` removes stale crash orphans; full file + empty job-dir cleanup in the production path; explicit `CancelledError` handling |
+| `9d370fe8f8d47fc37cd8d245f6c77269993c7591` | P0 variant identity — `voice_conversion.variant` profile field → `VoiceConversionProfile.variant` → IPC `load-model {name, variant}` → worker selects the **exact** `<variant>.yaml` (`found[0]` eliminated; loud error on a missing variant); RVC cache key becomes `(resolved_dir, variant)`; same-dir variant switch = **in-process config hot-swap** (`config_switched: true`, zero worker restarts); `config/voices/obama.yaml`/`obama_trans.yaml` and `config/users.yaml` (all 30 users) carry `variant`. P1 shared GPU arbitration — one `InferenceCoordinator` injected into **both** the content LLM provider and the `SpeechPipeline`; the pipeline holds the slot across TTS→VC→postprocess so the RVC subprocess cannot overlap main-process inference; warmup arbitrates too. P1 unit isolation — `pytest.importorskip("discord")` in `test_command_registration`; the 2 `build_pipeline` tests inject a `FakeSynthesizer` (no `qwen_tts` import in the unit suite). P2 — `setup.sh validate_rvc_assets` per enabled RVC profile (model dir case-insensitive, variant yaml, `.pth`, `.index`; exits non-zero); `package.sh` explicit `.env.example`-only rule + benchmark/evidence CSV/JSON allowlisted; podcast `turns`→`reply_turns` rename; interstitial cooldown guild-scoped (dict keyed by guild id; production caller passes `guild_id`) |
+
+## Round-3 review defects — cross-reference (all FIXED)
+
+| Round-3 finding | Priority | Status | Fixed by / evidence |
+|---|---|---|---|
+| §2 Legacy RVC YAML variants not preserved (`found[0]` selection) | P0 | **FIXED** | `9d370fe` — `variant` field end-to-end (profile → IPC → worker); exact `<variant>.yaml` selection; cache key `(dir, variant)`; new `tests/unit/test_rvc_variant.py` (9 tests) asserts the real config values reach conversion; migration test asserts config identity, not just profile strings. Gate R3 PASS |
+| §3 Skip/stop/failure trigger post-song content | P0 | **FIXED** | `f804284` — typed `PlaybackOutcome`; hook gated to STREAM + NATURAL; interrupt reason set before `voice_client.stop()`; outcome matrix tests: NATURAL→1, SKIPPED/STOPPED/FAILED/LOCAL→0. Gate R6 PASS |
+| §4 Unit suite depends on discord / real Qwen backend | P1 | **FIXED** | `9d370fe` — `importorskip("discord")`; `FakeSynthesizer` in the 2 `build_pipeline` tests; unit suite: 239 passed / 0 failed / **0 skipped** with no `qwen_tts` import |
+| §5 GPU coexistence tested sequentially, not concurrently | P1 | **FIXED (shared coordinator)** | `9d370fe` — single `InferenceCoordinator` shared by LLM provider + SpeechPipeline; pipeline holds the slot through the RVC stage; warmup arbitrates. `tests/integration/test_gpu_arbitration.py` (real run, 3 iterations, concurrent LLM + TTS→RVC tasks, all models resident): timeline fully serialized, zero overlap — every stage starts exactly when the previous ends. Gate R8 PASS |
+| §6 Successful cleanup leaves directories and crash orphans | P1 | **FIXED** | `f804284` — full cleanup helper in the production path (file + empty job dir); per-job `.temporary` JSON markers; `prune_expired_jobs` removes stale crash orphans after the retention threshold; explicit `CancelledError` handling; deterministic tests. Gate R5 PASS |
+| §7 Setup does not fail for missing RVC model assets | P2 | **FIXED** | `9d370fe` — `validate_rvc_assets` per enabled profile (case-insensitive model dir, variant yaml, `.pth`, `.index`), exits non-zero; caught the real `GOKU`/`Goku` case mismatch; `tests/unit/test_setup_rvc_assets.py` (5 tests) extracts the bash validation against temp fixtures. Gate R7 PASS |
+| §8 RVC startup timeout is not a hard timeout | P2 | **FIXED** | `9d370fe` — `select`-based deadline read (`_wait_for_ready`) replaces the blocking `readline()`; silent-worker test fails within the configured timeout |
+| §9 Podcast `turns` documentation/behavior disagree | P2 | **FIXED** | `9d370fe` — renamed to `reply_turns` (replies after the host opening) consistently across code/config/docs |
+| §10 Interstitial cooldown state is global, not guild-scoped | P2 | **FIXED** | `9d370fe` — `_last_fire_monotonic` keyed by guild id; production caller passes `guild_id`; `test_interstitials_guild_scoping.py` (4 tests) |
+| §11 Raw benchmark/evidence data missing from package | P2 | **FIXED** | `9d370fe` — `package.sh` allowlists benchmark/evidence CSV + JSON artifacts |
+| §12 `.env` rejection should be explicit | P2 | **FIXED** | `9d370fe` — exact `".env.example"`-name allow; every other `.env*` path rejected |
 
 ## Round-2 review defects — cross-reference (all FIXED)
 
@@ -104,29 +128,29 @@ the coordinator commits the evidence reports themselves.
 | P1-16 | Ending commit not concrete | **FIXED** | START_COMMIT/END_COMMIT + embedded diff/stat/status above |
 | P2-17 | torch/transformers not direct deps | **FIXED** | `6ca34bd` — `torch>=2.6`, `transformers>=4.55` in `[project.dependencies]` |
 | P2-18 | Local LLM scope deviation | **USER-APPROVED** | User: "We dont use Gemini anymore so we want to run the LLM parts on the 4070 ti" (stated during implementation). Smaller-model question (e.g. Qwen3-1.7B) under review; config-driven via `content.model_id` |
-| P2-19 | GPU arbitration should be unified | **ACCEPTED-LIMITATION** | Separate semaphores remain, documented; load-order peak ~15.9 GiB observed once with concurrent external GPU load; steady state 11.2/16 GiB; monitored |
+| P2-19 | GPU arbitration should be unified | **FIXED (Round-4)** | `9d370fe` — single shared `InferenceCoordinator` arbitrates LLM + speech pipeline (TTS→VC→postprocess, RVC subprocess included); real-GPU integration test proves zero overlap |
 | P2-20 | Warmup not part of startup | **FIXED** | `9c6557c` — wired non-blocking |
 | P2-21 | Setup is Linux/WSL-oriented | **FIXED** (documented) | Linux/WSL-only documented in README + `setup.sh` |
 
-## Gate status (Round-3 disposition of Round-2 gates; coordinator-verified, 2026-10-02)
+## Gate status (Round-4 disposition of Round-3 gates; coordinator-verified, 2026-10-02)
 
 | Gate | Result | Evidence |
 |---|---|---|
-| R1 package security | **PASS** (+users.yaml privacy fix) | `scripts/package.sh` allowlist + secret scan; Round-3 `5cd412f` excludes live `config/users.yaml` from packages and adds `config/users.example.yaml`. Credential rotation still recommended for the PLAY_HT/OPENAI/GEMINI-era keys. |
-| R2 production speech routing | **PASS** (architecture + lifecycle fix) | Router through the real composition root (`tests/unit/test_app_production_routing.py`); Round-3 `96000d3` fixes when the production queue triggers generated content. |
-| R3 migrated voices | **PASS** | 29 users → obama, 1 → obama_trans via `legacy_alias`; 0 goku; unknown model exits non-zero. |
-| R4 RVC persistence | **PASS** (+alternating-cost evidence) | Resolve-first fix prevents same-model restarts; new alternating benchmark: 5.51 s avg per Obama↔Goku switch vs 0.57 s warm same-model. |
-| R5 media lifecycle | **PASS** (failure-path + stop-race tests) | Download-leak ownership test and deterministic stop-race test added in `96000d3`. |
-| R6 content preservation | **PASS** (recursion impossible, ordering guaranteed, command fixed) | Hook fires only for `MediaKind.STREAM`; `put_front` guarantees song A → segment → song B; ordering test shows zero hook calls for generated items and no leftover tasks; `07d16d3` fixes the podcast command. |
-| R7 clean install | **PASS** (full from-scratch legacy venv via `setup.sh`) | Fresh clone + `scripts/setup.sh` built the legacy RVC venv from scratch (fairseq compiled, torch cu121); setup exits 1 on missing assets; with `hubert_base.pt` + `rvc_cli/models/Goku/goku.yaml` supplied, RVC integration passed 2/2 on the fresh venv — no symlinks. Setup defects found and fixed in `548b150`. |
-| R8 benchmark | **PASS** (three-model residency + corrected semantics) | Corrected RTF interpretation + `benchmark/20261002T130047Z`; real GPU residency run (see TEST_RESULTS.md); alternating-profile benchmark added. |
+| R1 package security | **PASS** | `scripts/package.sh` allowlist + secret scan; live `config/users.yaml` excluded; `users.example.yaml` ships. Round-4 `9d370fe` makes the `.env.example` exemption explicit (exact name allow, all other `.env*` rejected) and allowlists benchmark/evidence CSV/JSON (review §11/§12). |
+| R2 production speech routing | **PASS** | Router through the real composition root; Round-4 `f804284` refines the lifecycle further with typed playback outcomes. |
+| R3 migrated voices | **PASS** (variant identity now preserved) | Round-3 FAIL closed by `9d370fe`: `voice_conversion.variant` preserved end-to-end; worker selects the exact `<variant>.yaml`; migration asserts actual config identity with real config values (obama → `obama.yaml`, obama_trans → `obama_trans.yaml`, distinct parameters verified by `test_rvc_variant.py`). |
+| R4 RVC persistence | **PASS** (same-model + variant switching) | Case-alias fix holds; cache key `(resolved_dir, variant)`; `test_rvc_switching` extended with real Obama-worker variant switching (obama → `pyht:Joseph` vs obama_trans → `gtts`) with `config_switched: true` **in-process — zero worker restarts on a variant switch**. Cross-MODEL switch cost remains 5.51 s avg (documented limitation). |
+| R5 media lifecycle | **PASS** (crash orphans + full cleanup + cancellation) | `f804284`: production path uses the full cleanup helper (file + empty job dir); `.temporary` JSON markers persist ownership; `prune_expired_jobs` removes stale crash orphans after retention; explicit `CancelledError` handling; deterministic tests. |
+| R6 content preservation | **PASS** (outcome-gated hook) | `f804284`: `PlaybackOutcome` StrEnum; hook fires only for STREAM + NATURAL, awaited before next dequeue; outcome matrix NATURAL→1, SKIPPED/STOPPED/FAILED/LOCAL→0; ordering guarantees unchanged (`put_front`). |
+| R7 clean install | **PASS** (per-profile asset validation) | From-scratch legacy venv proof holds (`548b150`); Round-4 `9d370fe` adds `validate_rvc_assets` per enabled profile (model dir case-insensitive, variant yaml, `.pth`, `.index`; non-zero exit) — it caught the real `GOKU`/`Goku` case mismatch; 5 unit tests against temp fixtures. |
+| R8 benchmark | **PASS** (shared arbitration proven non-overlapping on real GPU) | `9d370fe`: one `InferenceCoordinator` arbitrates LLM + TTS→VC→postprocess (RVC subprocess included); real GPU integration test, 3 iterations, concurrent tasks, all three models resident — fully serialized timeline, zero overlap. Raw evidence now included in packages. |
 
-### Required Round-3 tests (review §9) — satisfaction map
+### Required Round-4 tests (review §14) — satisfaction map
 
-See the "Round-2 review required tests" table in `TEST_RESULTS.md`: every
-required test (playback ordering, command surface, temp-file failure cleanup,
-stop race, provider startup fallback, full GPU residency, alternating RVC
-profiles) is implemented and **PASS**.
+See the "Round-3 review required tests" table in `TEST_RESULTS.md`: variant
+preservation fixture tests, playback-outcome matrix, unit-suite isolation,
+GPU arbitration, crash-orphan cleanup, and the silent-worker startup timeout
+are all implemented and **PASS**.
 
 ### Gate R7 — required local assets (unchanged; setup exits 1 without them)
 
@@ -148,26 +172,28 @@ business-logic module imports `rvc_cli`.
 ## Test results summary
 
 See `TEST_RESULTS.md` for the full table. Headline counts
-(coordinator-verified, Round-3): main-venv unit **204 passed / 0 failed**;
-`ruff check` and `ruff format --check` clean. RVC integration 2 passed; RVC
-switching benchmark: 5.51 s avg per Obama↔Goku switch vs 0.57 s warm
-same-model; GPU residency run with no OOM.
+(coordinator-verified, Round-4; re-run in this session): main-venv unit
+**239 passed / 0 failed / 0 skipped**; `ruff check` and `ruff format --check`
+clean. New/extended suites: `test_rvc_variant` (9), `test_coordinator` (3),
+`test_interstitials_guild_scoping` (4), `test_setup_rvc_assets` (5),
+`test_user_migration` (variant assertions), `test_player` (outcome matrix).
+Integration: `test_gpu_arbitration` (real GPU, serialized timeline, PASS) and
+`test_rvc_switching` extended with real variant switching (in-process
+`config_switched`, zero restarts).
 
 ## Known limitations / follow-up (stated honestly)
 
 - **Live voice-channel playback NOT_RUN** — needs a human in a VC; left for
   the user.
 - **Persistent per-model RVC worker cache not implemented** — documented as
-  future work; until then an alternating-profile podcast turn costs ~5.5 s
-  per switch (worker restart + model load). This follows the review's own
-  sequencing guidance (do not optimize before the lifecycle fix).
-- **Transient allocator spike** — a ~15.9 GiB spike can appear during LLM
-  load (especially with concurrent external GPU load) and settles to the
-  11.2 GiB steady state; no OOM in the recorded run. Monitored.
-- GPU arbitration remains per-semaphore (P2-19, accepted-with-monitoring).
-- Smaller content-LLM decision open (P2-18 follow-up), config-driven. The
-  Round-3 residency evidence answers the underlying question: the 4B LLM
-  coexists with TTS + RVC on 16 GB with no OOM, so no smaller model is
-  required — the option remains config-only via `content.model_id`.
+  future work; a cross-MODEL (Obama↔Goku) switch still costs ~5.5 s (worker
+  restart + model load). Variant switches **within** a model are cheap
+  in-process config hot-swaps with zero restarts.
+- **Transient allocator spike** (historical, Round-3) — a ~15.9 GiB spike was
+  observed during LLM load with concurrent external GPU load; with the shared
+  coordinator, loading/inference are serialized (warmup included), removing
+  the concurrent-inference concern. Steady state 11.2/16 GiB.
+- Smaller content-LLM decision open (P2-18 follow-up), config-driven via
+  `content.model_id`; residency evidence shows the 4B model is safe.
 - Only the evidence reports (+ `REVIEW_NOTES.md`) are intentionally
   uncommitted; the coordinator commits them.

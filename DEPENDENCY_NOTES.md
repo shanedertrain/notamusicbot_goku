@@ -1,4 +1,4 @@
-# Dependency Notes — notamusicbot rework (review-response round)
+# Dependency Notes — notamusicbot rework (review-response round, Round-4 return)
 
 Main environment: Python 3.12, uv-managed `.venv-main`. Dependencies in
 `pyproject.toml` are **direct-only**: every runtime dependency is imported by
@@ -43,8 +43,10 @@ combination (torch 2.14.1+cu130, transformers 4.57.3) is documented in
 ## Extras
 
 - **`discord`**: `discord.py` 2.7.1 (tested), `PyNaCl` — bot + voice. The
-  unit suite runs without this extra (P1-14: 180 passed / 1 skipped with
-  discord absent).
+  unit suite runs without this extra (P1-14; Round-4 `9d370fe` adds
+  `pytest.importorskip("discord")` to `test_command_registration`, so the
+  suite now collects cleanly with discord absent — 239 passed / 0 skipped
+  with discord present, only a justified skip when absent).
 - **`media`**: `yt-dlp` 2026.8.19, `yt-dlp-ejs` 0.8.0 (registers JS runtimes
   with yt-dlp; requires the `deno` binary — `media/youtube.py` imports it),
   `spotipy` 2.26.0 (`media/spotify.py` metadata search).
@@ -62,7 +64,10 @@ Deliberately **not** dependencies of the main environment:
 
 - `fairseq`, `pyworld`, `faiss`, `torchcrepe`, etc. stay only in the legacy
   Python 3.10 RVC venv (`.venv`) used by `legacy/rvc_worker.py` / `rvc_cli`.
-  The main environment never imports them.
+  The main environment never imports them. Round-4 `9d370fe` also makes
+  `setup.sh` validate each enabled RVC profile's assets (model dir,
+  `<variant>.yaml`, `.pth`, `.index`) and exit non-zero when missing — no new
+  Python packages were added for this.
 - No cloud LLM/TTS SDKs in the main environment: Gemini (`google-genai`),
   PlayHT and the TikTok TTS integration were removed with the legacy code.
   Commentary uses a local Qwen3-4B-Instruct-2507 — an explicit user decision
