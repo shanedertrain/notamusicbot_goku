@@ -9,7 +9,7 @@ commits `f804284` → `9d370fe`, re-run 2026-10-02).
 
 | Check | Command / environment | Result | Count |
 |---|---|---|---|
-| Unit tests (main venv) | `.venv-main/bin/python -m pytest tests/unit` | **PASS** | **239 passed, 0 failed, 0 skipped** (re-run and verified this session) |
+| Unit tests (main venv) | `.venv-main/bin/python -m pytest tests/unit` | **PASS** | **239 passed, 0 failed, 0 skipped** (re-run and verified this session). One transient wall-clock flake was observed in `test_coordinator` (perf_counter aliasing) and eliminated: the test now asserts the mutual-exclusion invariant with a logical concurrency counter (`25b0ac7`); 4+ consecutive clean runs after the fix. |
 | Lint | `.venv-main/bin/ruff check src tests` | **PASS** | clean |
 | Format | `.venv-main/bin/ruff format --check src tests` | **PASS** | clean |
 | RVC variant preservation (new, Gate R3 proof) | `tests/unit/test_rvc_variant.py` | **PASS** | 9 tests — fixture dir with `obama.yaml`/`obama_trans.yaml` (different parameters); obama profile → exact standard config values, obama_trans → exact trans config values; cache key `(resolved_dir, variant)` distinct; loud error on a missing variant |
