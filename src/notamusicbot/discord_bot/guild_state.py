@@ -83,5 +83,9 @@ class GuildStateRegistry:
     def get(self, guild_id: int) -> GuildState | None:
         return self._states.get(guild_id)
 
+    def all_states(self) -> list[GuildState]:
+        """Every known guild state (shutdown teardown enumerates players)."""
+        return list(self._states.values())
+
     def remove(self, guild_id: int) -> GuildState | None:
         return self._states.pop(guild_id, None)

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -20,7 +21,7 @@ from notamusicbot.content.reddit import RedditPostFetcher
 from notamusicbot.discord_bot.commands import setup_commands
 from notamusicbot.discord_bot.guild_state import GuildState, GuildStateRegistry
 from notamusicbot.discord_bot.interlude_playback import fire_post_song_content
-from notamusicbot.discord_bot.player import GuildPlayer
+from notamusicbot.discord_bot.player import GuildPlayer, cleanup_media_item
 from notamusicbot.domain.media import MediaKind, PlayableMedia, PlaybackOutcome
 from notamusicbot.media.downloader import download_media_audio
 from notamusicbot.media.spotify import SpotifyResolver
@@ -31,6 +32,33 @@ if TYPE_CHECKING:
     from notamusicbot.app import Application
 
 logger = logging.getLogger(__name__)
+
+
+async def stop_guild_players(states: Iterable[GuildState]) -> None:
+    """Signal every guild player loop to stop and await/cancel its task.
+
+    Review Round-6 §3/B shutdown boundary: guild players are stopped BEFORE
+    any converter teardown, so no player (or post-song content hook) can
+    trigger a speech chain that races — or lazily restarts — the RVC worker
+    after shutdown. Mirrors ``GuildPlayer.stop`` at the state level: request
+    stop, drain queued media (temp files cleaned), await the loop task
+    briefly, then cancel it if it will not exit.
+    """
+    for state in states:
+        state.request_stop()
+        for media in state.drain_queue():
+            cleanup_media_item(media)
+        task = state.player_task
+        if task is not None and not task.done():
+            try:
+                await asyncio.wait_for(asyncio.shield(task), 10.0)
+            except (TimeoutError, asyncio.CancelledError):
+                task.cancel()
+                logger.warning("Playback task for guild %s cancelled at shutdown", state.guild_id)
+                # Deterministic teardown: await the cancellation so the task
+                # is finished (not merely cancelling) before we return.
+                await asyncio.gather(task, return_exceptions=True)
+        state.player_task = None
 
 
 class NotAMusicBot(commands.Bot):
@@ -187,11 +215,22 @@ class NotAMusicBot(commands.Bot):
         logger.info("Commands registered with prefix %r", self.command_prefix)
 
     async def close(self) -> None:
-        """discord.py teardown: close the gateway, then application lifecycle."""
+        """discord.py teardown: players first, then gateway, then application.
+
+        Review Round-6 §3/B: guild player tasks are stopped BEFORE the
+        application's converter teardown, so a player (or its post-song
+        content hook) can never trigger a speech chain that races — or lazily
+        restarts — the RVC worker after shutdown.
+        """
+        await self._stop_guild_players()
         try:
             await super().close()
         finally:
             await self.app.shutdown()
+
+    async def _stop_guild_players(self) -> None:
+        """Stop every guild player task BEFORE converter teardown (§3/B)."""
+        await stop_guild_players(self.guild_states.all_states())
 
     async def on_ready(self) -> None:
         logger.info(

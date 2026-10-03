@@ -251,7 +251,21 @@ class Application:
             self._warmup_task = asyncio.create_task(self.warmup(), name="speech-warmup")
 
     async def shutdown(self) -> None:
-        """Application lifecycle teardown (call when the bot closes)."""
+        """Application lifecycle teardown (call when the bot closes).
+
+        Review Round-6 §3/B inference shutdown order:
+
+        1. cancel the warmup task (its detached GPU holder is retired by the
+           drain below);
+        2. ``coordinator.close()`` — stop accepting new inference submissions
+           (CoordinatorClosedError), cancel queued-not-started jobs, and AWAIT
+           already-started detached GPU jobs to completion;
+        3. ``converter_router.shutdown()`` — only now is the RVC worker torn
+           down, and since no pipeline job can be running, no late
+           ``convert()`` can lazily restart it (the router also refuses
+           converts with RouterClosedError as defense in depth);
+        4. remaining resources (none yet at this layer).
+        """
         task = self._warmup_task
         if task is not None and not task.done():
             task.cancel()
@@ -260,6 +274,7 @@ class Application:
             except asyncio.CancelledError:
                 pass
         self._warmup_task = None
+        await self.coordinator.close()
         await self.converter_router.shutdown()
 
     async def warmup(self) -> None:
