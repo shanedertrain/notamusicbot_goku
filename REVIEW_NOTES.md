@@ -1,14 +1,16 @@
 # Review notes — notamusicbot_goku rework (branch rework/qwen3-tts), Round-8 return
 
-HEAD at evidence time: **END_COMMIT =
-`77ff4e7225338932f21f369189e6ae1654dfd637`**
-(`fix(shutdown): drain inference before RVC teardown; stop guild players
-first (round-6 §3/B)`) — the last **code** commit; these evidence reports
-are appended on top of it by the coordinator and are intentionally
-uncommitted at packaging time. Round-7 response base: START_COMMIT
-`f9673d75d0cf21bbde5a335fc72e8f52800d7a5b` (the honest Round-6
-TEST_RESULTS commit). Round-7 commits (closing the Round-6 review; SHAs
-verified with `git rev-parse`):
+HEAD at evidence time: **END_COMMIT (code) = `04a0a19`, full SHA `04a0a19dccdb4e950a607870583459d8f13c96ca`** — Round-8 review fixes
+(§2 `slot()` post-semaphore closed re-check; §3 `close()` drains active
+`slot()` holders; both pinned by deterministic tests) on top of the
+Round-8 commit `9c5167ba72c99075e2fef211654ffa08d7747ac6` (detached
+post-admission closed-state re-check; Discord-free `stop_guild_players`
+in `discord_bot/player.py`, restoring the portable no-Discord unit gate).
+These evidence reports are appended on top by the coordinator and are
+intentionally uncommitted at packaging time. Round-7 response base:
+START_COMMIT `f9673d75d0cf21bbde5a335fc72e8f52800d7a5b`. Historical
+Round-7 commits (closing the Round-6 review; SHAs verified with
+`git rev-parse`):
 
 - `5de5770aed6235b43f3351b9b6be1c6db91bd3b4` — Round-6 §2 P0 RVC lifecycle
   single-flight: `_lifecycle_lock` serializes start/shutdown (lock order
@@ -29,7 +31,20 @@ verified with `git rev-parse`):
   all guild player tasks via `stop_guild_players` **BEFORE** converter
   teardown and `super().close()`.
 
-## Round-6 review items — disposition (all closed, Round-7)
+## Current state (Round-9 return)
+
+- Unit suite (main venv): **276 passed / 0 failed / 0 skipped** (274 + 2 new
+  `slot()` lifecycle tests; re-run this session).
+- Portable stripped env (no discord/qwen): collection succeeds, justified
+  skips only (265 passed / 3 skipped in the review sandbox; 266/2 where the
+  legacy RVC runtime is present).
+- mypy: **0 errors in 48 files**. ruff check + format: clean.
+- Evidence files: `gpu_arbitration.json`, `gpu_residency.json`,
+  `rvc_cross_model_switching.json`, `rvc_same_model_warm.json`.
+- Where to look: `git diff --stat f9673d7..04a0a19`.
+- Live Discord voice playback: NOT_RUN (human VC test). Worker-cache future
+  work (~6.3 s cross-model switch, ~0.6 s warm) unchanged.
+- Round-6 items disposition (all closed in Round-7):
 
 - §2 P0 RVC lifecycle races — **FAIL → PASS** (`5de5770`; concurrent-start
   spawn==1, shutdown-during-startup event-synced/deterministic/3× stable,
@@ -38,8 +53,8 @@ verified with `git rev-parse`):
   review reproduced starts=2/shutdowns=1, now impossible: drain +
   `RouterClosedError`)
 - §4 P1 evidence-document inconsistency — **FIXED** (this reconciliation:
-  one coherent Round-7 revision across all four evidence documents)
-- §5 P2 stale counts — **FIXED** (current state 272 passed; 239/244/253/259
+  one coherent revision across all four evidence documents)
+- §5 P2 stale counts — **FIXED** (current state 276 passed; 239/244/253/259/272
   only in dated per-round historical tables)
 - §7.D GPU re-run — **NOT required / NOT_RUN by design**: lifecycle changes
   do not alter GPU scheduling or inference behavior, so the

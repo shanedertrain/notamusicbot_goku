@@ -1,13 +1,13 @@
 # Dependency Notes — notamusicbot rework (Round-8 re-review return)
 
-**Round-7: no dependency changes.** No package was added, removed, or
+**Round-8/Round-9: no dependency changes** (and none in Round-7 either). No package was added, removed, or
 re-versioned in the Round-7 commits (`5de5770…`, `cceb819…`, `77ff4e7…`);
 the Round-7 work is lifecycle code + tests only. The legacy RVC `.venv` was
 rebuilt from scratch via `scripts/setup.sh` during Round-7 after an
 accidental `uv run` overwrote it (environment incident, resolved) — same
 dependency set as recorded below, re-proven buildable from scratch.
 
-Unit-suite context (current, Round-7): **272 passed / 0 failed / 0 skipped**
+Unit-suite context (current, Round-9): **276 passed / 0 failed / 0 skipped** (main venv); portable stripped env collects without Discord with justified skips only
 in the main venv. Historical counts by round: 239 (Round-3/4), 244 passed /
 2 skipped (Round-4 stripped-env run), 253 (Round-5), 259 (Round-6).
 
