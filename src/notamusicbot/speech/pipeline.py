@@ -87,11 +87,22 @@ class SpeechPipeline:
         conversion: VoiceConversionProfile,
         processing: AudioProcessingProfile | None = None,
     ) -> tuple[AudioArtifact, SpeechJobMetrics]:
-        """Execute one speech job and return the final artifact plus metrics."""
+        """Execute one speech job and return the final artifact plus metrics.
+
+        Review Round-4 P0 (cancellation safety): the ENTIRE TTS -> VC ->
+        postprocess chain runs through ``coordinator.run_detached`` — the chain
+        coroutine executes inside a detached holder task that owns the GPU
+        lease. The lease is held from before the chain starts until it
+        actually finishes, even if the awaiting caller (e.g. the player's
+        post-song task) is cancelled mid-flight: cancellation detaches the
+        caller, and the lease stays with the holder until the RVC worker reply
+        has been consumed and the artifacts are written. No later job can
+        enter the coordinator while the cancelled job's GPU work is still
+        running.
+        """
         processing = processing or self._processing
         job_id = uuid.uuid4().hex[:12]
         start = time.perf_counter()
-        queue_start = time.perf_counter()
 
         # Opportunistic housekeeping (review Round-2 P2): age out failed-job
         # dirs past the retention window and empty dirs left behind after
@@ -112,35 +123,16 @@ class SpeechPipeline:
         if not self._keep_artifacts:
             mark_temporary_job(job_dir, status="pending")
         try:
-            # Review Round-3 P1: the shared slot is deliberately held across
-            # TTS -> VC -> postprocess. The RVC backend runs in a separate
-            # process no in-process lock can reach, so keeping the slot for the
-            # whole VC round-trip is what prevents the RVC subprocess from
-            # overlapping main-process LLM/TTS inference on the same GPU.
-            async with self._coordinator.slot():
-                queue_wait = time.perf_counter() - queue_start
-                tts_path, vc_path, final_path = self._paths(job_id)
-                tts_start = time.perf_counter()
-                source = await self._synthesizer.synthesize(request, tts_path)
-                tts_s = time.perf_counter() - tts_start
-
-                vc_start = time.perf_counter()
-                converted = await self._converter.convert(source, conversion, vc_path)
-                vc_s = time.perf_counter() - vc_start
-                if not self._keep_artifacts:
-                    tts_path.unlink(missing_ok=True)
-
-                pp_start = time.perf_counter()
-                final = await postprocess(converted, final_path, processing)
-                pp_s = time.perf_counter() - pp_start
-                if not self._keep_artifacts:
-                    vc_path.unlink(missing_ok=True)
-                    mark_temp_artifact(final.path)
+            final, timings = await self._coordinator.run_detached(
+                self._run_chain, request, conversion, processing, job_id
+            )
         except asyncio.CancelledError:
             # Cancellation is not an error (review Round-3 P1): never swallow
-            # it. The job keeps its .temporary marker (status "pending") and
-            # whatever partial artifacts exist, so retention pruning removes
-            # the directory deterministically once past the retention window.
+            # it. The caller returns promptly; the detached holder keeps the
+            # GPU lease until the chain really finishes (Round-4 P0). The job
+            # keeps its .temporary marker (status "pending") and whatever
+            # partial artifacts exist, so retention pruning removes the
+            # directory deterministically once past the retention window.
             logger.warning("Speech job %s cancelled; artifacts left under temporary marker", job_id)
             raise
         except Exception:
@@ -163,26 +155,74 @@ class SpeechPipeline:
         out_duration = final.duration_s or _probe_duration(final.path)
         metrics = SpeechJobMetrics(
             job_id=job_id,
-            queue_wait_s=queue_wait,
-            tts_s=tts_s,
-            voice_conversion_s=vc_s,
-            postprocess_s=pp_s,
+            queue_wait_s=timings["queue_wait"],
+            tts_s=timings["tts"],
+            voice_conversion_s=timings["vc"],
+            postprocess_s=timings["pp"],
             total_s=total_s,
             output_duration_s=out_duration,
-            tts_rtf=tts_s / out_duration if out_duration > 0 else 0.0,
-            voice_conversion_rtf=vc_s / out_duration if out_duration > 0 else 0.0,
+            tts_rtf=timings["tts"] / out_duration if out_duration > 0 else 0.0,
+            voice_conversion_rtf=timings["vc"] / out_duration if out_duration > 0 else 0.0,
             total_rtf=total_s / out_duration if out_duration > 0 else 0.0,
         )
         logger.info(
             "Speech job %s done tts=%.2fs vc=%.2fs pp=%.2fs total=%.2fs rtf=%.2f",
             job_id,
-            tts_s,
-            vc_s,
-            pp_s,
+            timings["tts"],
+            timings["vc"],
+            timings["pp"],
             total_s,
             metrics.total_rtf,
         )
         return final, metrics
+
+    async def _run_chain(
+        self,
+        request: TtsRequest,
+        conversion: VoiceConversionProfile,
+        processing: AudioProcessingProfile,
+        job_id: str,
+    ) -> tuple[AudioArtifact, dict[str, float]]:
+        """TTS -> VC -> postprocess chain — the detached lease-holder body.
+
+        The RVC adapter's own worker-reply wait thread lives inside this chain
+        coroutine, so a subprocess conversion can never outlive the lease:
+        caller cancellation detaches the holder but the lease is released only
+        when this coroutine (reply wait included) actually finishes.
+        """
+        # Review Round-3 P1: the shared slot is deliberately held across
+        # TTS -> VC -> postprocess. The RVC backend runs in a separate
+        # process no in-process lock can reach, so keeping the slot for the
+        # whole VC round-trip is what prevents the RVC subprocess from
+        # overlapping main-process LLM/TTS inference on the same GPU.
+        # Round-4 P0: the lease is now owned by the coordinator's detached
+        # holder around this whole chain coroutine, so it survives caller
+        # cancellation.
+        queue_start = time.perf_counter()
+        tts_path, vc_path, final_path = self._paths(job_id)
+        tts_start = time.perf_counter()
+        source = await self._synthesizer.synthesize(request, tts_path)
+        tts_s = time.perf_counter() - tts_start
+
+        vc_start = time.perf_counter()
+        converted = await self._converter.convert(source, conversion, vc_path)
+        vc_s = time.perf_counter() - vc_start
+        if not self._keep_artifacts:
+            tts_path.unlink(missing_ok=True)
+
+        pp_start = time.perf_counter()
+        final = await postprocess(converted, final_path, processing)
+        pp_s = time.perf_counter() - pp_start
+        if not self._keep_artifacts:
+            vc_path.unlink(missing_ok=True)
+            mark_temp_artifact(final.path)
+        timings = {
+            "queue_wait": time.perf_counter() - queue_start,
+            "tts": tts_s,
+            "vc": vc_s,
+            "pp": pp_s,
+        }
+        return final, timings
 
 
 def _probe_duration(path: Path) -> float:

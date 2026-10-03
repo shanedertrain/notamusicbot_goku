@@ -125,3 +125,20 @@ def test_shared_coordinator_serializes_llm_and_tts_rvc(tmp_path) -> None:
     # Every iteration actually produced an LLM, TTS and RVC section.
     assert {n.split(":")[1] for n, _s, _e in timeline} == {"llm", "tts", "rvc"}
     assert len(timeline) == ITERATIONS * 3
+
+    # Round-4 review P2: persist the raw real-GPU arbitration evidence.
+    from evidence_utils import write_evidence
+
+    write_evidence(
+        "gpu_arbitration.json",
+        {
+            "test": "test_shared_coordinator_serializes_llm_and_tts_rvc",
+            "iterations": ITERATIONS,
+            "timeline": [
+                {"stage": name, "start": s, "end": e, "duration_s": e - s}
+                for name, s, e in sorted(timeline, key=lambda t: t[1])
+            ],
+            "max_new_tokens": 60,
+            "pass": True,
+        },
+    )

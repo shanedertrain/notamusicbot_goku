@@ -147,6 +147,16 @@ class RvcVoiceConverter:
         self._io_lock = threading.Lock()
         self._stderr_drainer: _StderrDrainer | None = None
         self._shutting_down = False
+        # Review Round-4 P0 (belt-and-braces cancellation safety): request ids
+        # whose awaiting coroutine was cancelled while the reader thread was
+        # still blocked on the reply. A late reply for an orphaned id is
+        # discarded safely (see ``_read_reply``) instead of being logged as a
+        # mismatch or — worse — being consumed as the reply to a later
+        # request. The subprocess conversion itself keeps running under the
+        # pipeline's GPU lease (the whole TTS -> VC -> postprocess chain runs
+        # inside ``coordinator.run_detached``), so the lease is never released
+        # while the worker is still converting.
+        self._orphaned_ids: set[int] = set()
 
     # ------------------------------------------------------------------ state
 
@@ -410,11 +420,25 @@ class RvcVoiceConverter:
         request_id = self._next_request_id
         self._next_request_id += 1
         line = encode_request(request_id, action, **fields)
-        await asyncio.to_thread(self._write_line, process, line)
         try:
+            await asyncio.to_thread(self._write_line, process, line)
             reply = await asyncio.wait_for(
                 asyncio.to_thread(self._read_reply, process, request_id), timeout
             )
+        except asyncio.CancelledError:
+            # Caller cancelled while the reader thread may still be blocked on
+            # this request's reply: record the orphan id so the late reply is
+            # discarded safely instead of poisoning a future transaction. The
+            # underlying subprocess conversion keeps running; with the
+            # pipeline's run_detached design the GPU lease stays held until
+            # that reply thread finishes regardless of this cancellation.
+            self._orphaned_ids.add(request_id)
+            logger.warning(
+                "RVC %s request %d cancelled while awaiting reply; late reply will be discarded",
+                action,
+                request_id,
+            )
+            raise
         except TimeoutError as exc:
             # The reply thread is stuck on a blocking readline; the worker is
             # unresponsive, so kill it (it will be restarted on next use).
@@ -444,7 +468,12 @@ class RvcVoiceConverter:
             raise WorkerDiedError(msg) from exc
 
     def _read_reply(self, process: subprocess.Popen[str], request_id: int) -> dict[str, Any]:
-        """Blocking read of the next reply line, matched by id."""
+        """Blocking read of the next reply line, matched by id.
+
+        Round-4 P0: a reply whose id was orphaned (its awaiting coroutine was
+        cancelled) is discarded here so a late reply can never be consumed as
+        the reply to a different request.
+        """
         stdout = process.stdout
         if stdout is None:
             msg = "RVC worker stdout is closed"
@@ -466,7 +495,14 @@ class RvcVoiceConverter:
                     # Malformed-notice from the worker; log and keep waiting.
                     logger.warning("RVC worker protocol notice: %s", reply.get("error"))
                     continue
-                if reply.get("id") != request_id:
+                reply_id = reply.get("id")
+                if reply_id in self._orphaned_ids:
+                    # Late reply for a cancelled request (Round-4 P0): drop it
+                    # and keep waiting for our own matching reply.
+                    self._orphaned_ids.discard(reply_id)
+                    logger.info("RVC discarded orphaned reply for cancelled request %s", reply_id)
+                    continue
+                if reply_id != request_id:
                     logger.warning("RVC worker reply id mismatch: %s", reply)
                     continue
                 return reply

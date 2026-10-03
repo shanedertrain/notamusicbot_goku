@@ -64,6 +64,7 @@ class TestAlternatingRvcProfiles:
         # themselves are recorded for the report (no strict latency assert:
         # CI hardware varies).
         assert stats["switch_avg_s"] > 0
+        self._write_evidence("alternating", rows, stats)
 
     def test_same_model_repeat_is_warm(self, tmp_path) -> None:
         import asyncio
@@ -73,3 +74,25 @@ class TestAlternatingRvcProfiles:
         warm = summarize(rows)
         print(f"\nRVC warm same-model convert: avg {warm['warm_avg_s']}s")
         assert warm["warm_converts"] == 1
+        self._write_evidence("same_model_warm", rows, warm)
+
+    @staticmethod
+    def _write_evidence(scenario: str, rows: list[dict], stats: dict) -> None:
+        # Round-4 review P2: persist the raw real-GPU RVC variant-switching
+        # evidence (variant identity + per-switch reload costs).
+        from evidence_utils import write_evidence
+
+        write_evidence(
+            "rvc_variant_switching.json",
+            {
+                "test": "TestAlternatingRvcProfiles",
+                "scenarios": [
+                    {
+                        "scenario": scenario,
+                        "rows": rows,
+                        "stats": stats,
+                    }
+                ],
+                "pass": True,
+            },
+        )

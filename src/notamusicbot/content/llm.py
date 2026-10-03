@@ -12,7 +12,6 @@ same GPU through one shared coordinator.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from dataclasses import dataclass
@@ -142,10 +141,18 @@ class LocalQwenLlmProvider:
         return self.load_info
 
     async def generate(self, request: ContentRequest) -> str:
-        """Generate commentary text; heavy work happens off the event loop."""
-        async with self._gpu.slot():
-            prompt = prompts.build_prompt(request)
-            return await asyncio.to_thread(self._generate_sync, prompt)
+        """Generate commentary text; heavy work happens off the event loop.
+
+        Review Round-4 P0: the blocking inference runs through
+        ``coordinator.run_blocking`` instead of ``asyncio.to_thread`` inside
+        ``slot()``. If this coroutine is cancelled (e.g. the player's stop
+        timeout), the GPU lease stays held by the coordinator's detached
+        holder until ``_generate_sync`` really finishes — a follow-up GPU job
+        can never enter the coordinator while the cancelled job's thread is
+        still generating.
+        """
+        prompt = prompts.build_prompt(request)
+        return await self._gpu.run_blocking(self._generate_sync, prompt)
 
     def _generate_sync(self, prompt: str) -> str:
         import torch

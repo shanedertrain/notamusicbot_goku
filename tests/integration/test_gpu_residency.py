@@ -155,3 +155,28 @@ def test_full_gpu_residency_no_oom(tmp_path) -> None:
     # No OOM anywhere (an OOM raises and fails above); sanity assertions:
     assert by_name["idle_after_all_three_loaded"].vram_used_mib > 0
     assert by_name["final"].peak_allocated_mib >= 0
+
+    # Round-4 review P2: persist the raw real-GPU residency evidence.
+    from evidence_utils import write_evidence
+
+    write_evidence(
+        "gpu_residency.json",
+        {
+            "test": "test_full_gpu_residency_no_oom",
+            "stages": [
+                {
+                    "name": s.name,
+                    "vram_used_mib": s.vram_used_mib,
+                    "vram_total_mib": s.vram_total_mib,
+                    "peak_allocated_mib": s.peak_allocated_mib,
+                }
+                for s in stages
+            ],
+            "model_ids": {
+                "content_llm": "Qwen/Qwen3-4B-Instruct-2507",
+                "tts": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
+                "rvc": "Goku (legacy worker subprocess)",
+            },
+            "pass": True,
+        },
+    )

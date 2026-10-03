@@ -222,12 +222,23 @@ class Application:
     async def startup(self) -> None:
         """Application lifecycle entry point (call from the bot's ``setup_hook``).
 
-        Starts the voice-conversion router (spawns + health-checks the RVC
-        worker when the ``rvc`` backend is enabled) and schedules the optional
-        non-blocking warmup task. RVC start failure is logged, not raised, so
-        a missing GPU/worker runtime degrades per the configured
-        ``rvc_unavailable_policy`` instead of killing startup.
+        Review Round-4 P1 (startup ordering): the content LLM model is loaded
+        to completion BEFORE the voice-conversion router starts (RVC worker
+        spawn + health check + model load) and before the warmup task is
+        scheduled. LLM weight loading is GPU/VRAM-heavy and is NOT itself
+        arbitrated through the coordinator (it happens once, outside any
+        slot), so with ``warmup_on_start: true`` the warmup or RVC startup
+        could otherwise acquire the GPU while the LLM weights are still
+        streaming onto it. Reordering makes load → RVC start → warmup
+        strictly sequential; the startup-order test
+        (``test_startup_load_and_warmup_do_not_overlap``) pins this.
+
+        RVC start failure is logged, not raised, so a missing GPU/worker
+        runtime degrades per the configured ``rvc_unavailable_policy`` instead
+        of killing startup.
         """
+        # Content LLM loads first (fail-soft, off the event loop).
+        await asyncio.to_thread(self.load_content_model)
         await self.converter_router.startup()
         # Warmup only when a feature will actually use the synthesizer and the
         # setting asks for it; scheduled as a task so it never blocks startup.
@@ -259,11 +270,13 @@ class Application:
             # Review Round-3 P1 startup case: TTS warmup is GPU inference too,
             # so it arbitrates through the same shared coordinator as LLM
             # generation and pipeline jobs (never overlaps them on the GPU).
-            async with self.coordinator.slot():
-                await asyncio.to_thread(
-                    self._synthesizer.warmup,
-                    Path(self.settings.speech.output_dir) / "warmup.wav",
-                )
+            # Review Round-4 P0: run_blocking (not slot + to_thread) so a
+            # cancelled warmup task cannot release the GPU lease while the
+            # warmup synthesis thread is still running.
+            await self.coordinator.run_blocking(
+                self._synthesizer.warmup,
+                Path(self.settings.speech.output_dir) / "warmup.wav",
+            )
         except Exception:
             logger.exception("Speech warmup failed; continuing without a warmed model")
 

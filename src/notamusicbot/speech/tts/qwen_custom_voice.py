@@ -112,6 +112,15 @@ class QwenCustomVoiceSynthesizer:
 
         Heavy model inference is offloaded to a thread so the event loop is not
         blocked; the coordinator still serializes actual GPU access.
+
+        Review Round-4 P0 (cancellation safety): this synthesizer's blocking
+        ``model.generate_custom_voice`` call always executes INSIDE the speech
+        pipeline's lease-held chain (``SpeechPipeline.run`` wraps the whole
+        TTS -> VC -> postprocess chain in ``coordinator.run_blocking``), so the
+        GPU lease is held until this blocking call actually finishes even if
+        the pipeline caller is cancelled. No separate coordination is needed
+        here, and calling ``synthesize`` outside the pipeline's lease would
+        bypass arbitration — the pipeline is the only production entry point.
         """
         text = normalize_text(request.text)
         if not text:
