@@ -47,6 +47,17 @@ FAKE_WORKER = (
             w.setframerate(16000)
             w.writeframes(b"\\x00\\x10" * 1600)
 
+    def wait_for_file(path, timeout=15.0):
+        deadline = time.time() + timeout
+        while not os.path.exists(path) and time.time() < deadline:
+            time.sleep(0.02)
+
+    # Deterministic test synchronization (review Round-6 §2): "hold-*" modes
+    # pause the worker until the TEST creates the marker file named by
+    # ``extra`` — an explicit event, never a sleep-based proof.
+    if mode == "hold-ready":
+        wait_for_file(extra)  # pause BEFORE announcing readiness
+
     reply({"id": None, "status": "ok", "action": "ready"})
 
     for line in sys.stdin:
@@ -61,8 +72,11 @@ FAKE_WORKER = (
         action = req.get("action")
         log({"action": action, **{k: v for k, v in req.items() if k != "id"}})
         if action == "health":
-            reply({"id": req["id"], "status": "ok", "device": "cpu",
-                   "torch": "fake", "cuda_available": False})
+            if mode == "health-error":
+                reply({"id": req["id"], "status": "error", "error": "health boom"})
+            else:
+                reply({"id": req["id"], "status": "ok", "device": "cpu",
+                       "torch": "fake", "cuda_available": False})
             log({"action": action, "event": "reply", "id": req["id"]})
         elif action == "load-model":
             if mode == "load-error":
@@ -72,7 +86,16 @@ FAKE_WORKER = (
                 reply({"id": req["id"], "status": "ok", "model": req.get("name"),
                        "device": "cpu", "target_sample_rate": 16000})
         elif action == "convert":
-            if mode == "no-reply":
+            if mode == "hold-convert":
+                # Pause BEFORE replying: the test holds an explicit event
+                # (marker file) and releases the convert reply at will.
+                wait_for_file(extra)
+                write_wav(req["output_wav_path"])
+                log({"action": action, "event": "reply", "id": req["id"]})
+                reply({"id": req["id"], "status": "ok",
+                       "output_wav_path": req["output_wav_path"],
+                       "elapsed_seconds": 0.01, "model": "Fake"})
+            elif mode == "no-reply":
                 pass  # never answer: the adapter must time out
             elif mode == "slow":
                 time.sleep(0.3)  # create scheduling pressure for concurrency tests
@@ -344,18 +367,37 @@ async def test_concurrent_requests_serialize_full_transaction(
 
 
 async def test_shutdown_waits_for_active_transaction(tmp_path, worker_env, patched_spawn):
-    """Concurrent convert + shutdown: shutdown waits for the in-flight
-    transaction; the convert completes successfully, then the worker is
-    shut down (shutdown request logged only after the convert reply)."""
-    converter = worker_env(mode="slow")
+    """Concurrent convert + shutdown (review Round-6 §2 rewrite): the
+    converter is started FULLY first; a convert reply is withheld behind an
+    explicit event; shutdown is launched while that transaction is in flight.
+    Expected: the convert reply completes, THEN the shutdown request is
+    written — no sleep-based proof, event synchronization only."""
+    converter = worker_env(mode="hold-convert")
     patched_spawn(converter)
+    await converter.start()
     source = make_source(tmp_path / "in.wav")
     output = tmp_path / "out.wav"
+    release = tmp_path / "marker-hold-convert"
+
+    def log_events() -> list[dict[str, Any]]:
+        return [json.loads(line) for line in worker_env.log_path.read_text().splitlines()]
 
     convert_task = asyncio.create_task(converter.convert(source, make_profile(), output))
-    await asyncio.sleep(0.15)  # convert request in flight (worker sleeping)
-    shutdown_task = asyncio.create_task(converter.shutdown())
+    # Deterministic: wait until the WORKER actually received the convert
+    # request (its reply is withheld behind the release marker).
+    for _ in range(500):
+        if any(e.get("action") == "convert" for e in log_events()):
+            break
+        await asyncio.sleep(0.02)
+    assert any(e.get("action") == "convert" for e in log_events())
 
+    shutdown_task = asyncio.create_task(converter.shutdown())
+    # Shutdown must still be waiting on the active transaction (the convert
+    # reply has not even been written yet) — it can never complete here.
+    await asyncio.sleep(0)
+    assert not shutdown_task.done()
+
+    release.touch()  # explicit event: let the convert reply through
     artifact = await asyncio.wait_for(convert_task, 10)
     await asyncio.wait_for(shutdown_task, 10)
 
@@ -363,10 +405,105 @@ async def test_shutdown_waits_for_active_transaction(tmp_path, worker_env, patch
     assert artifact.path == output
     assert not converter.is_running
 
-    events = [json.loads(line) for line in worker_env.log_path.read_text().splitlines()]
+    events = log_events()
     convert_reply_t = next(e["t"] for e in events if e.get("event") == "reply" and e.get("id") == 3)
     shutdown_req_t = next(e["t"] for e in events if e.get("action") == "shutdown")
     assert shutdown_req_t >= convert_reply_t, "shutdown corrupted the in-flight transaction"
+
+
+# ---------------------------------------------------------------------------
+# Review Round-6 §2/A: lifecycle single-flight (start/shutdown serialization)
+# ---------------------------------------------------------------------------
+
+
+async def test_concurrent_start_spawns_exactly_one_worker(tmp_path, worker_env, patched_spawn):
+    """Two concurrent start() calls: exactly one spawn, both callers succeed,
+    one alive worker remains (review reproduction: two PIDs, one orphaned)."""
+    converter = worker_env()
+    patched_spawn(converter)
+    spawns: list[int] = []
+    original_spawn = converter._spawn_and_wait_ready
+    converter._spawn_and_wait_ready = lambda: (spawns.append(1), original_spawn())[1]  # noqa: SLF001
+
+    await asyncio.gather(converter.start(), converter.start())
+
+    assert spawns == [1], f"expected exactly one spawn, got {len(spawns)}"
+    assert converter.is_running
+    assert converter._process is not None and converter._process.poll() is None
+    # The worker answers the protocol normally after the single-flight start.
+    reply = await asyncio.wait_for(converter._request("health", timeout=5), 10)
+    assert reply["status"] == "ok"
+    await converter.shutdown()
+    assert not converter.is_running
+
+
+async def test_shutdown_during_startup_waits_and_orders_deterministically(
+    tmp_path, worker_env, patched_spawn
+):
+    """Worker pauses BEFORE its ready line (explicit marker-file event);
+    shutdown is requested while startup is paused; the marker is released.
+    Expected: shutdown strictly follows startup (which completes ready
+    negotiation + health check), no protocol mismatch, no orphan worker."""
+    release_ready = tmp_path / "marker-hold-ready"
+    converter = worker_env(mode="hold-ready")
+    patched_spawn(converter)
+
+    start_task = asyncio.create_task(converter.start())
+    # Deterministic: wait until the worker process exists (startup in flight,
+    # paused before ready) — no sleep-based state proof.
+    for _ in range(500):
+        if converter._process is not None:
+            break
+        await asyncio.sleep(0.02)
+    assert converter._process is not None
+
+    shutdown_task = asyncio.create_task(converter.shutdown())
+    await asyncio.sleep(0)
+    # Shutdown cannot have completed: startup still holds the lifecycle lock.
+    assert not shutdown_task.done()
+
+    release_ready.touch()
+    await asyncio.wait_for(start_task, 15)  # startup completes cleanly
+    await asyncio.wait_for(shutdown_task, 15)  # then shutdown runs
+
+    assert not converter.is_running
+    events = [json.loads(line) for line in worker_env.log_path.read_text().splitlines()]
+    actions = [e.get("action") for e in events if "event" not in e]
+    assert actions[-1] == "shutdown"
+    # No orphan: shutdown ran through the SAME lifecycle lock, so exactly one
+    # worker was spawned (converter._process pointed at it) and it is fully
+    # reaped now.
+    assert converter._process is None
+
+
+async def test_failed_startup_cleanup_leaves_no_live_worker(tmp_path, worker_env, patched_spawn):
+    """Startup that never becomes ready → WorkerStartError, and the partial
+    worker is reaped: _process is None, no live worker remains."""
+    converter = worker_env(mode="hold-ready", start_timeout_s=0.3)
+    patched_spawn(converter)
+
+    with pytest.raises(WorkerStartError, match="not ready"):
+        await converter.start()
+
+    assert converter._process is None
+    assert not converter.is_running
+    assert converter._loaded_key is None
+
+
+async def test_failed_health_check_cleanup_leaves_no_live_worker(
+    tmp_path, worker_env, patched_spawn
+):
+    """Worker becomes ready but the health check fails → the startup fails
+    and the partial worker is terminated and reaped."""
+    converter = worker_env(mode="health-error")
+    patched_spawn(converter)
+
+    with pytest.raises(WorkerRequestError, match="health boom"):
+        await converter.start()
+
+    assert converter._process is None
+    assert not converter.is_running
+    assert converter._loaded_key is None
 
 
 # ---------------------------------------------------------------------------

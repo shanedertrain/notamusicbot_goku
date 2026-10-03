@@ -160,6 +160,19 @@ class RvcVoiceConverter:
         # would block the loop, and thread-based callers do not exist on the
         # public surface.
         self._transaction_lock = asyncio.Lock()
+        # Review Round-6 §2/A: WORKER LIFECYCLE SINGLE-FLIGHT. Spawn → ready
+        # negotiation → health check, and shutdown, all run under this lock so
+        # they can never interleave: two concurrent ``start()`` calls spawn
+        # exactly one worker (the loser re-checks ``is_running`` and returns),
+        # and ``shutdown()`` cannot touch the protocol while startup is still
+        # negotiating it. LOCK ORDER (documented invariant): ``_lifecycle_lock``
+        # is ALWAYS acquired OUTSIDE ``_transaction_lock`` —
+        # ``shutdown`` = lifecycle → transaction; ``_request`` takes only the
+        # transaction lock; ``start`` holds only the lifecycle lock and its
+        # health check enters ``_request`` (which then takes the transaction
+        # lock inside). The reverse order (transaction → lifecycle) is never
+        # taken anywhere, so no deadlock cycle exists.
+        self._lifecycle_lock = asyncio.Lock()
         self._stderr_drainer: _StderrDrainer | None = None
         self._shutting_down = False
         # Review Round-4 P0 (reworked Round-5 §3/B): request ids whose
@@ -197,50 +210,91 @@ class RvcVoiceConverter:
     # ------------------------------------------------------------------ async
 
     async def start(self) -> None:
-        """Spawn the worker, wait for its ready line, and run a health check."""
-        if self.is_running:
-            return
-        self._shutting_down = False
+        """Spawn the worker, wait for its ready line, and run a health check.
+
+        Review Round-6 §2/A: the whole lifecycle is single-flight under
+        ``_lifecycle_lock``. Concurrent callers serialize; the second caller
+        re-checks ``is_running`` after acquiring the lock and returns without
+        spawning again — two concurrent ``start()`` calls therefore spawn
+        exactly one worker and both succeed. ``shutdown()`` acquires the SAME
+        lock, so it cannot interleave with startup (it runs strictly after a
+        concurrent startup completes or fails). On any startup failure the
+        partially created worker is terminated/reaped and the protocol state
+        is cleaned before the error propagates, so a failed start never
+        leaves a live, untracked worker behind.
+        """
+        async with self._lifecycle_lock:
+            if self.is_running:
+                return
+            self._shutting_down = False
+            self._loaded_key = None
+            # A freshly spawned worker means a fresh protocol stream: replies
+            # from a previous process can never appear again, so stale orphan
+            # marks from before a restart are dropped (Round-5 §3/B: stale-reply
+            # handling must stay safe across a worker restart).
+            self._orphaned_ids.clear()
+            try:
+                await asyncio.to_thread(self._spawn_and_wait_ready)
+                # Health check via the public request path: this coroutine
+                # holds only the lifecycle lock, so ``_request`` acquiring the
+                # transaction lock cannot self-deadlock (lock order:
+                # lifecycle → transaction, never the reverse).
+                await self._request("health", timeout=self._start_timeout)
+            except BaseException:
+                await self._cleanup_failed_start()
+                raise
+            logger.info(
+                "RVC worker started (python=%s, script=%s)",
+                self._worker_python,
+                self._worker_script,
+            )
+
+    async def _cleanup_failed_start(self) -> None:
+        """Reap a partially started worker and reset protocol state.
+
+        Called when ``start()`` fails after spawn (health check failed, timed
+        out, or the caller was cancelled): no live worker may survive a failed
+        startup, and ``_process`` / ``_loaded_key`` must be left clean.
+        """
+        process = self._process
+        self._process = None
         self._loaded_key = None
-        # A freshly spawned worker means a fresh protocol stream: replies
-        # from a previous process can never appear again, so stale orphan
-        # marks from before a restart are dropped (Round-5 §3/B: stale-reply
-        # handling must stay safe across a worker restart).
         self._orphaned_ids.clear()
-        await asyncio.to_thread(self._spawn_and_wait_ready)
-        await self._request("health", timeout=self._start_timeout)
-        logger.info(
-            "RVC worker started (python=%s, script=%s)",
-            self._worker_python,
-            self._worker_script,
-        )
+        if process is not None:
+            logger.warning("RVC startup failed; terminating partial worker")
+            await asyncio.to_thread(self._terminate, process)
 
     async def shutdown(self) -> None:
         """Ask the worker to shut down cleanly, then reap the process.
 
+        Review Round-6 §2/A: shutdown acquires the SAME ``_lifecycle_lock`` as
+        ``start()``, so it can never interleave with startup — a concurrent
+        shutdown strictly follows a startup (which by then has completed ready
+        negotiation and the health check), and a concurrent startup strictly
+        follows a shutdown. LOCK ORDER: lifecycle → transaction.
+
         Review Round-5 §2/A shutdown semantics: shutdown WAITS for the active
-        transaction. This coroutine acquires the same transaction lock as
-        ``_request`` before touching the worker, so a concurrent
-        ``convert`` in flight runs to completion (its reply received) before
-        the worker is asked to shut down and terminated. The in-flight
-        request is therefore never corrupted by shutdown; it either succeeds
-        or fails on its own timeout (which itself terminates the worker and
-        releases the lock). Once the lock is held, the shutdown request is
-        sent via the lock-internal path to avoid self-deadlock.
+        transaction. The transaction lock below is held until the in-flight
+        ``convert`` has received its reply, so the request is never corrupted
+        by shutdown; it either succeeds or fails on its own timeout (which
+        itself terminates the worker and releases the lock). Once both locks
+        are held, the shutdown request is sent via the lock-internal
+        ``_request_locked`` path to avoid self-deadlock.
         """
-        async with self._transaction_lock:
-            process = self._process
-            if process is None:
-                return
-            self._shutting_down = True
-            try:
-                if process.poll() is None:
-                    await self._request_locked("shutdown", timeout=10.0)
-            except WorkerError as exc:
-                logger.warning("RVC worker shutdown request failed: %s", exc)
-            await asyncio.to_thread(self._terminate, process)
-            self._process = None
-            self._loaded_key = None
+        async with self._lifecycle_lock:
+            async with self._transaction_lock:
+                process = self._process
+                if process is None:
+                    return
+                self._shutting_down = True
+                try:
+                    if process.poll() is None:
+                        await self._request_locked("shutdown", timeout=10.0)
+                except WorkerError as exc:
+                    logger.warning("RVC worker shutdown request failed: %s", exc)
+                await asyncio.to_thread(self._terminate, process)
+                self._process = None
+                self._loaded_key = None
 
     async def convert(
         self,
