@@ -1,13 +1,14 @@
-# Test Results — notamusicbot rework (Round-7 re-review return)
+# Test Results — notamusicbot rework (Round-8 re-review return)
 
 Semantics: every result is PASS / FAIL / SKIPPED / NOT_RUN. Nothing
-unavailable was converted into a pass. The **current state** is the Round-7
-return: Round-6 review fixes (commits `5de5770aed6235b43f3351b9b6be1c6db91bd3b4`,
+unavailable was converted into a pass. The **current state** is the Round-8
+return: Round-7 review fixes (commit `9c5167b` on top of Round-7 commits
+`5de5770aed6235b43f3351b9b6be1c6db91bd3b4`,
 `cceb819a1ecdca6704fb92f8eb2c6ec471ca7939`, `77ff4e7225338932f21f369189e6ae1654dfd637`;
 START_COMMIT `f9673d75d0cf21bbde5a335fc72e8f52800d7a5b`; re-run this session).
 Earlier-round tables below are **historical records kept for traceability**
-(239 at Round-4, 253 at Round-5, 259 at Round-6) and are clearly dated; they
-are not current-state claims.
+(239 at Round-4, 253 at Round-5, 259 at Round-6, 272 at Round-7) and are
+clearly dated; they are not current-state claims.
 
 Correction of record (Round-5 review §5): the Round-5 report claimed a
 "Concurrent RVC protocol requests PASS" that had NO matching test or
@@ -25,7 +26,27 @@ same from-scratch build proven in the Round-2/Round-3 returns, Gate R7) and
 the full unit suite then passes **272/272**. The failure was an environment
 incident, not a product defect; no test was changed to make it pass.
 
-## Current round (Round-7) — Round-6 review items §2/§3/§4/§5
+## Current round (Round-8) — Round-7 review items §2/§3
+
+Gate mapping (Round-7 review return): §2 coordinator admission-boundary race
+**FAIL → PASS**; §3 portable unit suite **FAIL → PASS**; §4 portable/main
+count qualification **FIXED** (both environments reported separately below).
+
+| Check (Round-7 review item) | Command / environment | Result | Count |
+|---|---|---|---|
+| §2 post-admission closed-state race | unit (`tests/unit/test_coordinator.py`) | **PASS** | a caller blocked on `_admission` when `close()` begins is rejected with `CoordinatorClosedError` after admission is granted — its function **never executes** (`ran == ["a"]` pinned); applied to both `_run_detached` and `slot()`; no `await` between the re-check and holder registration (close() cannot interleave). |
+| §2 slot() same semantics | unit | **PASS** | `slot()` blocked on admission + `close()` → `CoordinatorClosedError`, no grant. |
+| §3 portable unit suite (no discord) | stripped venv (no discord/qwen), `PYTHONPATH=src pytest -q tests/unit` | **PASS** | **266 passed, 2 skipped, 0 failed — collection succeeds** (skips are the two justified `importorskip("discord")` modules: command-layer test, command-path parity test). `stop_guild_players` extracted to `discord_bot/player.py`, which imports no `discord` (review Option B). |
+| Unit tests (main venv) | `.venv-main/bin/python -m pytest tests/unit` | **PASS** | **274 passed, 0 failed, 0 skipped, NO deselects** (272 + 2 new admission-race tests; re-run ×3 this session). This is the **development-environment** count; the portable no-Discord gate is the row above — they are reported separately per review §4. |
+| mypy | `.venv-main/bin/python -m mypy src/notamusicbot` | **PASS** | **0 errors in 48 files** (unchanged; re-run this round). |
+| ruff | `ruff check src tests` + `format --check` | **PASS** | clean. |
+
+One honesty note: a single transient unit failure (test unidentified before the
+re-run passed) occurred once immediately after a bulk `ruff --fix`/`format`
+pass mid-round; three consecutive full runs after that were clean (274/274/274).
+No flake has been reproduced since.
+
+## Previous round (Round-7) — Round-6 review items §2/§3/§4/§5
 
 Gate mapping (Round-6 review return): §2 RVC lifecycle **FAIL → PASS**;
 §3 post-shutdown RVC restart **FAIL → PASS**; §4 report inconsistency
@@ -34,7 +55,7 @@ reconciliation).
 
 | Check (Round-6 review item) | Command / environment | Result | Count |
 |---|---|---|---|
-| Unit tests (main venv) | `.venv-main/bin/python -m pytest tests/unit` | **PASS** | **272 passed, 0 failed, 0 skipped, NO deselects** (259 baseline + 13 new Round-7 lifecycle tests, re-run this session). |
+| Unit tests (main venv, Round-7 historical) | `.venv-main/bin/python -m pytest tests/unit` | **PASS** | **272 passed, 0 failed, 0 skipped, NO deselects** (259 baseline + 13 Round-7 lifecycle tests). |
 | §2 RVC lifecycle single-flight — concurrent start | unit | **PASS** | concurrent `start()` → exactly **one** worker spawn (2-PID leak impossible): start/shutdown serialized under `_lifecycle_lock`; lock order lifecycle → transaction, never reversed. |
 | §2 shutdown during startup | unit, event-synced | **PASS** | shutdown strictly follows startup completion; test is deterministic and event-synced, stable across 3 consecutive runs (was the failing `test_shutdown_waits_for_active_transaction` class). |
 | §2 failed startup reaping | unit | **PASS** | failed-ready and failed-health starts terminate the worker and reset `_process` / `_loaded_key` / `_orphaned_ids` — no leaked worker. |

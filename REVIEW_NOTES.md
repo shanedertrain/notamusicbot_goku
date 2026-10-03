@@ -1,4 +1,4 @@
-# Review notes — notamusicbot_goku rework (branch rework/qwen3-tts), Round-7 return
+# Review notes — notamusicbot_goku rework (branch rework/qwen3-tts), Round-8 return
 
 HEAD at evidence time: **END_COMMIT =
 `77ff4e7225338932f21f369189e6ae1654dfd637`**

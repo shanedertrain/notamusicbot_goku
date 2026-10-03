@@ -1,4 +1,4 @@
-# Implementation Report — notamusicbot rework (Qwen3-TTS), Round-7 re-review return
+# Implementation Report — notamusicbot rework (Qwen3-TTS), Round-8 re-review return
 
 Rework of the legacy flat "notamusicbot" Discord bot onto a typed package
 (`src/notamusicbot/`) with Qwen3-TTS as the speech backend and RVC voice
@@ -12,9 +12,12 @@ below is retained as clearly dated historical records.
 
 - **START_COMMIT = `f9673d75d0cf21bbde5a335fc72e8f52800d7a5b`**
   (`docs: honest Round-6 TEST_RESULTS.md — retract false concurrent-RVC claim…`)
-- **END_COMMIT = `77ff4e7225338932f21f369189e6ae1654dfd637`**
+- **END_COMMIT = `9c5167b` (full SHA at packaging: see `git rev-parse HEAD`)**
+  — Round-8 fixes on top of the Round-7 code commits below:
+  - `9c5167b` — Round-7 §2 P0: post-admission closed-state re-check in `InferenceCoordinator._run_detached` and `slot()` (a caller blocked on admission when `close()` begins is rejected with `CoordinatorClosedError` and its function never executes; no `await` between re-check and holder registration). Round-7 §3 P1: `stop_guild_players` extracted from `bot.py` into Discord-import-free `discord_bot/player.py` (review Option B) — the portable no-Discord unit gate is restored (stripped env: 266 passed / 2 justified skips / 0 failed, collection succeeds).
+  - Round-7 base: END_COMMIT at the Round-7 return was `77ff4e7225338932f21f369189e6ae1654dfd637`
   (`fix(shutdown): drain inference before RVC teardown; stop guild players first (round-6 §3/B)`)
-  — the last **code** commit; the evidence reports
+  — the last **code** commit of that round; the evidence reports
   (`IMPLEMENTATION_REPORT.md`, `TEST_RESULTS.md`, `REVIEW_NOTES.md`,
   `DEPENDENCY_NOTES.md`) are appended on top of it by the coordinator and are
   intentionally uncommitted at packaging time.

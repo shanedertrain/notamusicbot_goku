@@ -1,4 +1,4 @@
-# Dependency Notes — notamusicbot rework (Round-7 re-review return)
+# Dependency Notes — notamusicbot rework (Round-8 re-review return)
 
 **Round-7: no dependency changes.** No package was added, removed, or
 re-versioned in the Round-7 commits (`5de5770…`, `cceb819…`, `77ff4e7…`);
