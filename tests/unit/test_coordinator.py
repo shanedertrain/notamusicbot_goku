@@ -18,6 +18,7 @@ import time
 import pytest
 
 from notamusicbot.speech.coordinator import (
+    CoordinatorClosedError,
     InferenceCoordinator,
     shared_gpu_coordinator,
 )
@@ -95,3 +96,78 @@ async def test_llm_and_pipeline_style_tasks_are_mutually_exclusive() -> None:
     await asyncio.gather(*(llm_job(i) for i in range(3)), *(pipeline_job(i) for i in range(3)))
     assert len(log) == 6  # 3 LLM sections + 3 pipeline slots
     assert stats["max_active"] == 1, "GPU sections overlapped on the shared slot"
+
+
+# ---------------------------------------------------------------------------
+# Review Round-6 §3/B: inference shutdown — close()/drain()
+# ---------------------------------------------------------------------------
+
+
+async def test_close_drains_started_job_cancels_queued_rejects_new() -> None:
+    """close(): the started job is awaited to real completion, the queued
+    job never starts, and new submissions are rejected afterwards."""
+    coord = InferenceCoordinator(max_concurrent=1, queue_size=4)
+    release = asyncio.Event()
+    started = {"started_job": False, "queued_job": False}
+
+    async def job(name: str) -> str:
+        started[name] = True
+        await release.wait()
+        return name
+
+    started_task = asyncio.create_task(coord.run_detached(job, "started_job"))
+    while not started["started_job"]:
+        await asyncio.sleep(0)
+    queued_task = asyncio.create_task(coord.run_detached(job, "queued_job"))
+    # Deterministic: wait until the queued job is admitted into the
+    # coordinator's holder registry (still waiting for the semaphore).
+    while len(coord._holder_started) < 2:  # noqa: SLF001
+        await asyncio.sleep(0)
+    assert not started["queued_job"]
+
+    close_task = asyncio.create_task(coord.close())
+    # Drain cannot finish while the started job is still parked on `release`.
+    await asyncio.sleep(0)
+    assert not close_task.done()
+
+    release.set()
+    assert await asyncio.wait_for(started_task, 5) == "started_job"
+    await asyncio.wait_for(close_task, 5)
+
+    # Queued job: cancelled by the drain, never started.
+    with pytest.raises(asyncio.CancelledError):
+        await queued_task
+    assert started["queued_job"] is False
+    assert coord.closed is True
+
+    # New submissions are rejected with a clear error (both entry points).
+    with pytest.raises(CoordinatorClosedError):
+        await coord.run_detached(job, "late_job")
+    with pytest.raises(CoordinatorClosedError):
+        await coord.run_blocking(lambda: None)
+    with pytest.raises(CoordinatorClosedError):
+        async with coord.slot():
+            pass  # pragma: no cover - never reached
+
+
+async def test_drain_is_alias_of_close_and_close_is_idempotent() -> None:
+    coord = InferenceCoordinator()
+    release = asyncio.Event()
+    done: list[str] = []
+
+    async def job() -> None:
+        await release.wait()
+        done.append("job")
+
+    task = asyncio.create_task(coord.run_detached(job))
+    while not coord._holder_started:  # noqa: SLF001
+        await asyncio.sleep(0)
+    drain_task = asyncio.create_task(coord.drain())
+    await asyncio.sleep(0)
+    assert not drain_task.done()
+    release.set()
+    await asyncio.wait_for(drain_task, 5)
+    await asyncio.wait_for(task, 5)
+    assert done == ["job"]
+    await coord.drain()  # idempotent: second drain returns immediately
+    assert coord.closed is True

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import shutil
 from pathlib import Path
 
@@ -9,6 +10,7 @@ import pytest
 
 from notamusicbot.domain.speech import AudioArtifact, VoiceConversionProfile
 from notamusicbot.speech.voice_conversion.router import (
+    RouterClosedError,
     RvcUnavailableError,
     UnknownBackendError,
     VoiceConverterRouter,
@@ -118,3 +120,69 @@ async def test_rvc_unavailable_policy_passthrough_degrades(tmp_path: Path) -> No
     result = await router.convert(make_source(tmp_path), PROFILE_RVC, out)
     assert result.path == out  # degraded: source voice passes through un-converted
     assert spy.calls == []
+
+
+# ---------------------------------------------------------------------------
+# Review Round-6 §3/B: explicit closed/shutting-down state
+# ---------------------------------------------------------------------------
+
+
+async def test_convert_after_shutdown_raises_router_closed_and_does_not_restart(
+    tmp_path: Path,
+) -> None:
+    """After shutdown(), a stray late convert must be REFUSED with an explicit
+    error — never lazily restarting the RVC worker (review reproduction:
+    starts went 1 -> 2 after shutdown)."""
+    spy = SpyRvcConverter()
+    router = VoiceConverterRouter(rvc_factory=lambda: spy)
+    await router.startup()
+    assert spy.starts == 1
+    await router.shutdown()
+    assert spy.shutdowns == 1
+
+    with pytest.raises(RouterClosedError, match="shut down"):
+        await router.convert(make_source(tmp_path), PROFILE_RVC, tmp_path / "out.wav")
+    # Defense in depth held: no restart happened behind the caller's back.
+    assert spy.starts == 1
+
+
+async def test_deliberate_startup_cycle_after_shutdown_re_enables(tmp_path: Path) -> None:
+    """A deliberate new startup() cycle clears the closed state and serves
+    converts again."""
+    spy = SpyRvcConverter()
+    router = VoiceConverterRouter(rvc_factory=lambda: spy)
+    await router.startup()
+    await router.shutdown()
+    with pytest.raises(RouterClosedError):
+        await router.convert(make_source(tmp_path), PROFILE_RVC, tmp_path / "out.wav")
+
+    await router.startup()
+    assert router.rvc_available is True
+    out = tmp_path / "out.wav"
+    await router.convert(make_source(tmp_path), PROFILE_RVC, out)
+    assert len(spy.calls) == 1
+
+
+async def test_shutdown_marks_closed_before_worker_teardown(tmp_path: Path) -> None:
+    """The closed flag is set BEFORE the worker is torn down, so a convert
+    racing the shutdown already sees the closed router."""
+    events: list[str] = []
+    release = asyncio.Event()
+
+    class OrderedSpy(SpyRvcConverter):
+        async def shutdown(self) -> None:
+            await release.wait()  # hold the worker teardown until the test looks
+            events.append("worker-shutdown")
+
+    router = VoiceConverterRouter(rvc_factory=lambda: OrderedSpy())
+    await router.startup()
+    shutdown_task = asyncio.create_task(router.shutdown())
+    await asyncio.sleep(0)  # let shutdown enter (closed flag + worker teardown)
+    # The closed flag is already latched while the worker teardown is still
+    # parked behind `release` — a convert racing the shutdown sees it.
+    assert router._closed is True  # noqa: SLF001
+    with pytest.raises(RouterClosedError):
+        await router.convert(make_source(tmp_path), PROFILE_RVC, tmp_path / "race.wav")
+    release.set()
+    await shutdown_task
+    assert events == ["worker-shutdown"]

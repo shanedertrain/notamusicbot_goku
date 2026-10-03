@@ -49,6 +49,16 @@ class RvcUnavailableError(RuntimeError):
     """The RVC backend is requested but its worker is not available."""
 
 
+class RouterClosedError(RuntimeError):
+    """The router was shut down; conversion is refused, not lazily restarted.
+
+    Review Round-6 §3/B: after :meth:`shutdown`, a stray late ``convert``
+    (e.g. from a detached pipeline task that escaped the coordinator drain)
+    must NOT lazily restart the RVC worker. A deliberate new :meth:`startup`
+    cycle re-enables conversion.
+    """
+
+
 class VoiceConverterRouter:
     """Dispatch ``convert`` by profile backend; owns one persistent RVC adapter.
 
@@ -79,6 +89,10 @@ class VoiceConverterRouter:
         self._rvc: VoiceConverter | None = None
         self._rvc_available = False
         self._rvc_start_attempted = False
+        # Review Round-6 §3/B: explicit closed/shutting-down state. Once
+        # ``shutdown`` ran, ``convert`` raises RouterClosedError instead of
+        # lazily restarting RVC; a deliberate ``startup`` cycle clears it.
+        self._closed = False
         self._passthrough = PassthroughVoiceConverter()
 
     @staticmethod
@@ -106,9 +120,15 @@ class VoiceConverterRouter:
         A failure is logged and remembered (RVC marked unavailable) so a
         missing GPU or worker runtime degrades per policy instead of killing
         application startup.
+
+        Review Round-6 §3/B: this is the deliberate new startup cycle — it
+        clears the closed state from a previous ``shutdown`` so conversion is
+        served again.
         """
         if RVC_BACKEND not in self._enabled_backends:
             return
+        self._closed = False
+        self._rvc_start_attempted = False
         await self._ensure_rvc_started()
         logger.info("RVC voice converter startup complete (available=%s)", self._rvc_available)
 
@@ -130,7 +150,14 @@ class VoiceConverterRouter:
         self._rvc_available = True
 
     async def shutdown(self) -> None:
-        """Shut down the RVC worker if one was created (passthrough: no-op)."""
+        """Shut down the RVC worker if one was created (passthrough: no-op).
+
+        Review Round-6 §3/B: the closed state is entered BEFORE the worker is
+        torn down, so a ``convert`` arriving mid-shutdown already sees the
+        closed router. The closed state stays latched: late converts raise
+        :class:`RouterClosedError` instead of lazily restarting RVC.
+        """
+        self._closed = True
         rvc = self._rvc
         if rvc is None:
             return
@@ -138,7 +165,6 @@ class VoiceConverterRouter:
         if shutdown is not None:
             await shutdown()
         self._rvc_available = False
-        self._rvc_start_attempted = False
 
     # ----------------------------------------------------------------- convert
 
@@ -148,6 +174,14 @@ class VoiceConverterRouter:
         profile: VoiceConversionProfile,
         output_path: Path,
     ) -> AudioArtifact:
+        # Review Round-6 §3/B: after shutdown, refuse instead of lazily
+        # restarting the RVC worker behind the caller's back.
+        if self._closed:
+            msg = (
+                "voice-converter router is shut down; conversion is refused "
+                "until a deliberate new startup cycle"
+            )
+            raise RouterClosedError(msg)
         backend = profile.backend
         if backend not in KNOWN_BACKENDS:
             msg = (

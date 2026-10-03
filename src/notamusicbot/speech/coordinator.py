@@ -73,6 +73,10 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
 
+class CoordinatorClosedError(RuntimeError):
+    """A job was submitted to a coordinator that is closed (draining/drained)."""
+
+
 class InferenceCoordinator:
     """Serialize GPU inference with a semaphore plus a bounded admission queue."""
 
@@ -86,10 +90,18 @@ class InferenceCoordinator:
         # lease holder cannot be garbage-collected mid-flight.
         # Task[Any]: holders return the (ok, outcome) pair unpacked below.
         self._detached: set[asyncio.Task[Any]] = set()
+        # Detached holder task -> its ``started`` event (queued-vs-running
+        # discriminator used by :meth:`close`).
+        self._holder_started: dict[asyncio.Task[Any], asyncio.Event] = {}
+        # Review Round-6 §3/B: explicit inference shutdown lifecycle. Once
+        # closed, new submissions are rejected; ``close()`` cancels
+        # queued-not-started holders and awaits already-started ones.
+        self._closed = False
 
     @asynccontextmanager
     async def slot(self) -> AsyncIterator[None]:
         """Acquire permission to run one inference; may wait when saturated."""
+        self._check_open()
         await self._admission.acquire()
         self._waiting += 1
         try:
@@ -150,6 +162,7 @@ class InferenceCoordinator:
 
     async def _run_detached(self, invoke: Callable[[], Any], *, thread_shield: bool) -> Any:
         """Shared detached-holder machinery for run_blocking/run_detached."""
+        self._check_open()
         caller = asyncio.current_task()
         if caller is not None and caller in self._holders:
             msg = (
@@ -167,6 +180,7 @@ class InferenceCoordinator:
         )
         self._detached.add(holder)
         holder.add_done_callback(self._detached.discard)
+        self._holder_started[holder] = started
         try:
             # shield: caller cancellation must NOT blindly cancel the holder;
             # the holder alone owns the lease lifetime.
@@ -188,6 +202,7 @@ class InferenceCoordinator:
         finally:
             if holder.done():
                 self._detached.discard(holder)
+                self._holder_started.pop(holder, None)
         if not ok:
             raise outcome
         return outcome
@@ -201,7 +216,7 @@ class InferenceCoordinator:
     ) -> tuple[bool, Any]:
         """Hold the lease while the work runs to real completion.
 
-        Always returns ``(ok, outcome)`` — never raises — so a detached
+        Returns ``(ok, outcome)`` — never raises — so a detached
         (caller-cancelled) holder never produces unretrieved exceptions.
         ``started`` is set immediately after semaphore acquisition and
         BEFORE any work is invoked, giving the caller-cancellation handler a
@@ -231,6 +246,9 @@ class InferenceCoordinator:
             # ours is running anymore, so releasing the lease here is safe.
             ok, outcome = False, exc
         finally:
+            task = asyncio.current_task()
+            if task is not None:
+                self._holder_started.pop(task, None)
             self._waiting -= 1
             self._admission.release()
             finished.set()
@@ -260,6 +278,57 @@ class InferenceCoordinator:
     def pending(self) -> int:
         """Number of jobs currently admitted or waiting for admission."""
         return self._waiting
+
+    @property
+    def closed(self) -> bool:
+        """True once :meth:`close` was called (new submissions rejected)."""
+        return self._closed
+
+    def _check_open(self) -> None:
+        if self._closed:
+            msg = (
+                "inference coordinator is closed (application shutdown/drain); "
+                "new inference submissions are rejected"
+            )
+            raise CoordinatorClosedError(msg)
+
+    async def close(self) -> None:
+        """Inference shutdown (review Round-6 §3/B): drain before teardown.
+
+        Semantics, in order:
+
+        1. set the closed flag — every subsequent ``slot()`` /
+           ``run_blocking()`` / ``run_detached()`` raises
+           :class:`CoordinatorClosedError`, so no new work can be admitted;
+        2. cancel queued-not-started detached holders (holders still waiting
+           for the semaphore) so their work never executes later;
+        3. await already-started detached holders to real completion — a GPU
+           job that began keeps its lease until its coroutine/ thread finished
+           (same invariant as caller cancellation, Round-4 P0).
+
+        Returns only when no coordinator work is in flight, so an application
+        can safely tear down inference backends (e.g. the RVC worker)
+        afterwards without racing a late GPU job. Idempotent.
+        """
+        self._closed = True
+        pending: list[asyncio.Task[Any]] = []
+        for holder, started in list(self._holder_started.items()):
+            if holder.done():
+                continue
+            if not started.is_set():
+                # Queued-not-started: cancel so the work NEVER runs; the
+                # holder's unwind releases the admission count.
+                holder.cancel()
+            pending.append(holder)
+        if pending:
+            # _hold_and_run never raises; return_exceptions guards any
+            # unexpected machinery error so drain itself always completes.
+            await asyncio.gather(*pending, return_exceptions=True)
+
+    # Alias: the review's recommended ``drain()`` name for the same semantics.
+    async def drain(self) -> None:
+        """Alias for :meth:`close` (review Round-6 §3/B naming)."""
+        await self.close()
 
     async def __aenter__(self) -> Any:
         return self
