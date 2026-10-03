@@ -1,56 +1,74 @@
-# Test Results — notamusicbot rework (Round-4 re-review return)
+# Test Results — notamusicbot rework (Round-5 re-review return)
 
 Semantics: every result is PASS / FAIL / SKIPPED / NOT_RUN. Nothing
 unavailable was converted into a pass. Counts are coordinator-verified for
-the Round-4 return (after the Round-3 review return at `02d1d97`; Round-4
-commits `f804284` → `9d370fe`, re-run 2026-10-02).
+the Round-5 return (after the Round-4 review return; Round-5 commits
+`6e011bf` → `a1dd397`, re-run 2026-10-03).
 
-## Current round
+## Current round (Round-5)
 
 | Check | Command / environment | Result | Count |
 |---|---|---|---|
-| Unit tests (main venv) | `.venv-main/bin/python -m pytest tests/unit` | **PASS** | **239 passed, 0 failed, 0 skipped** (re-run and verified this session). One transient wall-clock flake was observed in `test_coordinator` (perf_counter aliasing) and eliminated: the test now asserts the mutual-exclusion invariant with a logical concurrency counter (`25b0ac7`); 4+ consecutive clean runs after the fix. |
-| Lint | `.venv-main/bin/ruff check src tests` | **PASS** | clean |
-| Format | `.venv-main/bin/ruff format --check src tests` | **PASS** | clean |
-| RVC variant preservation (new, Gate R3 proof) | `tests/unit/test_rvc_variant.py` | **PASS** | 9 tests — fixture dir with `obama.yaml`/`obama_trans.yaml` (different parameters); obama profile → exact standard config values, obama_trans → exact trans config values; cache key `(resolved_dir, variant)` distinct; loud error on a missing variant |
-| User migration asserts config identity (extended) | `tests/unit/test_user_migration.py` | **PASS** | all 30 migrated users carry the correct `variant`; asserts actual configuration identity, not just profile strings |
-| RVC worker variant switching (real, Gate R4 proof) | `tests/integration/test_rvc_switching.py` (real Obama worker) | **PASS** | obama → tts_type `pyht:Joseph` vs obama_trans → `gtts` observed at conversion; `config_switched: true` **in-process — zero worker restarts on a variant switch** |
-| Playback outcome matrix (Gate R6 proof) | `tests/unit/test_player.py` (deterministic fakes) | **PASS** | NATURAL → hook **1**; SKIPPED / STOPPED / FAILED / LOCAL-generated → hook **0**; interrupt reason recorded before `voice_client.stop()`; after-callback error → FAILED; dequeue without voice client → DROPPED |
-| Crash-orphan cleanup (Gate R5 proof) | `tests/unit/test_job_artifacts.py` | **PASS** | full cleanup removes file + empty job dir on success; `.temporary` marker written per job; simulated crash/restart: `prune_expired_jobs` removes the stale successful artifact after the retention threshold; cancelled job → deterministic state |
-| GPU arbitration (new, Gate R8 proof, real run) | `tests/integration/test_gpu_arbitration.py` (RTX 4070 Ti SUPER) | **PASS** | 3 iterations; concurrent LLM task + TTS→RVC asyncio task with all three models resident; timeline **fully serialized — zero overlap**; every stage starts exactly when the previous ends (`perf_counter` timestamps asserted mutual exclusion) |
-| Coordinator mutual exclusion (unit) | `tests/unit/test_coordinator.py` | **PASS** | 3 tests — same slot never held concurrently (perf_counter-timestamp proof) |
-| Interstitial guild scoping (new) | `tests/unit/test_interstitials_guild_scoping.py` | **PASS** | 4 tests — cooldown state keyed by guild id; guild A's fire does not suppress guild B |
-| Setup RVC asset validation (new, Gate R7 proof) | `tests/unit/test_setup_rvc_assets.py` (extracted bash validation against temp fixtures) | **PASS** | 5 tests — missing model dir / variant yaml / `.pth` / `.index` each fail non-zero; case-insensitive model dir accepted (caught the real `GOKU`/`Goku` mismatch) |
-| Silent-worker startup timeout (Gate R5/R7) | fake worker alive + silent → adapter startup fails inside configured timeout | **PASS** | `select`-based deadline read (`_wait_for_ready`) replaced the blocking `readline()` |
-| Podcast `reply_turns` consistency | unit podcast tests | **PASS** | `turns`→`reply_turns` rename consistent (code/config/docs): host opening + N replies |
-| RVC integration (Goku, RTX 4070 Ti SUPER) | `pytest tests/integration -m "rvc and integration"` | **PASS** | 2 passed |
-| RVC switching benchmark (carried) | `notamusicbot.tools.benchmark_rvc_switching` | **PASS (documented)** | cross-MODEL Obama↔Goku: avg **5.51 s per switch** vs 0.57 s warm same-model; **variant switches within a model are cheap in-process config hot-swaps** |
-| GPU residency (carried, real run) | RTX 4070 Ti SUPER 16 GB: LLM 4B + TTS 0.6B + RVC all resident | **PASS** | idle 11,262 / 16,375 MiB; peaks ≤ 9,857 MiB; **no OOM** |
-| Clean install (carried, Gate R7) | fresh clone + `scripts/setup.sh` built the legacy RVC venv from scratch | **PASS** | Round-4 adds per-profile `validate_rvc_assets` (non-zero exit on missing assets) |
+| Unit tests (main venv) | `.venv-main/bin/python -m pytest tests/unit` | **PASS** | **253 passed, 0 failed, 0 skipped, NO deselects** (re-run and verified this session, 141 s). Grew 239 → 253 with the cancellation-safety, arbitration-exclusivity, startup-ordering, uploader-parity and concurrent-RVC tests. No test was removed. |
+| mypy (NEW gate) | `.venv-main/bin/python -m mypy src/notamusicbot` | **PASS** | **0 errors in 48 files** (was 52 before `a1dd397`). `check_untyped_defs` kept; targeted overrides only for untyped third-party stubs (`yaml`, `yt_dlp`, `yt_dlp_ejs`, `spotipy`, `soundfile`, `soxr`, `qwen_tts`); exactly ONE targeted `arg-type` ignore with a written justification. No behavior changes in the type commit. |
+| Cancellation-safe GPU lease — cancelled LLM holder (review §12 A) | unit, fake blocking thread | **PASS** | job A enters coordinator and starts its blocking thread → A's caller is cancelled → job B must NOT enter until A's thread really ends. Holds for `InferenceCoordinator.run_blocking` (detached holder acquires the semaphore BEFORE submitting to the executor and releases it only on real thread-future completion). |
+| Cancellation-safe GPU lease — cancelled TTS holder (review §12 A) | unit, fake blocking model call through `QwenCustomVoiceSynthesizer`/pipeline | **PASS** | same invariant through `SpeechPipeline.run` → `run_detached` (same lease semantics for the pipeline's async chain; lease held across TTS→VC→postprocess). |
+| Cancellation-safe GPU lease — cancelled RVC (review §12 A) | unit, fake sleeping worker | **PASS** | cancelling the caller during RVC conversion retains the lease until the subprocess reply actually completes; orphaned request ids are recorded and late replies are discarded (Option B semantics — lease owned by the coordinator, released only on real completion). |
+| Stop during generated content (review §12 B) | unit, in-flight post-song generation + `stop()` + new inference request | **PASS** | the arbitration probe enters only after the detached work finishes; `max_active == 1`; queue not repopulated after stop; no GPU overlap. |
+| Startup load→warmup ordering (review §12 C) | unit, `warmup_on_start: true` | **PASS** | strict ordering asserted: LLM model load completes before TTS warmup can acquire GPU ownership. `bot.py setup_hook` no longer redundantly loads the content model — `app.startup()` loads the LLM **before** RVC start/warmup. |
+| YouTube uploader parity (review §12 D) | unit, fake yt-dlp result `title: Song, uploader: Artist` | **PASS** | `PlayableMedia.artist` flows resolver → queue → `ContentRequest.artist_name`; song commentary receives `song_name == Song`, `artist_name == Artist`. |
+| Concurrent RVC protocol requests (review §12 E) | unit, two adapter requests against a fake worker | **PASS** | full write→matching-reply transaction serialized at the adapter; both replies reach the correct caller with no id loss/mismatch. |
+| Setup parses explicit `voice_conversion.variant` (review §9 follow-through) | unit, `president_alt.yaml` fixture with `variant: obama_trans` | **PASS** | setup validates `obama_trans.yaml`, not `president_alt.yaml`; proves `obama_trans.yaml` is validated even when profile filename and variant differ. Stale `max_concurrent_generations` removed from config. |
+| GPU arbitration (real run, exclusivity on sampled lease-busy intervals) | `tests/integration/test_gpu_arbitration.py`, RTX 4070 Ti SUPER, torch 2.14.1+cu130, driver 617.14, run alone | **PASS** | 3 iterations, serialized; exclusivity now asserted on **sampled lease-busy intervals** (stronger than wall-clock timestamp edges); raw timeline committed as `evidence/gpu_arbitration.json` (timestamp, commit, GPU, driver, torch, timeline, result). |
+| GPU residency (real run) | three models resident, RTX 4070 Ti SUPER, run alone | **PASS** | peak **9,854 MiB**; **no OOM**; raw artifact committed as `evidence/gpu_residency.json`. |
+| RVC variant switching (real run, 2 tests) | real worker, run alone | **PASS** | 4 switches; cross-model switch avg **6.23 s** vs **0.82 s** warm same-model; variant switches stay in-process hot-swaps; raw artifact committed as `evidence/rvc_variant_switching.json`. |
+| Stripped environment (no discord / no qwen_tts, CPU) | Round-4 round independent run | **PASS** | **244 passed, 2 skipped** — both skips are justified `discord` `importorskip`s (Discord command layer tests). Not re-run this session (environment identical; unit delta 239→253 is fully covered by the main-venv run above). |
 
-## Round-3 review required tests (section 14) — satisfaction map
+## Round-4 review required tests (review §12, items A–F) — satisfaction map
 
-| Required test (review §14) | Satisfied by | Result |
+| Required test (Round-4 review) | Satisfied by | Result |
 |---|---|---|
-| RVC variant preservation: fixture `Obama/obama.yaml` + `obama_trans.yaml` with different values; exact config reaches conversion | `test_rvc_variant.py` (`9d370fe`) + extended `test_user_migration.py` | **PASS** |
-| Playback outcome: NATURAL→hook 1; SKIPPED/STOPPED/FAILED/LOCAL→hook 0 | outcome-matrix tests in `test_player.py` (`f804284`) | **PASS** |
-| Unit-suite isolation: CPU-only, no discord/qwen_tts/CUDA → `pytest tests/unit` passes with only justified skips | `importorskip("discord")` + `FakeSynthesizer` injection (`9d370fe`); result: **239 passed / 0 skipped** | **PASS** |
-| GPU arbitration: LLM generation and speech generation observed not to overlap (shared coordinator) | shared `InferenceCoordinator` (`9d370fe`) + `test_gpu_arbitration.py` real run, 3 iterations, zero overlap | **PASS** |
-| Crash-orphan cleanup: stale successful temporary artifact → removed by retention after simulated restart | `test_job_artifacts.py` (`f804284`) | **PASS** |
-| RVC worker startup timeout: worker alive + silent → startup fails inside configured timeout | `_wait_for_ready` select-deadline test (`9d370fe`) | **PASS** |
+| A. Cancellation-safe GPU lease (LLM / TTS / RVC): cancelled holder keeps the lease until blocking work really ends | `run_blocking` + `run_detached` (`6e011bf`); A-LLM / A-TTS / A-RVC tests | **PASS** |
+| B. Stop during generated content: no GPU overlap, no post-stop queue repopulation | probe test: enters only after detached work finishes; `max_active == 1` | **PASS** |
+| C. Startup warmup/load ordering: `warmup_on_start=true` must not overlap LLM load | strict ordering test; `app.startup()` loads LLM before RVC/warmup (`55b7e16` dropped the redundant load) | **PASS** |
+| D. YouTube uploader parity: `song_name == Song`, `artist_name == Artist` | `PlayableMedia.artist` end-to-end (`55b7e16`) | **PASS** |
+| E. Concurrent RVC protocol requests: no reply loss/mismatch | adapter-level transaction serialization + fake-worker test | **PASS** |
+| F. Static type checking: `mypy src/notamusicbot`, exact result recorded | `a1dd397`: **0 errors in 48 files** | **PASS** |
 
-## Gate records (Round-4 disposition of every Round-3 gate)
+## Gate records (Round-5 disposition of every Round-4 gate)
 
 | Gate | Result | Evidence |
 |---|---|---|
-| R1 package security | **PASS** | credentials clean; explicit `.env.example`-only rule; benchmark/evidence CSV/JSON allowlisted (`9d370fe`) |
-| R2 production speech routing | **PASS** | router architecture + typed playback-outcome lifecycle (`f804284`) |
-| R3 migrated voices | **PASS** (Round-3 FAIL closed) | variant identity preserved end-to-end; migration asserts real config values (`9d370fe`) |
-| R4 RVC persistence | **PASS** | same-model case-alias fix + variant switching in-process with `config_switched`, zero restarts; cross-model cost 5.51 s documented |
-| R5 media lifecycle | **PASS** | full file+dir cleanup, `.temporary` crash-orphan markers + retention, `CancelledError` deterministic, silent-worker hard startup timeout |
-| R6 content preservation | **PASS** | hook fires only on STREAM + NATURAL (outcome matrix PASS); ordering guarantees unchanged |
-| R7 clean install | **PASS** | from-scratch legacy venv holds; per-profile asset validation fails non-zero on missing assets |
-| R8 benchmark | **PASS** | shared GPU arbitration proven non-overlapping on real GPU (3 iterations, all models resident); raw evidence now packaged |
+| R1 package security | **PASS** | allowlist + secret scan unchanged; `.env.example`-only rule holds |
+| R2 production speech routing | **PASS** | unchanged; new tests do not alter routing |
+| R3 migrated voices | **PASS** | variant identity end-to-end; `president_alt.yaml` fixture proves the explicit variant field is validated |
+| R4 RVC persistence | **PASS** | variant hot-swap in-process; cross-model 6.23 s vs warm 0.82 s documented; `evidence/rvc_variant_switching.json` |
+| R5 media lifecycle | **PASS** | outcome/cleanup fixes hold; pipeline cancellation keeps the lease and discards orphaned RVC replies |
+| R6 content preservation | **PASS** | STREAM+NATURAL-only hook holds; YouTube uploader metadata restored (`55b7e16`) |
+| R7 clean install | **PASS** | setup parses explicit `voice_conversion.variant`; asset validation unchanged |
+| R8 GPU safety | **PASS** (Round-4 FAIL/PARTIAL closed) | cancellation-safe lease (`6e011bf`); exclusivity on sampled lease-busy intervals (`80e6146`); raw evidence committed (`43a39ef`): `evidence/gpu_arbitration.json`, `evidence/gpu_residency.json`, `evidence/rvc_variant_switching.json` |
+
+## Previous round (Round-4 return, kept for traceability)
+
+Results carried from the Round-4 return (`f804284` → `9d370fe`,
+2026-10-02); none regressed:
+
+| Check | Result | Count |
+|---|---|---|
+| Unit tests (main venv) | **PASS** | 239 passed, 0 failed, 0 skipped (coordinator determinism fix `25b0ac7`) |
+| Lint (`ruff check`) / Format (`ruff format --check`) | **PASS** | clean |
+| RVC variant preservation (`test_rvc_variant.py`) | **PASS** | 9 tests |
+| User migration asserts config identity | **PASS** | 30 users carry correct `variant` |
+| Playback outcome matrix (`test_player.py`) | **PASS** | NATURAL→1; SKIPPED/STOPPED/FAILED/LOCAL→0 |
+| Crash-orphan cleanup (`test_job_artifacts.py`) | **PASS** | `.temporary` markers + retention prune |
+| Coordinator mutual exclusion (`test_coordinator.py`) | **PASS** | 3 tests |
+| Interstitial guild scoping | **PASS** | 4 tests |
+| Setup RVC asset validation (`test_setup_rvc_assets.py`) | **PASS** | 5 tests (caught real `GOKU`/`Goku` mismatch) |
+| Silent-worker startup timeout | **PASS** | select-based deadline read |
+| Podcast `reply_turns` consistency | **PASS** | code/config/docs consistent |
+| RVC integration (Goku, real GPU) | **PASS** | 2 passed |
+| GPU residency (Round-3 real run) | **PASS** | idle 11,262 / 16,375 MiB; peaks ≤ 9,857 MiB; no OOM |
+| Clean install (fresh clone + `setup.sh`) | **PASS** | legacy venv built from scratch |
 
 ## Carried-over checks
 
@@ -61,13 +79,19 @@ commits `f804284` → `9d370fe`, re-run 2026-10-02).
 
 ## Notes
 
-- The unit suite grew 204 → 239 with the Round-4 tests (RVC variant, worker
-  coordinator, guild-scoped interstitials, setup asset validation, playback
-  outcome matrix, crash-orphan artifacts, migration variant assertions). No
-  test was removed; the suite now runs with **zero skips**.
-- Gate R7 asset validation caught a real defect: the model directory case
-  (`GOKU` vs `Goku`) mismatched between config and disk.
-- Cross-MODEL RVC switch cost (5.51 s, worker restart + load) remains
-  documented future work (persistent per-model worker cache); variant
-  switches within a model are in-process config hot-swaps.
+- The unit suite grew 239 → 253 with the Round-5 tests (cancellation-safe
+  lease A-LLM/A-TTS/A-RVC, stop-during-post-song, startup load→warmup
+  ordering, YouTube uploader parity, concurrent RVC requests, arbitration
+  interval sampling). No test was removed; **no deselects** are used.
+- Design note: `run_blocking` is the stronger thread-level shield and is
+  used for LLM generation and app warmup. `run_detached` provides the same
+  lease semantics for the pipeline's async chain (TTS→VC→postprocess,
+  including the RVC subprocess reply wait). The whole-chain-in-thread
+  variant deadlocked the cancelled-job artifact test and was abandoned — a
+  documented deviation; the implementation still satisfies Option B
+  semantics: the lease is owned by the coordinator and released only on
+  real completion. RVC cancellation retains the lease until the subprocess
+  reply; orphaned request ids are recorded and late replies discarded.
+- Raw real-GPU evidence is committed under `evidence/` and packaged by
+  `scripts/package.sh`.
 - Benchmarks are reported separately in `BENCHMARK_RESULTS.md`.
