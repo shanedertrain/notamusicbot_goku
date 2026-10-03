@@ -1,0 +1,47 @@
+{
+  "timestamp": "2026-10-03T12:15:13+00:00",
+  "commit": "3615911b61d820f75f61dd9420954bb47181424c",
+  "gpu": "NVIDIA GeForce RTX 4070 Ti SUPER",
+  "driver": "617.14",
+  "torch": "2.14.1+cu130",
+  "cuda_available": "True",
+  "test": "TestAlternatingRvcProfiles",
+  "scenarios": [
+    {
+      "scenario": "alternating",
+      "rows": [
+        {
+          "turn": 0,
+          "model": "Goku",
+          "switch": true,
+          "seconds": 8.006
+        },
+        {
+          "turn": 0,
+          "model": "Obama",
+          "switch": true,
+          "seconds": 7.058
+        },
+        {
+          "turn": 1,
+          "model": "Goku",
+          "switch": true,
+          "seconds": 4.985
+        },
+        {
+          "turn": 1,
+          "model": "Obama",
+          "switch": true,
+          "seconds": 5.124
+        }
+      ],
+      "stats": {
+        "switches": 4,
+        "switch_avg_s": 6.293,
+        "warm_converts": 0,
+        "warm_avg_s": 0.0
+      }
+    }
+  ],
+  "pass": true
+}

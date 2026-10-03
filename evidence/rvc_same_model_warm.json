@@ -1,6 +1,6 @@
 {
-  "timestamp": "2026-10-03T05:44:46+00:00",
-  "commit": "80e6146d1d653e39d4340cc5f581ff81ec9d4504",
+  "timestamp": "2026-10-03T12:15:22+00:00",
+  "commit": "3615911b61d820f75f61dd9420954bb47181424c",
   "gpu": "NVIDIA GeForce RTX 4070 Ti SUPER",
   "driver": "617.14",
   "torch": "2.14.1+cu130",
@@ -14,20 +14,20 @@
           "turn": 0,
           "model": "Goku",
           "switch": true,
-          "seconds": 5.745
+          "seconds": 5.773
         },
         {
           "turn": 0,
           "model": "Goku",
           "switch": false,
-          "seconds": 0.82
+          "seconds": 0.624
         }
       ],
       "stats": {
         "switches": 1,
-        "switch_avg_s": 5.745,
+        "switch_avg_s": 5.773,
         "warm_converts": 1,
-        "warm_avg_s": 0.82
+        "warm_avg_s": 0.624
       }
     }
   ],
