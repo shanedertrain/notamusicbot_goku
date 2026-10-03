@@ -80,13 +80,31 @@ Errors carry `"error"` (message) and usually `"traceback"` (trimmed).
 ### `load-model`
 ```json
 → {"id":2,"action":"load-model","name":"Goku"}
-← {"id":2,"status":"ok","model":"Goku","device":"cuda:0","target_sample_rate":40000,
+← {"id":2,"status":"ok","model":"Goku","variant":"goku","config_yaml":"goku.yaml",
+   "config_switched":false,"device":"cuda:0","target_sample_rate":40000,
    "version":"v1","index_rate":0.4,"f0_method":"harvest","default_f0_pitch":0}
 ```
-Loads HuBERT + the target model **persistently** (one model per worker; to
-switch voices, start another worker). Model names are validated against the
-`rvc_cli/models/` directory (no path traversal). Timeout:
+Loads HuBERT + the target model **persistently** (one weight set per worker;
+to switch model directories, start another worker). Model names are validated
+against the `rvc_cli/models/` directory (no path traversal). Timeout:
 `RVC_WORKER_LOAD_TIMEOUT` (default 300 s).
+
+**Variant selection.** A model directory may contain several YAML configs
+(`rvc_cli/models/Obama/` ships `obama.yaml` and `obama_trans.yaml`, sharing
+`obama.pth` + `obama.index`). The optional `"variant"` field selects the EXACT
+`<variant>.yaml` in the directory (matched case-insensitively against the yaml
+stems); a missing variant yaml is a loud `status: "error"` — the worker never
+falls back to "first config found". When `"variant"` is omitted the default is
+the yaml whose stem matches the directory name (`Obama` → `obama.yaml`), or
+the single yaml if the directory has exactly one; a multi-yaml directory
+satisfying neither rule errors and asks for an explicit variant.
+
+**In-process variant switching.** `config_switched: true` in the reply means
+the requested yaml points at the already-resident weights (same `.pth`): the
+worker only swapped the YAML-derived conversion config (`vc_args`), keeping
+the loaded `VoiceConverter` — no weight reload, no process restart. The
+adapter therefore treats `(model directory, variant)` as its cache identity
+and switches variants without restarting the worker.
 
 ### `convert`
 ```json

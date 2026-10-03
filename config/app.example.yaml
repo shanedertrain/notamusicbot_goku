@@ -73,7 +73,7 @@ interstitial:
 podcast:
   enabled: false
   host_profile: obama                  # voice profile id of the host persona
-  turns: 2                             # dialogue lines per finished song
+  reply_turns: 2                       # guest/host replies after the host opening (total lines = reply_turns + 1)
 
 discord:
   command_prefix: "!g"

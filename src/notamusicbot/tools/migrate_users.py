@@ -120,9 +120,18 @@ def migrate_users_to_profiles(
         # the OBAMA_TRANS case: the obama_trans profile shares the Obama
         # weights (models/Obama/obama.pth), so the sharing is recorded instead
         # of being silently conflated.
-        vc_model = getattr(profiles[profile_id].voice_conversion, "model", None)
+        vc = profiles[profile_id].voice_conversion
+        vc_model = getattr(vc, "model", None)
         if vc_model and str(vc_model).lower() != profile_id.lower():
             entry["voice_profile_source"] = "legacy_alias"
+        # Preserve the YAML config variant (round-3 P0): a legacy name that
+        # resolved to a profile pointing at a NON-default yaml of its model
+        # directory (OBAMA_TRANS -> obama_trans.yaml in models/Obama/) must
+        # carry the variant, otherwise the worker would load whichever yaml
+        # it happens to find first.
+        vc_variant = getattr(vc, "variant", None)
+        if vc_variant:
+            entry["variant"] = vc_variant
         entries[user_id] = entry
 
     payload = {"users": {uid: entries[uid] for uid in sorted(entries)}}

@@ -165,7 +165,7 @@ class Worker:
 
     # -- model loading ----------------------------------------------------
 
-    def load_model(self, name: str) -> Dict[str, Any]:
+    def load_model(self, name: str, variant: Optional[str] = None) -> Dict[str, Any]:
         _ensure_ffmpeg_python_shim()
 
         # torch 2.5.0+cu121 on this GPU raises "cuDNN Frontend error: No
@@ -187,10 +187,36 @@ class Worker:
         found = rvc_models.get_models_from_directory(model_dir)
         if not found:
             raise ValueError(f"model directory {model_dir} has no complete model (pth/index/yaml)")
-        # get_models_from_directory returns one entry per yaml; use the first
-        # (alphabetical via iterdir is not guaranteed, but every shipped model
-        # directory has exactly one yaml).
-        model = found[0]
+        # get_models_from_directory returns one entry per yaml; select the
+        # EXACT requested variant (yaml stem) — never found[0]. When no
+        # variant is given, default to the yaml matching the directory name,
+        # falling back to the single yaml if the directory has exactly one.
+        model = self._select_variant(found, variant, model_dir)
+
+        # In-process variant switch: if the weights (pth) of the requested
+        # model are already resident in this worker, only the YAML-derived
+        # configuration needs to change — no VoiceConverter re-init, no
+        # weight reload, no process restart.
+        if (
+            self._vc is not None
+            and self._model is not None
+            and Path(self._model.pth_filepath) == Path(model.pth_filepath)
+        ):
+            self._model = model
+            self._vc_args = model.vc_args
+            return {
+                "model": name,
+                "variant": model.model_name,
+                "config_yaml": model.model_name + ".yaml",
+                "config_switched": True,
+                "device": str(getattr(self._vc.config, "device", "unknown")),
+                "target_sample_rate": int(self._vc.tgt_sr),
+                "version": str(getattr(self._vc, "version", "")),
+                "tts_type": str(model.tts_type),
+                "index_rate": float(model.vc_args.index_rate),
+                "f0_method": str(model.vc_args.f0_method),
+                "default_f0_pitch": int(model.vc_args.f0_pitch),
+            }
 
         with _timeout(LOAD_TIMEOUT_SECONDS):
             vc = rvc_vc.VoiceConverter(
@@ -205,13 +231,46 @@ class Worker:
 
         return {
             "model": name,
+            "variant": model.model_name,
+            "config_yaml": model.model_name + ".yaml",
+            "config_switched": False,
             "device": str(getattr(vc.config, "device", "unknown")),
             "target_sample_rate": int(vc.tgt_sr),
             "version": str(getattr(vc, "version", "")),
+            "tts_type": str(model.tts_type),
             "index_rate": float(model.vc_args.index_rate),
             "f0_method": str(model.vc_args.f0_method),
             "default_f0_pitch": int(model.vc_args.f0_pitch),
         }
+
+    @staticmethod
+    def _select_variant(found: list, variant: str | None, model_dir: Path):
+        """Pick the Model whose yaml stem matches ``variant`` exactly.
+
+        Errors loudly when the requested variant yaml does not exist in the
+        model directory — silently falling back to ``found[0]`` is exactly
+        the round-3 P0 defect this replaces.
+        """
+        by_stem = {m.model_name: m for m in found}
+        if variant:
+            for stem, model in by_stem.items():
+                if stem.lower() == variant.strip().lower():
+                    return model
+            raise ValueError(
+                f"variant {variant!r} not found in {model_dir}: "
+                f"available yaml configs: {sorted(by_stem)}"
+            )
+        # Default selection: the yaml matching the directory's name
+        # ("Obama" -> obama.yaml) when present, else the single yaml.
+        for stem, model in by_stem.items():
+            if stem.lower() == model_dir.name.lower():
+                return model
+        if len(by_stem) == 1:
+            return next(iter(by_stem.values()))
+        raise ValueError(
+            f"model directory {model_dir} has multiple yaml configs "
+            f"({sorted(by_stem)}); specify a variant explicitly"
+        )
 
     def health(self) -> Dict[str, Any]:
         import torch
@@ -277,7 +336,10 @@ class Worker:
             "output_wav_path": str(output_path),
             "elapsed_seconds": round(elapsed, 3),
             "model": self._model.model_name,
-            "pitch_shift": int(pitch_shift) if pitch_shift is not None else int(self._vc_args.f0_pitch),
+            "variant": self._model.model_name,
+            "pitch_shift": (
+                int(pitch_shift) if pitch_shift is not None else int(self._vc_args.f0_pitch)
+            ),
         }
 
     @staticmethod
@@ -309,8 +371,17 @@ def _handle(worker: Worker, request: Dict[str, Any]) -> None:
         if not isinstance(name, str) or "/" in name or "\\" in name or name in ("", ".", ".."):
             _fail(request_id, f"invalid model name: {name!r}")
             return
+        variant = request.get("variant")
+        if variant is not None and (
+            not isinstance(variant, str)
+            or "/" in variant
+            or "\\" in variant
+            or variant in ("", ".", "..")
+        ):
+            _fail(request_id, f"invalid variant: {variant!r}")
+            return
         try:
-            info = worker.load_model(name)
+            info = worker.load_model(name, variant)
         except Exception as exc:  # noqa: BLE001 - report across IPC
             _fail(request_id, f"load-model failed: {exc}", traceback=traceback.format_exc(limit=8))
             return

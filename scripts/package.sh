@@ -27,6 +27,23 @@ ALLOW_ARGS+=(
 # the secret-scan below is the real gate).
 ALLOW_ARGS+=(legacy_flat)
 
+# Review Round-3 P2: raw benchmark/evidence data backing the review claims.
+# Included explicitly (never a blanket pattern): results CSVs, metadata JSON
+# and evidence JSON/CSV. Audio WAVs and model weights stay excluded.
+EVIDENCE_FILES=()
+while IFS= read -r f; do EVIDENCE_FILES+=("$f"); done < <(
+  find benchmark evidence -type f \
+    \( -name 'results.csv' -o -name 'metadata.json' \
+       -o -path 'evidence/*' -name '*.json' -o -path 'evidence/*' -name '*.csv' \) \
+    2>/dev/null | sort
+)
+if [ "${#EVIDENCE_FILES[@]}" -gt 0 ]; then
+  echo "==> including raw evidence: ${#EVIDENCE_FILES[@]} file(s)"
+  ALLOW_ARGS+=("${EVIDENCE_FILES[@]}")
+else
+  echo "==> no raw evidence files found (benchmark/, evidence/) — skipping"
+fi
+
 # --- secret gate -----------------------------------------------------------
 echo "==> secret scan (patterns over allowlisted files only)"
 if grep -rInE \
@@ -46,8 +63,19 @@ echo "==> packaged: $OUT"
 unzip -l "$OUT" | tail -2
 
 # --- verification: no .env-like files inside -------------------------------
-if unzip -l "$OUT" | grep -qE "\.env$|\.env\.[^e]"; then
-  echo "PACKAGING FAILED: .env-like file inside package." >&2
+# Review Round-3 P2: explicit logic, no character-class tricks — exactly one
+# file named ".env.example" is allowed; EVERY other ".env*" path is rejected.
+env_bad=0
+while IFS= read -r entry; do
+  base="$(basename "$entry")"
+  if [ "$base" = ".env.example" ]; then
+    continue
+  fi
+  case "$base" in
+    .env*) echo "PACKAGING FAILED: .env-like file inside package: $entry" >&2; env_bad=1 ;;
+  esac
+done < <(unzip -Z1 "$OUT" | grep -E '(^|/)\.env' )
+if [ "$env_bad" -ne 0 ]; then
   exit 1
 fi
 echo "package verified: no credential-bearing files"

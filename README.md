@@ -172,7 +172,7 @@ failure mid-segment aborts just that segment and playback continues.
 podcast:
   enabled: false       # opt-in; default false
   host_profile: obama
-  turns: 2
+  reply_turns: 2       # replies after the host opening (total spoken lines = reply_turns + 1)
 ```
 
 Note: alternating voice profiles (e.g. Obama↔Goku) currently restart the

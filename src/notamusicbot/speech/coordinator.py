@@ -1,9 +1,17 @@
-"""Bounded inference coordinator.
+"""Bounded inference coordinator (shared GPU arbitration — review Round-3 P1).
 
 Async requests enter through :meth:`InferenceCoordinator.slot`, which caps how
 many jobs can touch the GPU concurrently (default: one). Queue wait is part of
 job metrics, and a bounded ``asyncio.Queue``-shaped semaphore prevents
 unbounded task buildup.
+
+Review Round-3 P1: one *shared* coordinator arbitrates ALL main-process GPU
+inference — the local content LLM (:mod:`notamusicbot.content.llm`) and the
+speech pipeline (TTS -> VC -> postprocess). The speech pipeline holds the
+shared slot through the voice-conversion stage, so the RVC worker subprocess
+can never overlap main-process LLM/TTS inference on the same GPU. (The RVC
+worker itself runs out of process — no in-process lock can cover it — which is
+exactly why the pipeline must keep the slot for the whole VC round-trip.)
 """
 
 from __future__ import annotations
@@ -50,3 +58,20 @@ class InferenceCoordinator:
 
     async def __aexit__(self, *exc_info: object) -> None:
         return None
+
+
+_shared_coordinator: InferenceCoordinator | None = None
+
+
+def shared_gpu_coordinator() -> InferenceCoordinator:
+    """Return the process-wide shared GPU arbitration coordinator.
+
+    The local content LLM provider falls back to this when it is not handed an
+    explicit coordinator, guaranteeing that LLM generation and speech-pipeline
+    inference (TTS/RVC) are serialized against each other even when the two
+    components are composed independently (e.g. CLI tools and benchmarks).
+    """
+    global _shared_coordinator
+    if _shared_coordinator is None:
+        _shared_coordinator = InferenceCoordinator()
+    return _shared_coordinator

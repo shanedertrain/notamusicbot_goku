@@ -16,7 +16,7 @@ from typing import Any
 
 from notamusicbot.domain.media import PlayableMedia
 from notamusicbot.media.youtube import default_ydl_factory
-from notamusicbot.speech.artifacts import discard_temp_speech_artifact, is_temp_speech_artifact
+from notamusicbot.speech.artifacts import cleanup_temp_artifact, is_temp_speech_artifact
 
 logger = logging.getLogger(__name__)
 
@@ -123,5 +123,5 @@ def cleanup_media(media: PlayableMedia) -> None:
         cleanup_file(media.source_path)
         return
     if is_temp_speech_artifact(media.source_path):
-        discard_temp_speech_artifact(media.source_path)
-        cleanup_file(media.source_path)
+        # Full cleanup: registry discard + file + now-empty job directory.
+        cleanup_temp_artifact(media.source_path)

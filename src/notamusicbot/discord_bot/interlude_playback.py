@@ -94,7 +94,7 @@ async def fire_post_song_content(host: Any, guild_id: int) -> bool:
                 logger.info("Podcast segment generated but no audio enqueued in guild %s", guild_id)
             return enqueued
 
-        if not host.interstitials.should_fire():
+        if not host.interstitials.should_fire(guild_id=guild_id):
             return False
         topic = await host.interstitials.topic_source.pick()
         if topic is None:

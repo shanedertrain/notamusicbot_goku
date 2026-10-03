@@ -47,9 +47,14 @@ class PodcastEngine:
         host_profile: Any,
         guest_profile: Any,
         *,
-        turns: int = 2,
+        reply_turns: int = 2,
     ) -> list[PodcastTurn]:
-        """Generate ``turns`` lines alternating host/guest, host first.
+        """Generate a host opening plus ``reply_turns`` alternating replies.
+
+        Review Round-3 P2: ``reply_turns`` counts only the replies AFTER the
+        host opening, so the segment contains ``reply_turns + 1`` spoken lines
+        in total (this used to be documented misleadingly as ``turns``
+        "dialogue lines" while producing turns+1 lines).
 
         ``topic`` is a :class:`~notamusicbot.content.interstitials.TopicItem`;
         profiles are voice profiles exposing ``id``,
@@ -71,7 +76,7 @@ class PodcastEngine:
             )
             script.append(PodcastTurn(host_profile.id, host_profile.persona.display_name, opening))
             last_speaker, last_line = host_profile.persona.display_name, opening
-            for index in range(max(1, turns)):
+            for index in range(max(1, reply_turns)):
                 speaker = speakers[(index + 1) % 2]
                 reply = await self._provider.generate(
                     ContentRequest(

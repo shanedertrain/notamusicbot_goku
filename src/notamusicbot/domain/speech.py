@@ -35,6 +35,9 @@ class VoiceConversionProfile:
 
     backend: str
     model: str | None = None
+    # YAML config variant inside the RVC model directory (obama vs
+    # obama_trans share the Obama weights). None = directory default.
+    variant: str | None = None
     pitch_shift: int = 0
 
 

@@ -6,6 +6,12 @@ The bot prefix is ``!g``; the podcast command must therefore be registered as
 
 from __future__ import annotations
 
+import pytest
+
+# Review Round-3 P1: the ordinary unit suite must run without the optional
+# heavy runtimes installed. Skip the whole module when discord.py is absent.
+pytest.importorskip("discord", reason="discord.py is an optional runtime dependency")
+
 import discord
 from discord.ext import commands
 

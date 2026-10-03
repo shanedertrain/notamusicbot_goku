@@ -6,8 +6,12 @@ stdin/stdout. This module never imports ``rvc_cli`` or its dependency graph:
 the worker subprocess is the only bridge, and no shell command is ever built
 from untrusted text — paths and parameters travel as JSON fields.
 
-One worker process holds one persistent RVC model. Requesting a different
-model restarts the worker (the legacy runtime cannot hot-swap models).
+One worker process holds one persistent RVC model *directory* (the weights)
+and one YAML config variant selected from it. Requesting a different model
+directory restarts the worker; requesting a different YAML variant of the
+already-loaded directory (e.g. ``obama`` vs ``obama_trans`` in ``Obama/``,
+which share ``obama.pth``) only hot-swaps the in-worker configuration —
+no process restart, no weight reload.
 """
 
 from __future__ import annotations
@@ -16,6 +20,7 @@ import asyncio
 import json
 import logging
 import os
+import select
 import signal
 import subprocess
 import threading
@@ -135,7 +140,10 @@ class RvcVoiceConverter:
         )
         self._process: subprocess.Popen[str] | None = None
         self._next_request_id = 1
-        self._loaded_model: str | None = None
+        # Loaded-model cache identity: (resolved model directory, yaml
+        # variant). Two variants of one directory are DISTINCT identities
+        # even though they share the weights.
+        self._loaded_key: tuple[str, str | None] | None = None
         self._io_lock = threading.Lock()
         self._stderr_drainer: _StderrDrainer | None = None
         self._shutting_down = False
@@ -148,7 +156,13 @@ class RvcVoiceConverter:
 
     @property
     def loaded_model(self) -> str | None:
-        return self._loaded_model
+        """Resolved model directory currently loaded, if any."""
+        return self._loaded_key[0] if self._loaded_key else None
+
+    @property
+    def loaded_variant(self) -> str | None:
+        """YAML config variant currently loaded (None = directory default)."""
+        return self._loaded_key[1] if self._loaded_key else None
 
     # ------------------------------------------------------------------ async
 
@@ -157,7 +171,7 @@ class RvcVoiceConverter:
         if self.is_running:
             return
         self._shutting_down = False
-        self._loaded_model = None
+        self._loaded_key = None
         await asyncio.to_thread(self._spawn_and_wait_ready)
         await self._request("health", timeout=self._start_timeout)
         logger.info(
@@ -179,7 +193,7 @@ class RvcVoiceConverter:
             logger.warning("RVC worker shutdown request failed: %s", exc)
         await asyncio.to_thread(self._terminate, process)
         self._process = None
-        self._loaded_model = None
+        self._loaded_key = None
 
     async def convert(
         self,
@@ -191,11 +205,11 @@ class RvcVoiceConverter:
         if not self.is_running:
             await self.start()
         try:
-            await self._ensure_model(profile.model)
+            await self._ensure_model(profile.model, variant=profile.variant)
         except WorkerDiedError:
             # The worker died while (re)loading: one clean restart, then retry.
             await self._restart()
-            await self._ensure_model(profile.model)
+            await self._ensure_model(profile.model, variant=profile.variant)
 
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -209,7 +223,7 @@ class RvcVoiceConverter:
         except WorkerDiedError:
             # Worker died mid-conversion: restart once and retry the request.
             await self._restart()
-            await self._ensure_model(profile.model)
+            await self._ensure_model(profile.model, variant=profile.variant)
             reply = await self._request("convert", timeout=self._convert_timeout, **request_fields)
 
         output_path = Path(reply.get("output_wav_path") or output_path)
@@ -248,31 +262,55 @@ class RvcVoiceConverter:
             raise WorkerStartError(msg)
 
     def _wait_for_ready(self, process: subprocess.Popen[str], timeout: float) -> bool:
-        """Block until the worker's ``action: ready`` line; False on timeout/EOF."""
+        """Wait for the worker's ``action: ready`` line with a HARD timeout.
+
+        Uses :func:`select.select` on the raw stdout fd plus a deadline so a
+        worker that stays alive but emits nothing fails at the deadline
+        instead of blocking forever inside ``readline()``. Reading via
+        ``os.read`` bypasses the buffered ``stdout`` wrapper; the worker
+        emits only the ready line during startup, so no protocol bytes are
+        lost (everything it prints otherwise goes to stderr).
+        """
         if process.stdout is None:
             return False
+        try:
+            fd = process.stdout.fileno()
+        except (OSError, ValueError):
+            return False
+        buf = b""
         deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            line = process.stdout.readline()
-            if not line:  # EOF: worker exited during startup
+        while True:
+            while b"\n" in buf:
+                raw, buf = buf.split(b"\n", 1)
+                line = raw.decode("utf-8", "replace").strip()
+                if not line:
+                    continue
+                try:
+                    reply = parse_reply(line)
+                except WorkerError:
+                    continue
+                if reply.get("status") == "ok" and reply.get("action") == "ready":
+                    return True
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
                 return False
-            line = line.strip()
-            if not line:
-                continue
+            readable, _, _ = select.select([fd], [], [], remaining)
+            if not readable:
+                continue  # loop re-checks the deadline
             try:
-                reply = parse_reply(line)
-            except WorkerError:
-                continue
-            if reply.get("status") == "ok" and reply.get("action") == "ready":
-                return True
-        return False
+                chunk = os.read(fd, 65536)
+            except OSError:
+                return False
+            if not chunk:  # EOF: worker exited during startup
+                return False
+            buf += chunk
 
     async def _restart(self) -> None:
         logger.warning("RVC worker died; restarting it once")
         if self._process is not None:
             await asyncio.to_thread(self._terminate, self._process)
         self._process = None
-        self._loaded_model = None
+        self._loaded_key = None
         await self.start()
 
     @staticmethod
@@ -324,7 +362,7 @@ class RvcVoiceConverter:
                     return entry.name
         return model
 
-    async def _ensure_model(self, model: str | None) -> None:
+    async def _ensure_model(self, model: str | None, *, variant: str | None = None) -> None:
         if model is None:
             msg = "RVC voice conversion requires a model name in the profile"
             raise WorkerError(msg)
@@ -333,18 +371,32 @@ class RvcVoiceConverter:
         # raw profile name against the previously loaded canonical name
         # would needlessly restart the worker on every utterance.
         model = self._resolve_model_name(model)
-        if self._loaded_model == model:
+        variant = variant.strip() if isinstance(variant, str) and variant.strip() else None
+        key = (model, variant)
+        if self._loaded_key == key:
             return
-        if self._loaded_model is not None:
-            # One model per worker: restart to switch voices.
+        if self._loaded_key is not None and self._loaded_key[0] != model:
+            # Different model directory: the weights must be swapped, which
+            # requires a worker restart (one weight set per process).
             await self._restart()
-        reply = await self._request("load-model", timeout=self._load_timeout, name=model)
-        self._loaded_model = str(reply.get("model") or model)
+        # Same directory with a different (or first) variant: NO restart.
+        # The worker keeps the loaded weights and selects the requested
+        # YAML config in-process (or performs the initial load).
+        fields: dict[str, Any] = {"name": model}
+        if variant is not None:
+            fields["variant"] = variant
+        reply = await self._request("load-model", timeout=self._load_timeout, **fields)
+        self._loaded_key = (
+            str(reply.get("model") or model),
+            str(reply["variant"]) if reply.get("variant") else variant,
+        )
         logger.info(
-            "RVC model %s loaded on %s (target_sample_rate=%s)",
-            self._loaded_model,
+            "RVC model %s (variant %s) loaded on %s (target_sample_rate=%s, index_rate=%s)",
+            self._loaded_key[0],
+            self._loaded_key[1],
             reply.get("device"),
             reply.get("target_sample_rate"),
+            reply.get("index_rate"),
         )
 
     # --------------------------------------------------------------- protocol

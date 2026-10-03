@@ -148,7 +148,8 @@ class PodcastSettings(BaseModel):
 
     enabled: bool = False
     host_profile: str = "obama"
-    turns: int = Field(default=2, ge=1, le=6)
+    # Replies after the host opening (total spoken lines = reply_turns + 1).
+    reply_turns: int = Field(default=2, ge=1, le=6)
 
 
 class AppSettings(BaseModel):

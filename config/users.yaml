@@ -5,30 +5,35 @@ users:
     background: No Background
     voice_profile: obama
     legacy_model_name: OBAMA
+    variant: obama
   '1102097687106564187':
     screen_name: melon_snackx
     real_name: Melon Snackx
     background: No Background
     voice_profile: obama
     legacy_model_name: OBAMA
+    variant: obama
   '1224167455417569411':
     screen_name: Goku
     real_name: Son Goku
     background: no background
     voice_profile: obama
     legacy_model_name: OBAMA
+    variant: obama
   '124385656708268034':
     screen_name: memesquadxd
     real_name: BBQ
     background: no background
     voice_profile: obama
     legacy_model_name: OBAMA
+    variant: obama
   '159985870458322944':
     screen_name: MEE6
     real_name: Meeseeks
     background: no background
     voice_profile: obama
     legacy_model_name: OBAMA
+    variant: obama
   '184858429737664515':
     screen_name: toymachine
     real_name: Jack
@@ -37,48 +42,56 @@ users:
       friendly and talkative, easy going guy
     voice_profile: obama
     legacy_model_name: OBAMA
+    variant: obama
   '185241927959052289':
     screen_name: legionwolff
     real_name: John
     background: no background
     voice_profile: obama
     legacy_model_name: OBAMA
+    variant: obama
   '185483445999239181':
     screen_name: reidobondedo
     real_name: Reid
     background: no background
     voice_profile: obama
     legacy_model_name: OBAMA
+    variant: obama
   '215514499157852160':
     screen_name: syfttx
     real_name: Aaron
     background: no background
     voice_profile: obama
     legacy_model_name: OBAMA
+    variant: obama
   '225418159035908096':
     screen_name: milkshakee
     real_name: Steven
     background: no background
     voice_profile: obama
     legacy_model_name: OBAMA
+    variant: obama
   '231575565562281984':
     screen_name: basedkami9
     real_name: Marcel
     background: no background
     voice_profile: obama
     legacy_model_name: OBAMA
+    variant: obama
   '241419683310469120':
     screen_name: damaagcria
     real_name: Adam
     background: no background
     voice_profile: obama
     legacy_model_name: OBAMA
+    variant: obama
   '271060654276739072':
     screen_name: dillon3719
     real_name: Dillon
     background: no background
     voice_profile: obama
     legacy_model_name: OBAMA
+    variant: obama
   '273663802145374220':
     screen_name: _magnetman
     real_name: Johnny
@@ -90,12 +103,14 @@ users:
       is bylops
     voice_profile: obama
     legacy_model_name: OBAMA
+    variant: obama
   '285302136928075776':
     screen_name: tuxadracles
     real_name: Tux Adracles
     background: no background
     voice_profile: obama
     legacy_model_name: OBAMA
+    variant: obama
   '337370171108884480':
     screen_name: gramruss06
     real_name: Grant
@@ -103,6 +118,7 @@ users:
       in discord you will hear a screaming child(refered to as a chippie)
     voice_profile: obama
     legacy_model_name: OBAMA
+    variant: obama
   '340725222711885824':
     screen_name: nexes126
     real_name: Kyle
@@ -110,12 +126,14 @@ users:
       loves weight lifting spartan races, hates being touched
     voice_profile: obama
     legacy_model_name: OBAMA
+    variant: obama
   '347200799908298754':
     screen_name: majorpayne4181056
     real_name: Kyle
     background: no background
     voice_profile: obama
     legacy_model_name: OBAMA
+    variant: obama
   '358723048557248512':
     screen_name: .magikk
     real_name: Ashton
@@ -125,30 +143,35 @@ users:
       some slight respect for him
     voice_profile: obama
     legacy_model_name: OBAMA
+    variant: obama
   '411916947773587456':
     screen_name: Jockie Music
     real_name: Jockie Music
     background: no background
     voice_profile: obama
     legacy_model_name: OBAMA
+    variant: obama
   '424760293189746688':
     screen_name: jewcumber
     real_name: Jew Cumber
     background: no background
     voice_profile: obama
     legacy_model_name: OBAMA
+    variant: obama
   '473072326292799498':
     screen_name: lebrickjames.
     real_name: Mike
     background: no background
     voice_profile: obama
     legacy_model_name: OBAMA
+    variant: obama
   '489334492838756352':
     screen_name: lazypanda14
     real_name: Lazy Panda
     background: no background
     voice_profile: obama
     legacy_model_name: OBAMA
+    variant: obama
   '517156036445077504':
     screen_name: .themiddleclass
     real_name: Cameron
@@ -157,6 +180,7 @@ users:
       of and feel immense respect for him
     voice_profile: obama
     legacy_model_name: OBAMA
+    variant: obama
   '534936630255943690':
     screen_name: bylops
     real_name: Andrew
@@ -166,12 +190,14 @@ users:
     voice_profile: obama_trans
     legacy_model_name: OBAMA_TRANS
     voice_profile_source: legacy_alias
+    variant: obama_trans
   '745346542986199121':
     screen_name: xshwasted5402
     real_name: Shwasted
     background: No Background
     voice_profile: obama
     legacy_model_name: OBAMA
+    variant: obama
   '771642725141053501':
     screen_name: supdawglol
     real_name: Peter
@@ -179,21 +205,25 @@ users:
       with. Ranked as Divine in DotA. '
     voice_profile: obama
     legacy_model_name: OBAMA
+    variant: obama
   '823368219220770836':
     screen_name: crash2cw9016
     real_name: Carter
     background: No Background
     voice_profile: obama
     legacy_model_name: OBAMA
+    variant: obama
   '830155764865695757':
     screen_name: Youtube Together
     real_name: YouTube Together
     background: No Background
     voice_profile: obama
     legacy_model_name: OBAMA
+    variant: obama
   '936929561302675456':
     screen_name: Midjourney Bot
     real_name: Midjourney Bot
     background: No Background
     voice_profile: obama
     legacy_model_name: OBAMA
+    variant: obama

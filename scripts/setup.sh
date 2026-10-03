@@ -132,6 +132,70 @@ EOF
 ok "content LLM cached"
 
 # ---------------------------------------------------------------------------
+# Review Round-3 P2: validate required configured RVC assets per enabled
+# profile. Pure function over (voices_dir, models_root) so tests can run it
+# directly against a temp-dir fixture (tests/unit/test_setup_rvc_assets.py).
+# For every config/voices/*.yaml profile whose voice_conversion backend is
+# "rvc", this checks that:
+#   1. the model directory        rvc_cli/models/<model>/        exists
+#   2. the profile's variant yaml <model-dir>/<profile-stem>.yaml exists
+#   3. one *.pth (weights) and one *.index (FAISS index) exist in the dir
+# Missing assets are reported on stdout; the return value is the failure count
+# (non-zero => setup must fail).
+validate_rvc_assets() {
+  local voices_dir="$1" models_root="$2"
+  local missing=0
+  local profile id model mdir stem pth idx variant
+  for profile in "$voices_dir"/*.yaml; do
+    [ -e "$profile" ] || continue
+    grep -Eq '^[[:space:]]*backend:[[:space:]]*rvc([[:space:]]|$)' "$profile" || continue
+    id=$(grep -E '^[[:space:]]*id:' "$profile" | head -1 | sed 's/.*id:[[:space:]]*//')
+    model=$(awk '/^voice_conversion:/{f=1;next} f&&/^[[:space:]]*model:/{print $2; exit}' "$profile")
+    stem="$(basename "$profile" .yaml)"
+    if [ -z "$model" ]; then
+      printf '  FAIL profile %s: voice_conversion.backend is rvc but no model is configured\n' "${id:-$profile}"
+      missing=$((missing + 1))
+      continue
+    fi
+    mdir="$models_root/$model"
+    if [ ! -d "$mdir" ]; then
+      # Legacy RVC resolves model names case-insensitively (profile "GOKU"
+      # matches models/Goku); fall back to a case-insensitive directory match.
+      local ci=""
+      for d in "$models_root"/*/; do
+        if [ "$(basename "$d")" ] && [ "${model,,}" = "$(basename "$d" | tr 'A-Z' 'a-z')" ]; then
+          ci="$(basename "$d")"
+          break
+        fi
+      done
+      if [ -n "$ci" ]; then
+        mdir="$models_root/$ci"
+      else
+        printf '  FAIL profile %s: model directory missing: %s\n' "$id" "$mdir"
+        missing=$((missing + 1))
+        continue
+      fi
+    fi
+    variant="$(ls "$mdir" | grep -iF "$stem.yaml" | head -1)"
+    if [ -z "$variant" ]; then
+      printf '  FAIL profile %s: variant yaml missing in %s (expected *%s.yaml)\n' "$id" "$mdir" "$stem"
+      missing=$((missing + 1))
+    fi
+    pth="$(ls "$mdir"/*.pth 2>/dev/null | head -1)"
+    idx="$(ls "$mdir"/*.index 2>/dev/null | head -1)"
+    if [ -z "$pth" ]; then
+      printf '  FAIL profile %s: no .pth weights in %s\n' "$id" "$mdir"
+      missing=$((missing + 1))
+    fi
+    if [ -z "$idx" ]; then
+      printf '  FAIL profile %s: no .index FAISS file in %s\n' "$id" "$mdir"
+      missing=$((missing + 1))
+    fi
+  done
+  return "$missing"
+}
+
+# ---------------------------------------------------------------------------
 log "6/7 Legacy RVC environment (Python 3.10, fairseq)"
 if [ "$WITH_RVC" = "1" ]; then
   if [ -x .venv/bin/python ] && .venv/bin/python -c "import fairseq" 2>/dev/null; then
@@ -151,6 +215,16 @@ if [ "$WITH_RVC" = "1" ]; then
   fi
   [ -f hubert_base.pt ] || fail "hubert_base.pt missing at repo root — required by RVC. See 'REQUIRED RVC ASSETS' in this script's header for where to obtain it."
   ls rvc_cli/models >/dev/null 2>&1 && ok "RVC voice models present ($(ls rvc_cli/models | wc -l) models)" || warn "no rvc_cli/models — target voices unavailable"
+  # Review Round-3 P2: hard-fail on missing required assets for every enabled
+  # rvc profile (model dir, variant yaml, weights, index). Previously this was
+  # a warn, so RVC setup could "succeed" without usable target voices.
+  echo "validating configured RVC voice-profile assets..."
+  if RVC_MISSING=$(validate_rvc_assets config/voices rvc_cli/models); then
+    ok "all enabled rvc profiles have complete model assets"
+  else
+    printf '%s\n' "$RVC_MISSING"
+    fail "missing required RVC assets for enabled voice profile(s) — supply the model directory, variant yaml, .pth and .index files, or re-run with --no-rvc"
+  fi
 else
   warn "Skipping legacy RVC (--no-rvc); voice profiles must use voice_conversion.backend: passthrough"
 fi

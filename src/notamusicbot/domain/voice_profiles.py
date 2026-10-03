@@ -24,6 +24,9 @@ class TtsProfile(BaseModel):
 class VoiceConversionProfileModel(BaseModel):
     backend: str = "passthrough"
     model: str | None = None
+    # YAML config variant inside the model directory (``rvc_cli/models/<model>/
+    # <variant>.yaml``). ``None`` means the directory's default configuration.
+    variant: str | None = None
     pitch_shift: int = 0
 
 
@@ -78,6 +81,8 @@ def to_conversion_profile(profile: VoiceProfile) -> Any:
     return VoiceConversionProfile(
         backend=profile.voice_conversion.backend,
         model=profile.voice_conversion.model,
+        # getattr: duck-typed test fakes may not carry the new field.
+        variant=getattr(profile.voice_conversion, "variant", None),
         pitch_shift=profile.voice_conversion.pitch_shift,
     )
 

@@ -2,11 +2,12 @@
 
 Runs ``Qwen/Qwen3-4B-Instruct-2507`` through transformers on the local GPU.
 The model is loaded lazily (never at import time, per handoff section 19) and
-generation runs in ``asyncio.to_thread`` behind a dedicated single-slot
-semaphore: at most one LLM generation runs at a time, and the event loop is
-never blocked. This provider does not share the speech pipeline's coordinator
-so a queued TTS job cannot stall prompt generation; both are single-slot by
-configuration anyway.
+generation runs in ``asyncio.to_thread`` behind the SHARED GPU inference
+coordinator (:mod:`notamusicbot.speech.coordinator`): at most one main-process
+GPU job runs at a time, and the event loop is never blocked. Review Round-3
+P1: the provider no longer owns a private semaphore — LLM generation and
+speech-pipeline inference (TTS/RVC) are serialized against each other on the
+same GPU through one shared coordinator.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from dataclasses import dataclass
 
 from notamusicbot.content import prompts
 from notamusicbot.content.base import ContentRequest
+from notamusicbot.speech.coordinator import InferenceCoordinator, shared_gpu_coordinator
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +68,7 @@ class LocalQwenLlmProvider:
         max_new_tokens: int = 120,
         temperature: float = 0.8,
         system_prompt: str = prompts.RADIO_SYSTEM_PROMPT,
-        max_concurrent_generations: int = 1,
+        gpu_coordinator: InferenceCoordinator | None = None,
     ) -> None:
         self._model_id = model_id
         self._device = device
@@ -75,13 +77,15 @@ class LocalQwenLlmProvider:
         self._max_new_tokens = max_new_tokens
         self._temperature = temperature
         self._system_prompt = system_prompt
-        self._lock = asyncio.Semaphore(max(1, max_concurrent_generations))
+        self._gpu = gpu_coordinator or shared_gpu_coordinator()
         self._model = None
         self._tokenizer = None
         self.load_info: LlmLoadInfo | None = None
 
     @classmethod
-    def from_settings(cls, settings) -> LocalQwenLlmProvider:
+    def from_settings(
+        cls, settings, gpu_coordinator: InferenceCoordinator | None = None
+    ) -> LocalQwenLlmProvider:
         return cls(
             model_id=settings.model_id,
             device=settings.device,
@@ -90,7 +94,7 @@ class LocalQwenLlmProvider:
             max_new_tokens=settings.max_new_tokens,
             temperature=settings.temperature,
             system_prompt=settings.system_prompt or prompts.RADIO_SYSTEM_PROMPT,
-            max_concurrent_generations=settings.max_concurrent_generations,
+            gpu_coordinator=gpu_coordinator,
         )
 
     def is_loaded(self) -> bool:
@@ -139,7 +143,7 @@ class LocalQwenLlmProvider:
 
     async def generate(self, request: ContentRequest) -> str:
         """Generate commentary text; heavy work happens off the event loop."""
-        async with self._lock:
+        async with self._gpu.slot():
             prompt = prompts.build_prompt(request)
             return await asyncio.to_thread(self._generate_sync, prompt)
 

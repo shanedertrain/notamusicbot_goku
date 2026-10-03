@@ -55,7 +55,7 @@ def test_segment_alternates_host_then_guest() -> None:
     engine = PodcastEngine(provider)
     host = FakeProfile("obama", FakePersona("Obama", "former president"))
     guest = FakeProfile("l", FakePersona("L", "detective"))
-    turns = asyncio.run(engine.generate_segment(TOPIC, host, guest, turns=2))
+    turns = asyncio.run(engine.generate_segment(TOPIC, host, guest, reply_turns=2))
     assert [t.text for t in turns] == ["host opening", "guest reply", "host rejoinder"]
     assert [t.voice_profile_id for t in turns] == ["obama", "l", "obama"]
     assert [t.speaker_name for t in turns] == ["Obama", "L", "Obama"]
@@ -70,7 +70,7 @@ def test_guest_reply_carries_previous_line_and_topic() -> None:
     engine = PodcastEngine(provider)
     host = FakeProfile("h", FakePersona("Host", "d1"))
     guest = FakeProfile("g", FakePersona("Guest", "d2"))
-    asyncio.run(engine.generate_segment(TOPIC, host, guest, turns=1))
+    asyncio.run(engine.generate_segment(TOPIC, host, guest, reply_turns=1))
     guest_request = provider.requests[1]
     assert "A great post" in guest_request.post_title
     assert "opening" in guest_request.post_text  # previous host line included
@@ -80,7 +80,9 @@ def test_guest_reply_carries_previous_line_and_topic() -> None:
 def test_provider_failure_aborts_segment() -> None:
     provider = ScriptedProvider(["opening"], fail_on_index=1)
     engine = PodcastEngine(provider)
-    turns = asyncio.run(engine.generate_segment(TOPIC, FakeProfile("h"), FakeProfile("g"), turns=2))
+    turns = asyncio.run(
+        engine.generate_segment(TOPIC, FakeProfile("h"), FakeProfile("g"), reply_turns=2)
+    )
     assert turns == []  # segment stopped, no partial audio
 
 
@@ -91,7 +93,7 @@ def test_provider_failure_aborts_segment() -> None:
 class FakePodcastSettings:
     enabled: bool = True
     host_profile: str = "obama"
-    turns: int = 2
+    reply_turns: int = 2
 
 
 @dataclass
@@ -186,11 +188,11 @@ def test_provider_failure_in_full_path_is_swallowed() -> None:
     assert coordinator.active(1) is True  # mode continues after a failed segment
 
 
-@pytest.mark.parametrize("turns", [1, 3])
-def test_turns_setting_controls_segment_length(turns: int) -> None:
-    provider = ScriptedProvider(["line"] * (turns + 1))
+@pytest.mark.parametrize("reply_turns", [1, 3])
+def test_reply_turns_setting_controls_segment_length(reply_turns: int) -> None:
+    provider = ScriptedProvider(["line"] * (reply_turns + 1))
     engine = PodcastEngine(provider)
     out = asyncio.run(
-        engine.generate_segment(TOPIC, FakeProfile("h"), FakeProfile("g"), turns=turns)
+        engine.generate_segment(TOPIC, FakeProfile("h"), FakeProfile("g"), reply_turns=reply_turns)
     )
-    assert len(out) == turns + 1  # opening + N replies, alternating
+    assert len(out) == reply_turns + 1  # opening + N replies, alternating

@@ -137,7 +137,12 @@ class Application:
         if content.provider == "local_qwen":
             from notamusicbot.content.llm import LocalQwenLlmProvider
 
-            self._content_provider = LocalQwenLlmProvider.from_settings(content)
+            # Review Round-3 P1: hand the LLM the SAME shared GPU coordinator
+            # the speech pipeline uses, so LLM generation and TTS/RVC inference
+            # are serialized on the one GPU.
+            self._content_provider = LocalQwenLlmProvider.from_settings(
+                content, gpu_coordinator=self.coordinator
+            )
         else:
             from notamusicbot.content.base import StaticTemplateProvider
 
@@ -251,10 +256,14 @@ class Application:
         if self._synthesizer is None:
             return
         try:
-            await asyncio.to_thread(
-                self._synthesizer.warmup,
-                Path(self.settings.speech.output_dir) / "warmup.wav",
-            )
+            # Review Round-3 P1 startup case: TTS warmup is GPU inference too,
+            # so it arbitrates through the same shared coordinator as LLM
+            # generation and pipeline jobs (never overlaps them on the GPU).
+            async with self.coordinator.slot():
+                await asyncio.to_thread(
+                    self._synthesizer.warmup,
+                    Path(self.settings.speech.output_dir) / "warmup.wav",
+                )
         except Exception:
             logger.exception("Speech warmup failed; continuing without a warmed model")
 

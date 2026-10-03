@@ -107,4 +107,6 @@ class PodcastCoordinator:
             self.stop(guild_id)
             return []
         engine = PodcastEngine(provider)
-        return await engine.generate_segment(topic, host, guest, turns=self._settings.turns)
+        return await engine.generate_segment(
+            topic, host, guest, reply_turns=self._settings.reply_turns
+        )

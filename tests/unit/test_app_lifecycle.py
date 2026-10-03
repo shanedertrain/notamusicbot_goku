@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from conftest import FakeSynthesizer
 from notamusicbot.app import Application, _LazySpeechSynthesizer
 from notamusicbot.config import AppSettings, ContentSettings, SpeechSettings
 from notamusicbot.content.base import ContentKind, ContentRequest, StaticTemplateProvider
@@ -61,7 +62,7 @@ class _ExplodingLlm:
         type(self).instances += 1
 
     @classmethod
-    def from_settings(cls, settings) -> _ExplodingLlm:
+    def from_settings(cls, settings, **kwargs) -> _ExplodingLlm:
         return cls(settings)
 
     def is_loaded(self) -> bool:
@@ -217,6 +218,9 @@ def test_build_pipeline_passes_keep_artifacts_and_retention(tmp_path) -> None:
             output_dir=tmp_path / "speech",
         )
     )
+    # Review Round-3 P1: unit tests must never construct the real Qwen
+    # synthesizer (which imports qwen_tts); inject the fake boundary.
+    app._synthesizer = FakeSynthesizer()
     pipeline = app.build_pipeline()
     assert pipeline._keep_artifacts is True
     assert pipeline._failed_job_retention_hours == pytest.approx(2.5)
@@ -224,6 +228,7 @@ def test_build_pipeline_passes_keep_artifacts_and_retention(tmp_path) -> None:
 
 def test_build_pipeline_defaults_keep_artifacts_off(tmp_path) -> None:
     app = _app(commentary_enabled=True, output_dir=tmp_path / "speech")
+    app._synthesizer = FakeSynthesizer()  # never construct the real Qwen backend
     pipeline = app.build_pipeline()
     assert pipeline._keep_artifacts is False
 

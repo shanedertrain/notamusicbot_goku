@@ -92,7 +92,16 @@ class TopicSource:
 
 
 class InterstitialManager:
-    """Probability- and interval-gated interstitial scheduler."""
+    """Probability- and interval-gated interstitial scheduler.
+
+    Review Round-3 P2: last-fire timing state is **guild-scoped** (a dict keyed
+    by guild id), so a cooldown fired in one guild can no longer suppress an
+    interstitial in another. Callers without a guild context (legacy CLI /
+    benchmark callers) share the reserved ``GLOBAL_GUILD_ID`` bucket.
+    """
+
+    #: Bucket used when no guild id is supplied (single-guild callers).
+    GLOBAL_GUILD_ID = 0
 
     def __init__(
         self, settings: AnySettings, topic_source: TopicSource, *, rng: random.Random | None = None
@@ -100,18 +109,29 @@ class InterstitialManager:
         self._settings = settings
         self.topic_source = topic_source
         self._rng = rng or random.Random()
-        self._last_fire_monotonic = float("-inf")
+        self._last_fire_monotonic: dict[int, float] = {}
 
-    def should_fire(self, *, now_monotonic: float | None = None) -> bool:
-        """Decide whether an interstitial fires after the just-finished song."""
+    def should_fire(
+        self,
+        *,
+        guild_id: int = GLOBAL_GUILD_ID,
+        now_monotonic: float | None = None,
+    ) -> bool:
+        """Decide whether an interstitial fires after the just-finished song.
+
+        Cooldown state is tracked per guild id (``guild_id`` defaults to the
+        single shared :data:`GLOBAL_GUILD_ID` bucket for callers without a
+        guild context).
+        """
         if not self._settings.enabled:
             return False
         now = time.monotonic() if now_monotonic is None else now_monotonic
-        if now - self._last_fire_monotonic < self._settings.min_interval_s:
+        last = self._last_fire_monotonic.get(guild_id, float("-inf"))
+        if now - last < self._settings.min_interval_s:
             return False
         if self._rng.random() >= self._settings.probability:
             return False
-        self._last_fire_monotonic = now
+        self._last_fire_monotonic[guild_id] = now
         return True
 
     def build_request(self, topic: TopicItem, persona_description: str) -> ContentRequest:

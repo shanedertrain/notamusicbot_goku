@@ -41,17 +41,28 @@ def legacy_users_file(tmp_path: Path) -> Path:
 
 @pytest.fixture()
 def voices_dir(tmp_path: Path) -> Path:
-    """Minimal profile set mirroring config/voices (ids obama/obama_trans)."""
+    """Minimal profile set mirroring config/voices (ids obama/obama_trans).
+
+    The obama_trans profile carries ``variant: obama_trans``: it shares the
+    Obama weights but must select the ``obama_trans.yaml`` config.
+    """
     voices = tmp_path / "voices"
     voices.mkdir()
-    for pid, model in (("obama", "Obama"), ("obama_trans", "Obama"), ("goku", "Goku")):
+    for pid, model, variant in (
+        ("obama", "Obama", "obama"),
+        ("obama_trans", "Obama", "obama_trans"),
+        ("goku", "Goku", None),
+    ):
+        vc: dict = {"backend": "rvc", "model": model}
+        if variant:
+            vc["variant"] = variant
         (voices / f"{pid}.yaml").write_text(
             yaml.safe_dump(
                 {
                     "id": pid,
                     "persona": {"display_name": pid, "description": "test"},
                     "tts": {"speaker": "Ryan", "language": "English"},
-                    "voice_conversion": {"backend": "rvc", "model": model},
+                    "voice_conversion": vc,
                     "audio": {"speed": 1.0, "target_peak_dbfs": -1.0},
                 }
             ),
@@ -151,3 +162,122 @@ def test_cli_exits_nonzero_on_unknown_model(
     )
     assert result.returncode != 0
     assert "BARBIE" in (result.stderr + result.stdout)
+
+
+# ----------------------- round-4 P0: migration preserves CONFIG identity ------
+
+
+def test_migration_writes_variant_for_trans_alias(
+    legacy_users_file: Path, tmp_path: Path, voices_dir: Path
+) -> None:
+    dest = tmp_path / "out" / "users.yaml"
+    entries = migrate_users_to_profiles(legacy_users_file, dest, voices_dir)
+    trans = [e for e in entries.values() if e["voice_profile"] == "obama_trans"]
+    obama = [e for e in entries.values() if e["voice_profile"] == "obama"]
+    assert trans[0]["variant"] == "obama_trans"
+    assert all(e["variant"] == "obama" for e in obama)
+    written = yaml.safe_load(dest.read_text(encoding="utf-8"))["users"]
+    assert written["id-trans"]["variant"] == "obama_trans"
+
+
+def test_migrated_obama_trans_resolves_trans_config_values(
+    legacy_users_file: Path, tmp_path: Path, voices_dir: Path, monkeypatch
+) -> None:
+    """Config-identity acceptance: the migrated obama_trans user's profile,
+    driven through the fake worker speaking the real protocol, must select
+    the trans yaml's actual values — not whichever yaml the worker finds first."""
+    import asyncio
+    import sys
+
+    from notamusicbot.domain.speech import AudioArtifact
+    from notamusicbot.domain.voice_profiles import to_conversion_profile
+    from notamusicbot.speech.voice_conversion.rvc import RvcVoiceConverter
+
+    test_rvc_variant = pytest.importorskip("test_rvc_variant")
+
+    dest = tmp_path / "out" / "users.yaml"
+    migrate_users_to_profiles(legacy_users_file, dest, voices_dir)
+    migrated = yaml.safe_load(dest.read_text(encoding="utf-8"))["users"]
+    assert migrated["id-trans"]["variant"] == "obama_trans"
+
+    # Fixture model directory: two yamls with observably different values.
+    models_dir = tmp_path / "models" / "Obama"
+    models_dir.mkdir(parents=True)
+    (models_dir / "obama.yaml").write_text(
+        yaml.safe_dump(test_rvc_variant.OBAMA_YAML), encoding="utf-8"
+    )
+    (models_dir / "obama_trans.yaml").write_text(
+        yaml.safe_dump(test_rvc_variant.OBAMA_TRANS_YAML), encoding="utf-8"
+    )
+    (models_dir / "obama.pth").write_bytes(b"weights")
+    (models_dir / "obama.index").write_bytes(b"index")
+
+    script = tmp_path / "fake_worker.py"
+    script.write_text(test_rvc_variant.FAKE_VARIANT_WORKER, encoding="utf-8")
+    log_path = tmp_path / "requests.jsonl"
+
+    def spawn(self, *args, **kwargs):  # noqa: ANN001
+        import subprocess
+
+        process = subprocess.Popen(
+            [
+                sys.executable,
+                str(script),
+                "variants",
+                str(log_path),
+                str(tmp_path / "models"),
+            ],
+            cwd=str(tmp_path),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            bufsize=1,
+        )
+        self._process = process
+        from notamusicbot.speech.voice_conversion.rvc import _StderrDrainer
+
+        self._stderr_drainer = _StderrDrainer(process.stderr, "fake-worker")
+        self._stderr_drainer.start()
+        if not self._wait_for_ready(process, self._start_timeout):
+            self._terminate(process)
+            self._process = None
+            raise RuntimeError("fake worker not ready")
+
+    monkeypatch.setattr(RvcVoiceConverter, "_spawn_and_wait_ready", spawn)
+    monkeypatch.setattr(RvcVoiceConverter, "_resolve_model_name", staticmethod(lambda model: model))
+
+    profile = load_voice_profiles(voices_dir)["obama_trans"]
+    conversion = to_conversion_profile(profile)
+    assert conversion.variant == "obama_trans"
+
+    src = tmp_path / "in.wav"
+    src.write_bytes(b"")
+    converter = RvcVoiceConverter(
+        worker_python=sys.executable,
+        worker_script=script,
+        start_timeout_s=10.0,
+        load_timeout_s=10.0,
+        convert_timeout_s=10.0,
+    )
+    converter.log_path = log_path  # type: ignore[attr-defined]
+    out = tmp_path / "out.wav"
+    try:
+        asyncio.run(
+            converter.convert(
+                AudioArtifact(path=src, sample_rate_hz=16000, duration_s=1.0),
+                conversion,
+                out,
+            )
+        )
+        loaded = [
+            json.loads(line)
+            for line in log_path.read_text(encoding="utf-8").splitlines()
+            if line.strip() and "loaded-config" in line
+        ]
+    finally:
+        asyncio.run(converter.shutdown())
+    assert loaded[0]["request_variant"] == "obama_trans"
+    assert loaded[0]["values"] == test_rvc_variant.OBAMA_TRANS_YAML
+    assert loaded[0]["values"]["tts_type"] != test_rvc_variant.OBAMA_YAML["tts_type"]

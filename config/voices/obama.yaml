@@ -10,6 +10,7 @@ tts:
 voice_conversion:
   backend: rvc
   model: Obama
+  variant: obama
   pitch_shift: 0
 audio:
   speed: 1.0
