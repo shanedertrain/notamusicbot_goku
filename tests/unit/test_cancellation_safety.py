@@ -167,6 +167,42 @@ async def test_run_blocking_rejects_nested_double_acquire() -> None:
 
 
 # --------------------------------------------------------------------------
+# Round-5 §4/C: queued-not-started work is cancelled, never runs later
+# --------------------------------------------------------------------------
+
+
+async def test_run_blocking_cancelled_while_queued_never_runs() -> None:
+    """A job cancelled BEFORE acquiring the GPU lease must never execute."""
+    coord = InferenceCoordinator(max_concurrent=1, queue_size=4)
+    release = threading.Event()
+
+    def hold_a() -> None:
+        release.wait(10)
+
+    job_a = asyncio.create_task(coord.run_blocking(hold_a))
+    await asyncio.sleep(0.05)  # let A acquire the lease
+    called = threading.Event()
+
+    def b_work() -> None:
+        called.set()
+
+    job_b = asyncio.create_task(coord.run_blocking(b_work))
+    await asyncio.sleep(0.05)  # let B queue behind A (still waiting on semaphore)
+    assert coord.pending == 2
+    assert not called.is_set()
+
+    job_b.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await job_b
+
+    release.set()
+    await asyncio.wait_for(job_a, 10)
+    await asyncio.sleep(0.1)  # any wrongly-detached B would run here
+    assert not called.is_set(), "cancelled queued job executed after the lease freed up"
+    assert coord.pending == 0
+
+
+# --------------------------------------------------------------------------
 # A-LLM: cancelled LLM generate keeps the shared lease
 # --------------------------------------------------------------------------
 

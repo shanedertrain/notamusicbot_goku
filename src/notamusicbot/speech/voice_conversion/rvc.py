@@ -145,17 +145,37 @@ class RvcVoiceConverter:
         # even though they share the weights.
         self._loaded_key: tuple[str, str | None] | None = None
         self._io_lock = threading.Lock()
+        # Review Round-5 P0 (§2/A): ADAPTER-LEVEL TRANSACTION SERIALIZATION.
+        # ``_request`` allocates the request id, writes the line, and waits
+        # for the matching reply while holding this lock, so no second
+        # request can write to the worker until the preceding request has
+        # received its reply, timed out (worker terminated), or been
+        # otherwise conclusively retired. Primitive choice: ``asyncio.Lock``.
+        # The adapter is asyncio-facing (convert/start/shutdown are coroutines
+        # and the tests/tools drive it from an event loop); the lock is held
+        # ACROSS the ``asyncio.to_thread`` awaits, which is legal for an
+        # asyncio.Lock — it is owned by the coroutine on the event loop, and
+        # the threads it spawns never touch the lock themselves. A
+        # ``threading.Lock`` would be wrong here: holding it across ``await``
+        # would block the loop, and thread-based callers do not exist on the
+        # public surface.
+        self._transaction_lock = asyncio.Lock()
         self._stderr_drainer: _StderrDrainer | None = None
         self._shutting_down = False
-        # Review Round-4 P0 (belt-and-braces cancellation safety): request ids
-        # whose awaiting coroutine was cancelled while the reader thread was
-        # still blocked on the reply. A late reply for an orphaned id is
-        # discarded safely (see ``_read_reply``) instead of being logged as a
-        # mismatch or — worse — being consumed as the reply to a later
-        # request. The subprocess conversion itself keeps running under the
-        # pipeline's GPU lease (the whole TTS -> VC -> postprocess chain runs
-        # inside ``coordinator.run_detached``), so the lease is never released
-        # while the worker is still converting.
+        # Review Round-4 P0 (reworked Round-5 §3/B): request ids whose
+        # awaiting coroutine was cancelled BEFORE their reader thread could
+        # consume the reply. Because the reply may then be written by the
+        # worker with nobody owning it, a LATER reader must discard it
+        # instead of treating it as a mismatch. The set is only consulted for
+        # replies whose id differs from the reader's own request id — a
+        # reader NEVER discards its own terminal reply (Round-5 §3/B fix);
+        # when the cancelled reader thread does consume its own reply, the id
+        # is removed from the set, so the reply is simply dropped by the
+        # cancelled future, never re-consumed. The subprocess conversion
+        # itself keeps running under the pipeline's GPU lease (the whole
+        # TTS -> VC -> postprocess chain runs inside ``coordinator
+        # .run_detached``), so the lease is never released while the worker is
+        # still converting.
         self._orphaned_ids: set[int] = set()
 
     # ------------------------------------------------------------------ state
@@ -182,6 +202,11 @@ class RvcVoiceConverter:
             return
         self._shutting_down = False
         self._loaded_key = None
+        # A freshly spawned worker means a fresh protocol stream: replies
+        # from a previous process can never appear again, so stale orphan
+        # marks from before a restart are dropped (Round-5 §3/B: stale-reply
+        # handling must stay safe across a worker restart).
+        self._orphaned_ids.clear()
         await asyncio.to_thread(self._spawn_and_wait_ready)
         await self._request("health", timeout=self._start_timeout)
         logger.info(
@@ -191,19 +216,31 @@ class RvcVoiceConverter:
         )
 
     async def shutdown(self) -> None:
-        """Ask the worker to shut down cleanly, then reap the process."""
-        process = self._process
-        if process is None:
-            return
-        self._shutting_down = True
-        try:
-            if process.poll() is None:
-                await self._request("shutdown", timeout=10.0)
-        except WorkerError as exc:
-            logger.warning("RVC worker shutdown request failed: %s", exc)
-        await asyncio.to_thread(self._terminate, process)
-        self._process = None
-        self._loaded_key = None
+        """Ask the worker to shut down cleanly, then reap the process.
+
+        Review Round-5 §2/A shutdown semantics: shutdown WAITS for the active
+        transaction. This coroutine acquires the same transaction lock as
+        ``_request`` before touching the worker, so a concurrent
+        ``convert`` in flight runs to completion (its reply received) before
+        the worker is asked to shut down and terminated. The in-flight
+        request is therefore never corrupted by shutdown; it either succeeds
+        or fails on its own timeout (which itself terminates the worker and
+        releases the lock). Once the lock is held, the shutdown request is
+        sent via the lock-internal path to avoid self-deadlock.
+        """
+        async with self._transaction_lock:
+            process = self._process
+            if process is None:
+                return
+            self._shutting_down = True
+            try:
+                if process.poll() is None:
+                    await self._request_locked("shutdown", timeout=10.0)
+            except WorkerError as exc:
+                logger.warning("RVC worker shutdown request failed: %s", exc)
+            await asyncio.to_thread(self._terminate, process)
+            self._process = None
+            self._loaded_key = None
 
     async def convert(
         self,
@@ -412,7 +449,23 @@ class RvcVoiceConverter:
     # --------------------------------------------------------------- protocol
 
     async def _request(self, action: str, *, timeout: float, **fields: Any) -> dict[str, Any]:
-        """Send one request and await its matching reply line."""
+        """Send one request and await its matching reply line.
+
+        Review Round-5 §2/A: the WHOLE transaction — id allocation, write,
+        and matching-reply read — is serialized under the adapter-level
+        ``_transaction_lock``. A second request cannot write to the worker
+        until the preceding one has received its reply, timed out (which
+        terminates the worker), or otherwise retired. The lock is held across
+        the ``to_thread`` awaits (legal for an ``asyncio.Lock`` owned by this
+        coroutine; the threads never touch the lock).
+        """
+        async with self._transaction_lock:
+            return await self._request_locked(action, timeout=timeout, **fields)
+
+    async def _request_locked(
+        self, action: str, *, timeout: float, **fields: Any
+    ) -> dict[str, Any]:
+        """Transaction body; caller must hold ``_transaction_lock``."""
         process = self._process
         if process is None or process.stdin is None or process.stdout is None:
             msg = "RVC worker is not running"
@@ -426,12 +479,16 @@ class RvcVoiceConverter:
                 asyncio.to_thread(self._read_reply, process, request_id), timeout
             )
         except asyncio.CancelledError:
-            # Caller cancelled while the reader thread may still be blocked on
-            # this request's reply: record the orphan id so the late reply is
-            # discarded safely instead of poisoning a future transaction. The
-            # underlying subprocess conversion keeps running; with the
-            # pipeline's run_detached design the GPU lease stays held until
-            # that reply thread finishes regardless of this cancellation.
+            # Caller cancelled while the reader may not yet have consumed the
+            # reply. Record the id so a LATER reader discards the stale reply
+            # (correct use of orphan tracking). If the reader thread for THIS
+            # request does consume its own reply, ``_read_reply`` removes the
+            # id and the result is simply dropped by the cancelled future —
+            # the reader terminates after its own reply either way (Round-5
+            # §3/B). The underlying subprocess conversion keeps running; with
+            # the pipeline's run_detached design the GPU lease stays held
+            # until that reply thread finishes regardless of this
+            # cancellation.
             self._orphaned_ids.add(request_id)
             logger.warning(
                 "RVC %s request %d cancelled while awaiting reply; late reply will be discarded",
@@ -471,8 +528,20 @@ class RvcVoiceConverter:
         """Blocking read of the next reply line, matched by id.
 
         Round-4 P0: a reply whose id was orphaned (its awaiting coroutine was
-        cancelled) is discarded here so a late reply can never be consumed as
-        the reply to a different request.
+        cancelled before its reader consumed the reply) is discarded here by
+        a LATER reader so a stale reply can never be consumed as the reply to
+        a different request.
+
+        Round-5 §3/B: this reader's OWN terminal reply is never discarded.
+        Even if the awaiting coroutine was cancelled, the reader returns as
+        soon as it sees ``id == request_id`` (dropping the result by way of
+        the cancelled future) instead of looping on and consuming the next
+        request's reply. Ownership rule:
+        ``reply.id == request_id`` → this reader owns it (consume, clear any
+        orphan mark, return);
+        ``reply.id in _orphaned_ids`` (and not ours) → stale, discard;
+        otherwise → mismatch (should not happen under full serialization),
+        log and keep waiting.
         """
         stdout = process.stdout
         if stdout is None:
@@ -496,16 +565,20 @@ class RvcVoiceConverter:
                     logger.warning("RVC worker protocol notice: %s", reply.get("error"))
                     continue
                 reply_id = reply.get("id")
+                if reply_id == request_id:
+                    # OUR reply: consume it unconditionally and terminate.
+                    # Clear the orphan mark (if the caller was cancelled, the
+                    # reply has now been consumed and must not be re-dropped
+                    # by a later reader's stale check).
+                    self._orphaned_ids.discard(request_id)
+                    return reply
                 if reply_id in self._orphaned_ids:
-                    # Late reply for a cancelled request (Round-4 P0): drop it
-                    # and keep waiting for our own matching reply.
+                    # Stale reply for an earlier cancelled request (Round-4
+                    # P0): drop it and keep waiting for our own reply.
                     self._orphaned_ids.discard(reply_id)
                     logger.info("RVC discarded orphaned reply for cancelled request %s", reply_id)
                     continue
-                if reply_id != request_id:
-                    logger.warning("RVC worker reply id mismatch: %s", reply)
-                    continue
-                return reply
+                logger.warning("RVC worker reply id mismatch: %s", reply)
 
     # ------------------------------------------------------------------ audio
 

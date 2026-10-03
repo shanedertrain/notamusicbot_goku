@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 
+import pytest
 import soundfile as sf
 
 from conftest import FakeConverter, FakeSynthesizer
@@ -198,3 +200,85 @@ def test_pipeline_vc_failure_retains_tts_source(tmp_path) -> None:
     sources = list(job_dir.glob("*/tts_source.wav"))
     assert len(sources) == 1 and sources[0].exists()
     clear_registry()
+
+
+# ---------------------------------------------------------------------------
+# Review Round-5 §4/C: queued-not-started pipeline job cancels cleanly
+# ---------------------------------------------------------------------------
+
+
+def test_pipeline_cancelled_while_queued_never_runs(tmp_path) -> None:
+    """A pipeline.run cancelled while still waiting for the coordinator
+    must never call TTS or VC and must leave no job artifacts."""
+    coordinator = InferenceCoordinator(max_concurrent=1, queue_size=4)
+    synth, conv = FakeSynthesizer(), FakeConverter()
+    pipeline = SpeechPipeline(
+        synth, conv, PROCESSING, coordinator=coordinator, output_dir=tmp_path / "speech"
+    )
+    release = threading.Event()
+
+    def hold_a() -> None:
+        release.wait(10)
+
+    async def main() -> None:
+        job_a = asyncio.create_task(coordinator.run_blocking(hold_a))
+        await asyncio.sleep(0.05)  # A acquires the lease
+        job_b = asyncio.create_task(
+            pipeline.run(TtsRequest(text="q", language="English", speaker="Aiden"), CONVERSION)
+        )
+        await asyncio.sleep(0.1)  # B queues behind A (has NOT started)
+        assert coordinator.pending == 2
+        job_b.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await job_b
+        release.set()
+        await asyncio.wait_for(job_a, 10)
+        await asyncio.sleep(0.1)  # a wrongly-detached B would run here
+
+    asyncio.run(main())
+    assert len(synth.calls) == 0, "TTS ran for a job cancelled before lease acquisition"
+    assert len(conv.calls) == 0, "VC ran for a job cancelled before lease acquisition"
+    # Only the empty job dir with its pending .temporary marker may exist
+    # (created before submission; retention pruning ages it out). No media.
+    job_dirs = list((tmp_path / "speech").glob("*")) if (tmp_path / "speech").exists() else []
+    for job_dir in job_dirs:
+        assert not list(job_dir.glob("*.wav")), (
+            "artifacts were generated for a job cancelled before lease acquisition"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Review Round-5 §7/E: queue_wait_s measures queue wait, not synthesis
+# ---------------------------------------------------------------------------
+
+
+def test_queue_wait_measures_lease_wait_not_synthesis(tmp_path) -> None:
+    """Deliberately occupy the coordinator, then verify queue_wait_s
+    reflects the intentional wait rather than the synthesis duration."""
+    coordinator = InferenceCoordinator(max_concurrent=1, queue_size=4)
+    synth, conv = FakeSynthesizer(), FakeConverter()
+    pipeline = SpeechPipeline(
+        synth, conv, PROCESSING, coordinator=coordinator, output_dir=tmp_path / "speech"
+    )
+    OCCUPANCY_S = 0.4
+
+    async def main() -> None:
+        occupier = asyncio.create_task(coordinator.run_detached(asyncio.sleep, OCCUPANCY_S))
+        await asyncio.sleep(0.05)  # occupier holds the lease
+        final, metrics = await pipeline.run(
+            TtsRequest(text="wait me", language="English", speaker="Aiden"), CONVERSION
+        )
+        await asyncio.wait_for(occupier, 10)
+        return final, metrics
+
+    _final, metrics = asyncio.run(main())
+    # The fake pipeline itself takes only milliseconds; the queue wait must
+    # be dominated by the deliberate ~0.4 s occupancy, not the synthesis.
+    assert metrics.queue_wait_s >= OCCUPANCY_S - 0.15, (
+        f"queue_wait_s={metrics.queue_wait_s:.3f} does not reflect the "
+        f"intentional {OCCUPANCY_S}s coordinator occupancy"
+    )
+    assert metrics.queue_wait_s < OCCUPANCY_S + 1.0
+    assert metrics.tts_s < metrics.queue_wait_s, (
+        "queue_wait_s looks like synthesis duration, not queue wait"
+    )

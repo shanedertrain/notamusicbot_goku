@@ -160,18 +160,30 @@ class InferenceCoordinator:
         await self._admission.acquire()
         self._waiting += 1
         finished = asyncio.Event()
+        started = asyncio.Event()
         holder = asyncio.get_running_loop().create_task(
-            self._hold_and_run(invoke, finished, thread_shield),
+            self._hold_and_run(invoke, finished, thread_shield, started),
             name="inference-coordinator-detached-holder",
         )
         self._detached.add(holder)
         holder.add_done_callback(self._detached.discard)
         try:
-            # shield: caller cancellation must NOT cancel the holder; the
-            # holder alone owns the lease lifetime.
+            # shield: caller cancellation must NOT blindly cancel the holder;
+            # the holder alone owns the lease lifetime.
             ok, outcome = await asyncio.shield(holder)
         except asyncio.CancelledError:
-            # Detached holder keeps the lease until the work really finishes.
+            # Review Round-5 §4/C: differentiate cancelled-BEFORE-start from
+            # cancelled-AFTER-start. If the holder is still waiting on
+            # semaphore acquisition (``started`` not set), cancel it so the
+            # work NEVER executes later and the admission count is released
+            # by the holder's unwind. If work already started, keep the
+            # current detached behavior: the holder keeps the lease until
+            # the real work ends. Race-free: ``started.set()`` and this check
+            # both run on the single event loop, and the check + cancel here
+            # happen in one synchronous block, so a holder that already
+            # started can never be cancelled by this handler.
+            if not started.is_set() and not holder.done():
+                holder.cancel()
             raise
         finally:
             if holder.done():
@@ -185,16 +197,21 @@ class InferenceCoordinator:
         invoke: Callable[[], Any],
         finished: asyncio.Event,
         thread_shield: bool,
+        started: asyncio.Event,
     ) -> tuple[bool, Any]:
         """Hold the lease while the work runs to real completion.
 
         Always returns ``(ok, outcome)`` — never raises — so a detached
         (caller-cancelled) holder never produces unretrieved exceptions.
+        ``started`` is set immediately after semaphore acquisition and
+        BEFORE any work is invoked, giving the caller-cancellation handler a
+        race-free before/after-start signal (Round-5 §4/C).
         """
         outcome: Any = None
         ok = True
         try:
             await self._semaphore.acquire()
+            started.set()
             task = asyncio.current_task()
             assert task is not None
             self._holders.add(task)

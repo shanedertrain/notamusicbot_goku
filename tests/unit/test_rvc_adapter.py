@@ -34,7 +34,7 @@ FAKE_WORKER = (
 
     def log(obj):
         with open(log_path, "a", encoding="utf-8") as fh:
-            fh.write(json.dumps(obj) + "\\n")
+            fh.write(json.dumps({**obj, "t": time.time()}) + "\\n")
 
     def reply(obj):
         sys.stdout.write(json.dumps(obj) + "\\n")
@@ -63,6 +63,7 @@ FAKE_WORKER = (
         if action == "health":
             reply({"id": req["id"], "status": "ok", "device": "cpu",
                    "torch": "fake", "cuda_available": False})
+            log({"action": action, "event": "reply", "id": req["id"]})
         elif action == "load-model":
             if mode == "load-error":
                 reply({"id": req["id"], "status": "error",
@@ -73,6 +74,13 @@ FAKE_WORKER = (
         elif action == "convert":
             if mode == "no-reply":
                 pass  # never answer: the adapter must time out
+            elif mode == "slow":
+                time.sleep(0.3)  # create scheduling pressure for concurrency tests
+                write_wav(req["output_wav_path"])
+                log({"action": action, "event": "reply", "id": req["id"]})
+                reply({"id": req["id"], "status": "ok",
+                       "output_wav_path": req["output_wav_path"],
+                       "elapsed_seconds": 0.01, "model": "Fake"})
             elif mode == "die-on-convert" and extra and not os.path.exists(extra):
                 open(extra, "w").close()
                 os._exit(1)
@@ -190,7 +198,9 @@ def test_convert_happy_path_with_fake_worker(tmp_path, worker_env, patched_spawn
     assert artifact.duration_s == pytest.approx(0.1)
     assert converter.loaded_model == "Fake"
     requests = [json.loads(line) for line in worker_env.log_path.read_text().splitlines()]
-    actions = [req["action"] for req in requests]
+    # Reply-event probes ({"event": "reply"}) also carry "action"; keep the
+    # request-receipt entries only for this ordering assertion.
+    actions = [req["action"] for req in requests if "event" not in req]
     assert actions == ["health", "load-model", "convert"]
     convert_req = requests[-1]
     assert convert_req["input_wav_path"] == str(source.path)
@@ -286,3 +296,120 @@ def test_worker_death_during_convert_restarts_once(tmp_path, worker_env, patched
     assert output.is_file()
     assert artifact.sample_rate_hz == 16000
     asyncio.run(converter.shutdown())
+
+
+# ---------------------------------------------------------------------------
+# Review Round-5 §2/A: full transaction serialization (id → write → reply)
+# ---------------------------------------------------------------------------
+
+
+async def test_concurrent_requests_serialize_full_transaction(
+    tmp_path, worker_env, patched_spawn
+) -> None:
+    """Two concurrent _request() calls: the second request must not be
+    written until the first one's reply was consumed — no mismatch, no
+    discarded reply, both callers get their own reply."""
+    converter = worker_env(mode="slow")
+    patched_spawn(converter)
+    await converter.start()
+
+    output = tmp_path / "out.wav"
+    task_a = asyncio.create_task(
+        converter._request(
+            "convert",
+            timeout=10,
+            input_wav_path="in.wav",
+            output_wav_path=str(output),
+            pitch_shift=0,
+        )
+    )
+    await asyncio.sleep(0.05)  # A's request written; worker sleeping on it
+    task_b = asyncio.create_task(converter._request("load-model", timeout=10, name="Fake"))
+    reply_a, reply_b = await asyncio.gather(task_a, task_b)
+
+    assert reply_a["status"] == "ok"
+    assert reply_b["status"] == "ok"
+    assert output.is_file()
+
+    events = [json.loads(line) for line in worker_env.log_path.read_text().splitlines()]
+    convert_req_t = next(e["t"] for e in events if e.get("action") == "convert")
+    convert_reply_t = next(
+        e["t"] for e in events if e.get("event") == "reply" and e.get("id") == reply_a["id"]
+    )
+    load_req_t = next(e["t"] for e in events if e.get("action") == "load-model")
+    # Serialization proof: B's request was written only AFTER A's reply left
+    # the worker (B queued ~0.3s behind A's slow convert).
+    assert load_req_t >= convert_reply_t > convert_req_t
+    await converter.shutdown()
+
+
+async def test_shutdown_waits_for_active_transaction(tmp_path, worker_env, patched_spawn):
+    """Concurrent convert + shutdown: shutdown waits for the in-flight
+    transaction; the convert completes successfully, then the worker is
+    shut down (shutdown request logged only after the convert reply)."""
+    converter = worker_env(mode="slow")
+    patched_spawn(converter)
+    source = make_source(tmp_path / "in.wav")
+    output = tmp_path / "out.wav"
+
+    convert_task = asyncio.create_task(converter.convert(source, make_profile(), output))
+    await asyncio.sleep(0.15)  # convert request in flight (worker sleeping)
+    shutdown_task = asyncio.create_task(converter.shutdown())
+
+    artifact = await asyncio.wait_for(convert_task, 10)
+    await asyncio.wait_for(shutdown_task, 10)
+
+    assert output.is_file()
+    assert artifact.path == output
+    assert not converter.is_running
+
+    events = [json.loads(line) for line in worker_env.log_path.read_text().splitlines()]
+    convert_reply_t = next(e["t"] for e in events if e.get("event") == "reply" and e.get("id") == 3)
+    shutdown_req_t = next(e["t"] for e in events if e.get("action") == "shutdown")
+    assert shutdown_req_t >= convert_reply_t, "shutdown corrupted the in-flight transaction"
+
+
+# ---------------------------------------------------------------------------
+# Review Round-5 §3/B: cancelled reader owns and consumes its own reply
+# ---------------------------------------------------------------------------
+
+
+async def test_cancelled_reader_consumes_own_reply_and_stream_stays_healthy(
+    tmp_path, worker_env, patched_spawn
+) -> None:
+    """Regression: reader N cancelled while blocked, reply N arrives → the
+    reader consumes its OWN reply and terminates; no mismatch, no
+    WorkerDiedError, no consumption of reply N+1; a subsequent new request
+    works."""
+    converter = worker_env(mode="slow")
+    patched_spawn(converter)
+    await converter.start()
+
+    request_task = asyncio.create_task(
+        converter._request(
+            "convert",
+            timeout=10,
+            input_wav_path="in.wav",
+            output_wav_path=str(tmp_path / "out.wav"),
+            pitch_shift=0,
+        )
+    )
+    await asyncio.sleep(0.1)  # request written; reader thread blocked on the reply
+    request_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await request_task
+
+    # The worker replies ~0.3s after the request. The detached reader thread
+    # must consume its own reply (id 3) and finish — whether or not the
+    # cancellation landed before the thread started, the stream must stay
+    # consistent for the next request.
+    await asyncio.sleep(0.7)
+    assert 3 not in converter._orphaned_ids, (
+        "reader did not consume its own terminal reply (or never cleaned up)"
+    )
+
+    # A subsequent new request must succeed: no stolen reply, no mismatch,
+    # no WorkerDiedError.
+    reply = await asyncio.wait_for(converter._request("health", timeout=5), 10)
+    assert reply["status"] == "ok"
+    await converter.shutdown()

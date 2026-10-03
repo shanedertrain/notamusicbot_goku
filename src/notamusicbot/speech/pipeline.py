@@ -123,8 +123,15 @@ class SpeechPipeline:
         if not self._keep_artifacts:
             mark_temporary_job(job_dir, status="pending")
         try:
+            # Round-5 §7/E: the submission timestamp is taken BEFORE
+            # submitting to the coordinator; the chain records the lease
+            # entry when the detached holder actually starts running (i.e.
+            # after the GPU lease was acquired). queue_wait_s is then
+            # lease_entry - submission, i.e. real queue wait, not synthesis
+            # duration.
+            submitted_at = time.perf_counter()
             final, timings = await self._coordinator.run_detached(
-                self._run_chain, request, conversion, processing, job_id
+                self._run_chain, request, conversion, processing, job_id, submitted_at
             )
         except asyncio.CancelledError:
             # Cancellation is not an error (review Round-3 P1): never swallow
@@ -182,6 +189,7 @@ class SpeechPipeline:
         conversion: VoiceConversionProfile,
         processing: AudioProcessingProfile,
         job_id: str,
+        submitted_at: float,
     ) -> tuple[AudioArtifact, dict[str, float]]:
         """TTS -> VC -> postprocess chain — the detached lease-holder body.
 
@@ -198,7 +206,10 @@ class SpeechPipeline:
         # Round-4 P0: the lease is now owned by the coordinator's detached
         # holder around this whole chain coroutine, so it survives caller
         # cancellation.
-        queue_start = time.perf_counter()
+        # Round-5 §7/E: this coroutine only runs inside the detached holder
+        # AFTER the coordinator's semaphore was acquired, so "now" is the
+        # lease-entry timestamp. queue_wait = lease entry - submission.
+        lease_entry = time.perf_counter()
         tts_path, vc_path, final_path = self._paths(job_id)
         tts_start = time.perf_counter()
         source = await self._synthesizer.synthesize(request, tts_path)
@@ -217,7 +228,7 @@ class SpeechPipeline:
             vc_path.unlink(missing_ok=True)
             mark_temp_artifact(final.path)
         timings = {
-            "queue_wait": time.perf_counter() - queue_start,
+            "queue_wait": lease_entry - submitted_at,
             "tts": tts_s,
             "vc": vc_s,
             "pp": pp_s,
