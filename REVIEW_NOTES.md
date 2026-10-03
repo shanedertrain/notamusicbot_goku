@@ -1,8 +1,91 @@
-# Review notes — notamusicbot_goku rework (branch rework/qwen3-tts), Round-5 return
+# Review notes — notamusicbot_goku rework (branch rework/qwen3-tts), Round-7 return
 
-HEAD at evidence time: `a1dd397fc3f62f3c5695effd83bca7d5a44ad915`
-(`fix(types): make mypy gate pass for src/notamusicbot (52 -> 0 errors)`).
-Round-5 response base: `80d213e` (Round-4 evidence reports). Round-5 commits
+HEAD at evidence time: **END_COMMIT =
+`77ff4e7225338932f21f369189e6ae1654dfd637`**
+(`fix(shutdown): drain inference before RVC teardown; stop guild players
+first (round-6 §3/B)`) — the last **code** commit; these evidence reports
+are appended on top of it by the coordinator and are intentionally
+uncommitted at packaging time. Round-7 response base: START_COMMIT
+`f9673d75d0cf21bbde5a335fc72e8f52800d7a5b` (the honest Round-6
+TEST_RESULTS commit). Round-7 commits (closing the Round-6 review; SHAs
+verified with `git rev-parse`):
+
+- `5de5770aed6235b43f3351b9b6be1c6db91bd3b4` — Round-6 §2 P0 RVC lifecycle
+  single-flight: `_lifecycle_lock` serializes start/shutdown (lock order
+  lifecycle → transaction, never reversed); failed-startup reaping (worker
+  terminated, `_process`/`_loaded_key`/`_orphaned_ids` reset); concurrent
+  start → exactly one spawn; shutdown during startup strictly follows
+  startup.
+- `cceb819a1ecdca6704fb92f8eb2c6ec471ca7939` — Round-6 §3 P0:
+  `InferenceCoordinator.close()`/`drain()` — closed flag rejects new
+  submissions with `CoordinatorClosedError`, cancels queued-not-started
+  holders, awaits started holders to real completion;
+  `VoiceConverterRouter` latches closed state: `convert()` after
+  `shutdown()` raises `RouterClosedError` instead of lazily restarting
+  RVC; `startup()` is the deliberate re-enable.
+- `77ff4e7225338932f21f369189e6ae1654dfd637` — Round-6 §3 P0:
+  `Application.shutdown()` order — cancel warmup → `coordinator.close()`
+  (closed + drain) → `converter_router.shutdown()`; `bot.close()` stops
+  all guild player tasks via `stop_guild_players` **BEFORE** converter
+  teardown and `super().close()`.
+
+## Round-6 review items — disposition (all closed, Round-7)
+
+- §2 P0 RVC lifecycle races — **FAIL → PASS** (`5de5770`; concurrent-start
+  spawn==1, shutdown-during-startup event-synced/deterministic/3× stable,
+  failed-startup reaping tests)
+- §3 P0 post-shutdown RVC restart — **FAIL → PASS** (`cceb819` + `77ff4e7`;
+  review reproduced starts=2/shutdowns=1, now impossible: drain +
+  `RouterClosedError`)
+- §4 P1 evidence-document inconsistency — **FIXED** (this reconciliation:
+  one coherent Round-7 revision across all four evidence documents)
+- §5 P2 stale counts — **FIXED** (current state 272 passed; 239/244/253/259
+  only in dated per-round historical tables)
+- §7.D GPU re-run — **NOT required / NOT_RUN by design**: lifecycle changes
+  do not alter GPU scheduling or inference behavior, so the
+  arbitration/residency/RVC-switching evidence from the `80e6146`/`43a39ef`
+  era remains valid and was not re-run.
+- Round-6 §8 shutdown-drain hardening — **IMPLEMENTED beyond the minimum**:
+  coordinator drain + guild player enumeration were planned follow-up; both
+  are now implemented and tested.
+
+## Environment incident during Round-7 (resolved, stated honestly)
+
+An accidental `uv run` overwrote the legacy RVC `.venv` with a Python 3.14
+environment without torch, causing one real-worker test failure that was
+wrongly called pre-existing. The venv was rebuilt from scratch via
+`scripts/setup.sh` (the from-scratch build proven in Round 2) and the full
+suite passes 272/272. Environment incident, not a product defect.
+
+## Current test/evidence state (Round-7)
+
+- Unit suite (main venv, this session): **272 passed / 0 failed / 0
+  skipped, no deselects**. mypy: **0 errors in 48 files**. ruff check +
+  format --check clean.
+- Live voice-channel playback: **NOT_RUN** — needs a human in a Discord
+  VC; left for the user (carried).
+
+## Remaining known items (stated honestly)
+
+1. **Live voice-channel playback NOT_RUN** — needs a human in a Discord
+   VC; left for the user.
+2. **Persistent per-model RVC worker cache not implemented** — future work.
+   A cross-MODEL (Obama↔Goku) switch costs ~6.3 s (worker restart + model
+   load) vs ~0.6 s warm same-model; variant switches **within** a model
+   are in-process hot-swaps (`config_switched: true`, zero restarts).
+3. **Credential rotation** (carried) — recommended for
+   PLAY_HT/OPENAI/GEMINI-era keys because the first (pre-Gate-R1) review
+   package left the dev machine; the leaked zip was replaced.
+4. **Smaller content LLM** (carried, no code change required) — optional,
+   config-only (`content.model_id`); residency evidence shows the 4B model
+   is safe on the target GPU.
+
+## Historical: Round-5 return record
+
+HEAD at the Round-5 evidence time was
+`a1dd397fc3f62f3c5695effd83bca7d5a44ad915`
+(`fix(types): make mypy gate pass for src/notamusicbot (52 -> 0 errors)`);
+Round-5 response base `80d213e` (Round-4 evidence reports). Round-5 commits
 (closing the Round-4 review; SHAs verified with `git rev-parse`):
 
 - `6e011bf` — P0 cancellation-safe GPU lease (Round-4 Option B):
@@ -45,7 +128,7 @@ lease is owned by the coordinator and released only on real completion.
 RVC cancellation retains the lease until the subprocess reply; orphaned
 request ids are recorded and late replies discarded.
 
-## Round-4 review items — disposition (all FIXED)
+## Historical: Round-4 review items — disposition (all FIXED, Round-5)
 
 - P0 cancellation safety — **FIXED** (tests A-LLM / A-TTS / A-RVC: the
   cancelled holder keeps the lease until the blocking work really ends)
@@ -62,16 +145,19 @@ request ids are recorded and late replies discarded.
   already fixed in Round 4, verified unchanged
 - Stale `max_concurrent_generations` — **REMOVED**
 
-All gates **PASS** in the Round-5 disposition (R1–R8; R8's Round-4
-FAIL/PARTIAL is closed by the cancellation-safe lease + sampled-interval
-exclusivity evidence). Unit suite: **253 passed / 0 failed / 0 skipped,
-no deselects** (was 239 at the Round-3 return; re-run and verified this
-session). Real GPU runs (RTX 4070 Ti SUPER, torch 2.14.1+cu130, driver
-617.14, each run alone): `test_gpu_arbitration` PASS (3 iterations,
-serialized, evidence JSON), `test_gpu_residency` PASS (peak 9,854 MiB, no
-OOM), `test_rvc_switching` 2 PASS (4 switches, avg 6.23 s cross-model vs
-0.82 s warm same-model). The Round-4 review §12 required-test satisfaction
-map (A–F) is in `TEST_RESULTS.md` — all PASS.
+All gates **PASS** in the historical Round-5 disposition (R1–R8; R8's
+Round-4 FAIL/PARTIAL was closed by the cancellation-safe lease +
+sampled-interval exclusivity evidence; see the Round-7 gate table in
+`IMPLEMENTATION_REPORT.md` for the current disposition). Historical unit
+suite: **253 passed / 0 failed / 0 skipped, no deselects** at Round-5 (was
+239 at the Round-3 return; current Round-7 count is 272). Real GPU runs
+(RTX 4070 Ti SUPER, torch 2.14.1+cu130, driver 617.14, each run alone):
+`test_gpu_arbitration` PASS (3 iterations, serialized, evidence JSON),
+`test_gpu_residency` PASS (peak 9,854 MiB, no OOM), `test_rvc_switching`
+2 PASS (4 switches, avg 6.23 s cross-model vs 0.82 s warm same-model at the
+time; current files carry the Round-6 re-run numbers). The Round-4 review
+§12 required-test satisfaction map (A–F) is in `TEST_RESULTS.md` — all
+PASS.
 
 ## Remaining known items (stated honestly)
 
@@ -90,12 +176,15 @@ map (A–F) is in `TEST_RESULTS.md` — all PASS.
 
 ## Where to look
 
-- `IMPLEMENTATION_REPORT.md` — Round-5 commits, Round-4 defect
-  cross-reference, gate table, END_COMMIT
-- `TEST_RESULTS.md` — Round-5 per-check table + Round-4 §12 (A–F)
-  required-test satisfaction map
+- `IMPLEMENTATION_REPORT.md` — Round-7 commits, Round-6 defect
+  cross-reference, current gate table, START_COMMIT/END_COMMIT, verbatim
+  `git diff --stat f9673d7..77ff4e7`
+- `TEST_RESULTS.md` — Round-7 per-check table + dated historical per-round
+  tables + Round-4 §12 (A–F) required-test satisfaction map
 - `evidence/gpu_arbitration.json`, `evidence/gpu_residency.json`,
-  `evidence/rvc_variant_switching.json` — raw real-GPU artifacts
+  `evidence/rvc_cross_model_switching.json`,
+  `evidence/rvc_same_model_warm.json` — raw real-GPU artifacts (current;
+  `rvc_variant_switching.json` was deleted in Round-6)
 - `BENCHMARK_RESULTS.md` — RTF interpretation (RTF > 1 = slower than real
   time)
 - `DEPENDENCY_NOTES.md` — direct-deps table, Reddit correction,

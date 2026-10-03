@@ -1,4 +1,15 @@
-# Dependency Notes — notamusicbot rework (review-response round, Round-4 return)
+# Dependency Notes — notamusicbot rework (Round-7 re-review return)
+
+**Round-7: no dependency changes.** No package was added, removed, or
+re-versioned in the Round-7 commits (`5de5770…`, `cceb819…`, `77ff4e7…`);
+the Round-7 work is lifecycle code + tests only. The legacy RVC `.venv` was
+rebuilt from scratch via `scripts/setup.sh` during Round-7 after an
+accidental `uv run` overwrote it (environment incident, resolved) — same
+dependency set as recorded below, re-proven buildable from scratch.
+
+Unit-suite context (current, Round-7): **272 passed / 0 failed / 0 skipped**
+in the main venv. Historical counts by round: 239 (Round-3/4), 244 passed /
+2 skipped (Round-4 stripped-env run), 253 (Round-5), 259 (Round-6).
 
 Main environment: Python 3.12, uv-managed `.venv-main`. Dependencies in
 `pyproject.toml` are **direct-only**: every runtime dependency is imported by
@@ -45,8 +56,9 @@ combination (torch 2.14.1+cu130, transformers 4.57.3) is documented in
 - **`discord`**: `discord.py` 2.7.1 (tested), `PyNaCl` — bot + voice. The
   unit suite runs without this extra (P1-14; Round-4 `9d370fe` adds
   `pytest.importorskip("discord")` to `test_command_registration`, so the
-  suite now collects cleanly with discord absent — 239 passed / 0 skipped
-  with discord present, only a justified skip when absent).
+  suite now collects cleanly with discord absent — historically 239 passed /
+  0 skipped with discord present at Round-4, only a justified skip when
+  absent; current count 272 passed / 0 skipped).
 - **`media`**: `yt-dlp` 2026.8.19, `yt-dlp-ejs` 0.8.0 (registers JS runtimes
   with yt-dlp; requires the `deno` binary — `media/youtube.py` imports it),
   `spotipy` 2.26.0 (`media/spotify.py` metadata search).

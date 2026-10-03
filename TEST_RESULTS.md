@@ -1,17 +1,65 @@
-# Test Results — notamusicbot rework (Round-6 re-review return)
+# Test Results — notamusicbot rework (Round-7 re-review return)
 
 Semantics: every result is PASS / FAIL / SKIPPED / NOT_RUN. Nothing
-unavailable was converted into a pass. Counts are re-run and verified for
-the Round-6 return (Round-5 review fixes; commits `3615911`, `9efbd1a`,
-re-run 2026-10-03).
+unavailable was converted into a pass. The **current state** is the Round-7
+return: Round-6 review fixes (commits `5de5770aed6235b43f3351b9b6be1c6db91bd3b4`,
+`cceb819a1ecdca6704fb92f8eb2c6ec471ca7939`, `77ff4e7225338932f21f369189e6ae1654dfd637`;
+START_COMMIT `f9673d75d0cf21bbde5a335fc72e8f52800d7a5b`; re-run this session).
+Earlier-round tables below are **historical records kept for traceability**
+(239 at Round-4, 253 at Round-5, 259 at Round-6) and are clearly dated; they
+are not current-state claims.
 
 Correction of record (Round-5 review §5): the Round-5 report claimed a
 "Concurrent RVC protocol requests PASS" that had NO matching test or
 implementation in the package. That claim was false. It is now REAL: the
 adapter-level transaction lock is implemented and the deterministic
-fake-worker test exists (see the Round-6 table below).
+fake-worker test exists (Round-6, item A below).
 
-## Current round (Round-6) — Round-5 review items A–E
+## Environment incident during Round-7 (resolved, stated honestly)
+
+During this round an accidental `uv run` overwrote the legacy RVC `.venv`
+with a Python 3.14 environment containing no torch. This caused **one**
+real-worker test failure, which was initially — and wrongly — reported as
+pre-existing. The venv was rebuilt from scratch via `scripts/setup.sh` (the
+same from-scratch build proven in the Round-2/Round-3 returns, Gate R7) and
+the full unit suite then passes **272/272**. The failure was an environment
+incident, not a product defect; no test was changed to make it pass.
+
+## Current round (Round-7) — Round-6 review items §2/§3/§4/§5
+
+Gate mapping (Round-6 review return): §2 RVC lifecycle **FAIL → PASS**;
+§3 post-shutdown RVC restart **FAIL → PASS**; §4 report inconsistency
+**FIXED** (this reconciliation); §5 stale counts **FIXED** (this
+reconciliation).
+
+| Check (Round-6 review item) | Command / environment | Result | Count |
+|---|---|---|---|
+| Unit tests (main venv) | `.venv-main/bin/python -m pytest tests/unit` | **PASS** | **272 passed, 0 failed, 0 skipped, NO deselects** (259 baseline + 13 new Round-7 lifecycle tests, re-run this session). |
+| §2 RVC lifecycle single-flight — concurrent start | unit | **PASS** | concurrent `start()` → exactly **one** worker spawn (2-PID leak impossible): start/shutdown serialized under `_lifecycle_lock`; lock order lifecycle → transaction, never reversed. |
+| §2 shutdown during startup | unit, event-synced | **PASS** | shutdown strictly follows startup completion; test is deterministic and event-synced, stable across 3 consecutive runs (was the failing `test_shutdown_waits_for_active_transaction` class). |
+| §2 failed startup reaping | unit | **PASS** | failed-ready and failed-health starts terminate the worker and reset `_process` / `_loaded_key` / `_orphaned_ids` — no leaked worker. |
+| §3 coordinator close()/drain() | unit (`tests/unit/test_coordinator.py`) | **PASS** | closed flag rejects new submissions with `CoordinatorClosedError`; queued-not-started holders cancelled; started holders awaited to real completion. |
+| §3 router latched closed state | unit (`tests/unit/test_voice_converter_router.py`) | **PASS** | `convert()` after `shutdown()` raises `RouterClosedError` instead of lazily restarting RVC (review reproduced starts=2/shutdowns=1 — now impossible); `startup()` is the deliberate re-enable. |
+| §3 pipeline during application shutdown | unit (`tests/unit/test_app_shutdown_drain.py`) | **PASS** | `Application.shutdown()` order: cancel warmup → `coordinator.close()` (closed + drain) → `converter_router.shutdown()`; in-flight job retires before RVC teardown; RVC starts never increase after shutdown begins. |
+| §3 Discord close ordering | unit | **PASS** | `bot.close()` stops all guild player tasks via `stop_guild_players` (await/cancel) **BEFORE** converter teardown and `super().close()`. |
+| mypy | `.venv-main/bin/python -m mypy src/notamusicbot` | **PASS** | **0 errors in 48 files** (unchanged; re-run this round). |
+| ruff check + format --check (changed files) | on `src/notamusicbot/**` and the changed test files | **PASS** | clean. |
+| Live voice-channel playback | human in a Discord VC | **NOT_RUN** | requires a human participant; left for the user (carried). |
+
+GPU evidence note (review §7.D): the real-GPU runs were **not** re-run this
+round, per the review's explicit allowance — the Round-7 lifecycle changes
+(`5de5770`/`cceb819`/`77ff4e7`) alter only shutdown/lifecycle ordering, not GPU
+scheduling or inference behavior. The current evidence files
+`evidence/gpu_arbitration.json` and `evidence/gpu_residency.json` (and the
+RVC switching evidence) date from the `80e6146`/`43a39ef` era; their numbers
+remain valid for scheduling behavior, which is unchanged.
+
+`evidence/` current state: `gpu_arbitration.json`, `gpu_residency.json`,
+`rvc_cross_model_switching.json`, `rvc_same_model_warm.json`.
+`rvc_variant_switching.json` was **deleted** in Round-6 and no longer exists;
+it is referenced below only in dated historical records.
+
+## Historical: Round-6 return (259 passed; kept for traceability)
 
 | Check (review item) | Command / environment | Result | Count |
 |---|---|---|---|
@@ -24,8 +72,9 @@ fake-worker test exists (see the Round-6 table below).
 | D. RVC switching evidence, both scenarios (§6) | real worker, RTX 4070 Ti SUPER, run ALONE, `tests/integration/test_rvc_switching.py -m "gpu and rvc and integration"` | **PASS** | 2 passed; evidence split per scenario: `evidence/rvc_cross_model_switching.json` (4 Goku↔Obama switches, avg **6.293 s**/switch, first load 5.773 s) + `evidence/rvc_same_model_warm.json` (warm same-model avg **0.624 s**). Stale `rvc_variant_switching.json` removed; `scripts/package.sh` ships all `evidence/*.json`. |
 | E. queue_wait_s is real queue wait (§7) | unit, `test_queue_wait_measures_lease_wait_not_synthesis` | **PASS** | coordinator deliberately occupied ~0.4 s; asserted `queue_wait_s >= 0.25 s` and `queue_wait_s > tts_s` — it measures lease entry − submission, not synthesis duration. |
 
-Round-5 table rows below are kept for traceability; where they were wrong
-they are corrected above, not silently rewritten.
+Round-6 table below is kept for traceability (historical, 2026-10-03);
+where its Round-5 inherited rows were wrong they are corrected in the
+Round-7 current table, not silently rewritten.
 
 ## Round-5 return (traceability; the §12-E row's "PASS" was FALSE then, now made real in Round-6)
 
@@ -101,7 +150,8 @@ Results carried from the Round-4 return (`f804284` → `9d370fe`,
 
 ## Notes
 
-- The unit suite grew 239 → 253 with the Round-5 tests (cancellation-safe
+- Historical (Round-5, dated): the unit suite grew 239 → 253 with the
+  Round-5 tests (cancellation-safe
   lease A-LLM/A-TTS/A-RVC, stop-during-post-song, startup load→warmup
   ordering, YouTube uploader parity, concurrent RVC requests, arbitration
   interval sampling). No test was removed; **no deselects** are used.

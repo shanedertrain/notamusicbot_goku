@@ -1,19 +1,65 @@
-# Implementation Report — notamusicbot rework (Qwen3-TTS), Round-5 re-review return
+# Implementation Report — notamusicbot rework (Qwen3-TTS), Round-7 re-review return
 
 Rework of the legacy flat "notamusicbot" Discord bot onto a typed package
 (`src/notamusicbot/`) with Qwen3-TTS as the speech backend and RVC voice
 conversion behind an isolated worker boundary. This report covers the closure
-of the Round-4 review return
-(`NOTAMUSICBOT_GOKU_REWORK_REVIEW_RETURN_ROUND4.md`) — the Round-5 re-review
-return.
+of the Round-6 review return
+(`NOTAMUSICBOT_GOKU_REWORK_REVIEW_RETURN_ROUND6.md`) — the Round-7 re-review
+return. It supersedes the Round-5-titled revision; Round-4/5/6 material
+below is retained as clearly dated historical records.
 
 ## Commits (coordinator-verified)
 
-- **START_COMMIT = `8a6f81a8b4f8fe5c5a39639e5f1fcf1fb1c66edf`** (legacy baseline)
-- **END_COMMIT = `a1dd397fc3f62f3c5695effd83bca7d5a44ad915`**
-  (`fix(types): make mypy gate pass for src/notamusicbot (52 -> 0 errors)`)
-- Round-4 review return anchor: prior-round commits below; Round-5 response
-  base `80d213e` (`80d213e docs: round-4 evidence reports`).
+- **START_COMMIT = `f9673d75d0cf21bbde5a335fc72e8f52800d7a5b`**
+  (`docs: honest Round-6 TEST_RESULTS.md — retract false concurrent-RVC claim…`)
+- **END_COMMIT = `77ff4e7225338932f21f369189e6ae1654dfd637`**
+  (`fix(shutdown): drain inference before RVC teardown; stop guild players first (round-6 §3/B)`)
+  — the last **code** commit; the evidence reports
+  (`IMPLEMENTATION_REPORT.md`, `TEST_RESULTS.md`, `REVIEW_NOTES.md`,
+  `DEPENDENCY_NOTES.md`) are appended on top of it by the coordinator and are
+  intentionally uncommitted at packaging time.
+
+### Round-7 commits (closing the Round-6 review; full SHAs verified with `git rev-parse`)
+
+| SHA | Subject / defects closed |
+|---|---|
+| `5de5770aed6235b43f3351b9b6be1c6db91bd3b4` | Round-6 §2 P0 — RVC lifecycle single-flight: start/shutdown serialized under `_lifecycle_lock` (lock order lifecycle → transaction, never reversed); failed-startup reaping (worker terminated, `_process`/`_loaded_key`/`_orphaned_ids` reset); concurrent start → exactly one spawn; shutdown during startup strictly follows startup |
+| `cceb819a1ecdca6704fb92f8eb2c6ec471ca7939` | Round-6 §3 P0 — `InferenceCoordinator.close()`/`drain()`: closed flag rejects new submissions with `CoordinatorClosedError`, cancels queued-not-started holders, awaits started holders to real completion; `VoiceConverterRouter` latches closed state — `convert()` after `shutdown()` raises `RouterClosedError` instead of lazily restarting RVC; `startup()` is the deliberate re-enable |
+| `77ff4e7225338932f21f369189e6ae1654dfd637` | Round-6 §3 P0 — `Application.shutdown()` order: cancel warmup → `coordinator.close()` (closed + drain) → `converter_router.shutdown()`; `bot.close()` stops all guild player tasks via `stop_guild_players` **BEFORE** converter teardown and `super().close()` |
+
+### Round-7 source delta (verbatim, at END_COMMIT)
+
+```
+$ git diff --stat f9673d7..77ff4e7
+ src/notamusicbot/app.py                            |  17 +-
+ src/notamusicbot/discord_bot/bot.py                |  43 +++-
+ src/notamusicbot/discord_bot/guild_state.py        |   4 +
+ src/notamusicbot/speech/coordinator.py             |  71 +++++-
+ src/notamusicbot/speech/voice_conversion/router.py |  38 +++-
+ src/notamusicbot/speech/voice_conversion/rvc.py    | 126 ++++++++---
+ tests/unit/test_app_shutdown_drain.py              | 248 +++++++++++++++++
+ tests/unit/test_coordinator.py                     |  76 +++++++
+ tests/unit/test_rvc_adapter.py                     | 155 ++++++++++++-
+ tests/unit/test_voice_converter_router.py          |  68 ++++++
+ 10 files changed, 795 insertions(+), 51 deletions(-)
+```
+
+Working-tree state at report time (`git status --porcelain`): the only
+tracked entry is ` M rvc_cli` — the vendored RVC submodule is at the
+recorded commit but its working tree carries runtime residue (unchanged
+since earlier rounds; no source change). One untracked file,
+`config/app.yaml`, is local runtime configuration not present in a fresh
+clone. No source, test, or script file is uncommitted; the evidence reports
+are committed on top of `77ff4e7` by the coordinator, as stated above.
+
+Previous rounds' commits (historical records; full SHAs verified with
+`git rev-parse` at their own rounds):
+
+- **Historical baseline (Round-5 return):** START_COMMIT
+  `8a6f81a8b4f8fe5c5a39639e5f1fcf1fb1c66edf` (legacy baseline), END_COMMIT
+  `a1dd397fc3f62f3c5695effd83bca7d5a44ad915` (`fix(types): make mypy gate
+  pass for src/notamusicbot (52 -> 0 errors)`); Round-5 response base
+  `80d213e` (`80d213e docs: round-4 evidence reports`).
 
 Review-response round commits (full SHAs verified with `git rev-parse`):
 
@@ -73,7 +119,16 @@ and released only on real completion. RVC cancellation retains the lease
 until the subprocess reply; orphaned request ids are recorded and late
 replies discarded.
 
-## Round-4 review defects — cross-reference (all FIXED)
+## Round-6 review defects — cross-reference (all FIXED, Round-7)
+
+| Round-6 finding | Priority | Status | Fixed by / evidence |
+|---|---|---|---|
+| §2 P0 RVC worker startup/shutdown not lifecycle-serialized (concurrent start 2-PID leak; shutdown racing startup; failing `test_shutdown_waits_for_active_transaction`) | P0 | **FIXED → PASS** | `5de5770` — `_lifecycle_lock` single-flight (lock order lifecycle → transaction, never reversed); concurrent start → exactly one spawn; shutdown during startup strictly follows startup; failed-startup reaping. The previously flaky transaction-shutdown test is now event-synced, deterministic, stable 3×. See `TEST_RESULTS.md` Round-7 table. |
+| §3 P0 Application shutdown can restart RVC after shutdown (review reproduced starts=2 / shutdowns=1) | P0 | **FIXED → PASS** | `cceb819` + `77ff4e7` — coordinator `close()`/`drain()` (closed + drain semantics), router latched closed state (`RouterClosedError` after shutdown; `startup()` is the deliberate re-enable), shutdown order warmup-cancel → coordinator close/drain → router shutdown, `stop_guild_players` before converter teardown. Post-shutdown RVC restart is now impossible. |
+| §4 P1 Round-6 evidence documents internally inconsistent (Round-5-titled reports, stale END_COMMIT `a1dd397`, stale `rvc_variant_switching.json` references) | P1 | **FIXED** | This reconciliation: all four evidence documents now agree on round number (7), START_COMMIT `f9673d7…`, END_COMMIT `77ff4e7…`, test counts (272 passed), current evidence filenames, and known limitations; current-state summaries are separated from dated historical records. |
+| §5 P2 Stale test-count claims (239/244/253 mixed into current-state text) | P2 | **FIXED** | Current state everywhere: **272 passed / 0 failed / 0 skipped** (main venv, this session); 239/244/253/259 appear only in clearly dated per-round historical tables. `DEPENDENCY_NOTES.md` unit-suite wording updated. |
+
+## Historical: Round-5 review defects — cross-reference (all FIXED, closed in Round 5)
 
 | Round-4 finding | Priority | Status | Fixed by / evidence |
 |---|---|---|---|
@@ -88,7 +143,7 @@ replies discarded.
 | §10 P2 Stale concurrency setting | P2 | **FIXED** | `55b7e16` — `max_concurrent_generations` removed |
 | §9/§10/§12 already fixed in Round 4 (`reply_turns`, per-guild interstitials, `.env.example` rule) | P2 | **FIXED (Round 4)** | Carried; verified unchanged |
 
-## Round-3 review defects — cross-reference (all FIXED)
+## Historical: Round-3 review defects — cross-reference (all FIXED)
 
 | Round-3 finding | Priority | Status | Fixed by / evidence |
 |---|---|---|---|
@@ -104,7 +159,12 @@ replies discarded.
 | §11 Raw benchmark/evidence data missing from package | P2 | **FIXED** | `9d370fe` — `package.sh` allowlists benchmark/evidence CSV + JSON artifacts |
 | §12 `.env` rejection should be explicit | P2 | **FIXED** | `9d370fe` — exact `".env.example"`-name allow; every other `.env*` path rejected |
 
-## Round-2 review defects — cross-reference (all FIXED)
+## Historical: Round-2 review defects — cross-reference (all FIXED)
+
+Historical note: `evidence/rvc_variant_switching.json`, referenced in two
+rows below, was the Round-5-era combined evidence file; it was **deleted** in
+Round-6 and replaced by `evidence/rvc_cross_model_switching.json` +
+`evidence/rvc_same_model_warm.json`, which are the current files.
 
 | Round-2 finding | Priority | Status | Fixed by / evidence |
 |---|---|---|---|
@@ -124,7 +184,7 @@ replies discarded.
 | Live `config/users.yaml` in review package | P2 | **FIXED** | `5cd412f` — excluded; `users.example.yaml` added |
 | Legacy RVC venv not provable from setup script alone | P1 (Gate R7) | **FIXED** | `548b150` — from-scratch proof: fresh clone + `scripts/setup.sh` built the legacy venv (fairseq compiled, torch cu121); setup exits 1 on missing assets; RVC suite 2/2 on the fresh venv, no symlinks |
 
-### Repository cleanliness (commands run verbatim at END_COMMIT)
+### Repository cleanliness (historical: commands run verbatim at the Round-5 END_COMMIT; see the Round-7 source-delta section above for the current state)
 
 ```
 $ git diff --stat 8a6f81a..HEAD | tail -3
@@ -169,18 +229,24 @@ the coordinator commits the evidence reports themselves.
 | P2-20 | Warmup not part of startup | **FIXED** | `9c6557c` — wired non-blocking |
 | P2-21 | Setup is Linux/WSL-oriented | **FIXED** (documented) | Linux/WSL-only documented in README + `setup.sh` |
 
-## Gate status (Round-5 disposition; coordinator-verified, 2026-10-03)
+## Gate status (current Round-7 disposition; coordinator-verified, this session)
 
 | Gate | Result | Evidence |
 |---|---|---|
 | R1 package security | **PASS** | `scripts/package.sh` allowlist + secret scan; `.env.example`-only rule holds; `users.example.yaml` ships. |
-| R2 production speech routing | **PASS** | Router through the real composition root; typed playback outcomes hold. |
-| R3 migrated voices | **PASS** | Variant identity preserved end-to-end; `55b7e16` adds the `president_alt.yaml` fixture proving the explicit `variant` field is validated. |
-| R4 RVC persistence | **PASS** | Cache key `(resolved_dir, variant)`; in-process variant hot-swaps with zero restarts; real run: 4 switches, cross-model avg **6.23 s** vs **0.82 s** warm same-model (`evidence/rvc_variant_switching.json`). Persistent worker cache remains future work. |
+| R2 production speech routing | **PASS** | Router through the real composition root; typed playback outcomes hold; unchanged by Round-7 lifecycle work. |
+| R3 migrated voices | **PASS** | Variant identity preserved end-to-end; `55b7e16` fixture proves the explicit `variant` field is validated. |
+| R4 RVC persistence | **PASS** | Cache key `(resolved_dir, variant)`; in-process variant hot-swaps with zero restarts; real run: 4 switches, cross-model avg **6.29 s** vs **0.62 s** warm same-model (`evidence/rvc_cross_model_switching.json` + `evidence/rvc_same_model_warm.json`). Persistent worker cache remains future work. |
 | R5 media lifecycle | **PASS** | Crash orphans + full cleanup + cancellation hold; pipeline cancellation keeps the lease until the RVC subprocess reply and discards orphaned request ids. |
-| R6 content preservation | **PASS** (uploader parity restored) | `55b7e16`: `PlayableMedia.artist` flows resolver→queue→`ContentRequest.artist_name` (YouTube = Spotify now); STREAM+NATURAL-only hook holds. |
-| R7 clean install | **PASS** | From-scratch legacy venv proof holds; per-profile asset validation unchanged; setup parses the explicit `voice_conversion.variant`. |
-| R8 GPU safety | **PASS** (Round-4 FAIL/PARTIAL closed) | `6e011bf` cancellation-safe lease; `80e6146` exclusivity asserted on sampled lease-busy intervals (real run, 3 iterations, serialized); raw evidence committed (`43a39ef`): `evidence/gpu_arbitration.json`, `evidence/gpu_residency.json` (peak 9,854 MiB, no OOM), `evidence/rvc_variant_switching.json`. |
+| R6 content preservation | **PASS** | STREAM+NATURAL-only hook holds; YouTube uploader metadata restored (`55b7e16`). |
+| R7 clean install | **PASS** | From-scratch legacy venv proof holds (re-proven again in Round-7 after the `.venv` incident — rebuilt via `scripts/setup.sh`); per-profile asset validation unchanged; setup parses the explicit `voice_conversion.variant`. |
+| R8 GPU safety | **PASS** | `6e011bf` cancellation-safe lease; `80e6146` exclusivity on sampled lease-busy intervals; raw evidence committed (`43a39ef`): `evidence/gpu_arbitration.json`, `evidence/gpu_residency.json` (peak 9,854 MiB, no OOM), plus `evidence/rvc_cross_model_switching.json` + `evidence/rvc_same_model_warm.json`. Per review §7.D these real-GPU runs were not re-run in Round-7: the lifecycle commits change shutdown ordering only, not GPU scheduling/inference behavior; the numbers date from the `80e6146`/`43a39ef` era. |
+
+### Historical gate tables
+
+The per-round gate dispositions of Rounds 4–6 (including the Round-5 table
+below) are retained unchanged in `TEST_RESULTS.md` and in the dated sections
+above.
 
 ### Required Round-4 tests (review §12 A–F) — satisfaction map
 
@@ -201,39 +267,52 @@ symlinked or reused dev venv.
 
 ## Architecture summary
 
-Unchanged from the previous round: `src/notamusicbot/` typed package —
+Unchanged from previous rounds: `src/notamusicbot/` typed package —
 Discord/content → generic SpeechPipeline (synthesize → convert → postprocess)
 → Qwen3-TTS-0.6B in-process → RVC via isolated py3.10 worker (JSON IPC) →
 guild-scoped queue player. Composition root `notamusicbot/app.py`; no
-business-logic module imports `rvc_cli`.
+business-logic module imports `rvc_cli`. Round-7 adds the one coherent
+lifecycle rule the Round-6 review required: once application shutdown starts,
+no new worker or GPU job may begin, and already-started work retires before
+the worker is torn down (§8 shutdown-drain hardening is now IMPLEMENTED
+beyond the minimum — coordinator drain + guild player enumeration — not just
+planned).
 
-## Test results summary
+## Test results summary (current: Round-7)
 
-See `TEST_RESULTS.md` for the full table. Headline counts
-(coordinator-verified, Round-5; re-run in this session): main-venv unit
-**253 passed / 0 failed / 0 skipped, no deselects** (was 239 at the Round-3
-return); **mypy `src/notamusicbot`: 0 errors in 48 files**; `ruff check`
-and `ruff format --check` clean. Stripped environment (no discord / no
-qwen_tts, Round-4 independent run): **244 passed / 2 skipped** (justified
-`discord` `importorskip`s). New Round-5 coverage: cancellation-safe lease
-(A-LLM / A-TTS / A-RVC), stop-during-post-song probe, startup load→warmup
-ordering, YouTube uploader parity, concurrent RVC requests, arbitration
-exclusivity on sampled lease-busy intervals. Real GPU runs (RTX 4070 Ti
-SUPER, torch 2.14.1+cu130, driver 617.14, each run alone):
-`test_gpu_arbitration` PASS (evidence JSON), `test_gpu_residency` PASS
-(peak 9,854 MiB, no OOM), `test_rvc_switching` 2 PASS (4 switches, avg
-6.23 s cross-model vs 0.82 s warm same-model). Raw evidence committed in
-`evidence/`.
+See `TEST_RESULTS.md` for the full tables. Headline counts
+(coordinator-verified, Round-7, re-run in this session): main-venv unit
+**272 passed / 0 failed / 0 skipped, no deselects** (259 at the Round-6
+return; 253 at Round-5; 239 at Round-3 — historical, per-round tables kept);
+**mypy `src/notamusicbot`: 0 errors in 48 files**; `ruff check` and
+`ruff format --check` clean. New Round-7 coverage: concurrent-start
+spawn==1, shutdown-during-startup (event-synced, deterministic, 3× stable),
+failed-ready/failed-health cleanup, coordinator drain (started awaited /
+queued cancelled / new rejected), router closed-state + startup re-enable,
+pipeline-during-shutdown (job retires before RVC teardown, starts never
+increase), `stop_guild_players` await/cancel. Real GPU evidence (RTX 4070 Ti
+SUPER, `80e6146`/`43a39ef` era, not re-run per review §7.D — lifecycle
+changes do not alter GPU scheduling): `evidence/gpu_arbitration.json`,
+`evidence/gpu_residency.json`, `evidence/rvc_cross_model_switching.json`,
+`evidence/rvc_same_model_warm.json`.
 
 ## Known limitations / follow-up (stated honestly)
 
 - **Live voice-channel playback NOT_RUN** — needs a human in a VC; left for
   the user.
 - **Persistent per-model RVC worker cache not implemented** — documented as
-  future work; a cross-MODEL (Obama↔Goku) switch still costs ~6.23 s
-  (worker restart + model load) vs ~0.82 s warm same-model. Variant
+  future work; a cross-MODEL (Obama↔Goku) switch still costs ~6.3 s
+  (worker restart + model load) vs ~0.6 s warm same-model. Variant
   switches **within** a model are cheap in-process config hot-swaps with
   zero restarts (variant hot-swap in-process).
+- **Real-GPU evidence vintage** — GPU arbitration/residency/RVC-switching
+  numbers date from the `80e6146`/`43a39ef` era; per review §7.D they were
+  not re-run in Round-7 because the lifecycle changes affect only shutdown
+  ordering, not GPU scheduling or inference behavior.
+- **Environment incident (Round-7, resolved)** — an accidental `uv run`
+  overwrote the legacy `.venv` (py3.14, no torch), causing one real-worker
+  test failure that was wrongly called pre-existing; the venv was rebuilt
+  from scratch via `scripts/setup.sh` and the full suite passes 272/272.
 - **Transient allocator spike** (historical, Round-3) — a ~15.9 GiB spike was
   observed during LLM load with concurrent external GPU load; with the shared
   coordinator, loading/inference are serialized (warmup included), removing
@@ -241,4 +320,5 @@ SUPER, torch 2.14.1+cu130, driver 617.14, each run alone):
 - Smaller content-LLM decision open (P2-18 follow-up), config-driven via
   `content.model_id`; residency evidence shows the 4B model is safe.
 - Only the evidence reports (+ `REVIEW_NOTES.md`) are intentionally
-  uncommitted; the coordinator commits them.
+  uncommitted; the coordinator commits them on top of
+  `77ff4e7225338932f21f369189e6ae1654dfd637`.
