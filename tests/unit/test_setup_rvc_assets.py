@@ -96,3 +96,74 @@ def test_passthrough_profiles_are_not_validated(tmp_path: Path) -> None:
     _write_profile(voices, PASSTHROUGH_PROFILE, "plain.yaml")
     code, out = run_validation(voices, models)
     assert code == 0, out
+
+
+# ----------------------- review Round-4 P2: explicit voice_conversion.variant --
+
+
+ALT_PROFILE = PROFILE.replace(
+    "voice_conversion:",
+    "voice_conversion:\n  variant: obama_trans",
+)
+
+
+def test_explicit_variant_yaml_is_checked_not_profile_stem(tmp_path: Path) -> None:
+    """Profile file president_alt.yaml with variant obama_trans must make
+    setup validate obama_trans.yaml — NOT president_alt.yaml."""
+    voices, models = tmp_path / "voices", tmp_path / "models"
+    _write_profile(voices, ALT_PROFILE, "president_alt.yaml")
+    mdir = models / "TestVoice"
+    mdir.mkdir(parents=True)
+    (mdir / "model.pth").write_bytes(b"x")
+    (mdir / "model.index").write_bytes(b"x")
+    # Only the variant yaml exists; president_alt.yaml deliberately absent.
+    (mdir / "obama_trans.yaml").write_text("tts_type: trans\n", encoding="utf-8")
+    code, out = run_validation(voices, models)
+    assert code == 0, out
+
+
+def test_explicit_variant_missing_fails_even_if_stem_yaml_exists(tmp_path: Path) -> None:
+    """The inverse: president_alt.yaml exists in the model dir but the
+    configured variant obama_trans.yaml does not — setup must still fail."""
+    voices, models = tmp_path / "voices", tmp_path / "models"
+    _write_profile(voices, ALT_PROFILE, "president_alt.yaml")
+    mdir = models / "TestVoice"
+    mdir.mkdir(parents=True)
+    (mdir / "model.pth").write_bytes(b"x")
+    (mdir / "model.index").write_bytes(b"x")
+    (mdir / "president_alt.yaml").write_text("tts_type: base\n", encoding="utf-8")
+    code, out = run_validation(voices, models)
+    assert code != 0
+    assert "variant yaml missing" in out
+    assert "obama_trans.yaml" in out
+
+
+def test_variant_absent_falls_back_to_directory_default_yaml(tmp_path: Path) -> None:
+    """No voice_conversion.variant -> validate the directory-default yaml:
+    stem matching the model dir name, else the single yaml present."""
+    voices, models = tmp_path / "voices", tmp_path / "models"
+    _write_profile(voices)
+    mdir = models / "TestVoice"
+    mdir.mkdir(parents=True)
+    (mdir / "model.pth").write_bytes(b"x")
+    (mdir / "model.index").write_bytes(b"x")
+    # Exactly one yaml, stem differing from the dir name: still the default.
+    (mdir / "other.yaml").write_text("tts_type: base\n", encoding="utf-8")
+    code, out = run_validation(voices, models)
+    assert code == 0, out
+
+
+def test_variant_absent_multiple_yamls_no_default_fails(tmp_path: Path) -> None:
+    """No explicit variant, several yamls, none matching the dir name:
+    there is no unambiguous directory default -> setup must fail."""
+    voices, models = tmp_path / "voices", tmp_path / "models"
+    _write_profile(voices)
+    mdir = models / "TestVoice"
+    mdir.mkdir(parents=True)
+    (mdir / "model.pth").write_bytes(b"x")
+    (mdir / "model.index").write_bytes(b"x")
+    (mdir / "alpha.yaml").write_text("tts_type: a\n", encoding="utf-8")
+    (mdir / "beta.yaml").write_text("tts_type: b\n", encoding="utf-8")
+    code, out = run_validation(voices, models)
+    assert code != 0
+    assert "variant yaml missing" in out

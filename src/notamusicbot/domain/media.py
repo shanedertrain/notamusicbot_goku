@@ -51,6 +51,10 @@ class PlayableMedia:
     media_id: str
     kind: MediaKind
     title: str = ""
+    # Artist/uploader metadata for song commentary (review Round-4 P1): the
+    # YouTube resolver stores the uploader here, Spotify the track artist, so
+    # the command layer no longer drops the uploader.
+    artist: str | None = None
     requester: str = ""
     guild_id: int | None = None
     source_path: Path | None = None
@@ -71,6 +75,7 @@ class PlayableMedia:
             media_id=self.media_id,
             kind=MediaKind.LOCAL,
             title=self.title,
+            artist=self.artist,
             requester=self.requester,
             guild_id=self.guild_id,
             source_path=path,

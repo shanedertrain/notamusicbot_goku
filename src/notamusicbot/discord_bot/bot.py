@@ -180,9 +180,9 @@ class NotAMusicBot(commands.Bot):
         # Start the voice-conversion router (RVC worker spawn + health check)
         # and the optional non-blocking warmup; both fail soft (logged).
         await self.app.startup()
-        # Local LLM (content provider) loads only when content generation is
-        # enabled; never at import time, always off the event loop.
-        await asyncio.to_thread(self.app.load_content_model)
+        # Local LLM (content provider) is loaded inside app.startup() — before
+        # RVC start / warmup scheduling — so model loading and warmup can never
+        # overlap GPU ownership; a second call here is an idempotent no-op.
         setup_commands(self)
         logger.info("Commands registered with prefix %r", self.command_prefix)
 

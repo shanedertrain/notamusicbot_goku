@@ -145,13 +145,36 @@ ok "content LLM cached"
 validate_rvc_assets() {
   local voices_dir="$1" models_root="$2"
   local missing=0
-  local profile id model mdir stem pth idx variant
+  local profile id model mdir pth idx variant want
   for profile in "$voices_dir"/*.yaml; do
     [ -e "$profile" ] || continue
     grep -Eq '^[[:space:]]*backend:[[:space:]]*rvc([[:space:]]|$)' "$profile" || continue
     id=$(grep -E '^[[:space:]]*id:' "$profile" | head -1 | sed 's/.*id:[[:space:]]*//')
     model=$(awk '/^voice_conversion:/{f=1;next} f&&/^[[:space:]]*model:/{print $2; exit}' "$profile")
-    stem="$(basename "$profile" .yaml)"
+    # Review Round-4 P2: read the explicit voice_conversion.variant field
+    # instead of inferring it from the profile filename. Profile ID and RVC
+    # variant are allowed to differ (e.g. president_alt.yaml -> obama_trans).
+    variant="$(python3 -c '
+import sys
+in_vc = False
+with open(sys.argv[1], encoding="utf-8") as fh:
+    for raw in fh:
+        line = raw.rstrip("\n")
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if in_vc and not line[0].isspace():
+            break  # left the voice_conversion block
+        if not in_vc:
+            if stripped == "voice_conversion:":
+                in_vc = True
+            continue
+        if stripped.startswith("variant:"):
+            val = stripped.split(":", 1)[1].strip().strip("\"").strip("'\''")
+            if val:
+                print(val)
+            break
+' "$profile")"
     if [ -z "$model" ]; then
       printf '  FAIL profile %s: voice_conversion.backend is rvc but no model is configured\n' "${id:-$profile}"
       missing=$((missing + 1))
@@ -176,9 +199,28 @@ validate_rvc_assets() {
         continue
       fi
     fi
-    variant="$(ls "$mdir" | grep -iF "$stem.yaml" | head -1)"
-    if [ -z "$variant" ]; then
-      printf '  FAIL profile %s: variant yaml missing in %s (expected *%s.yaml)\n' "$id" "$mdir" "$stem"
+    if [ -n "$variant" ]; then
+      # Explicit variant: validate exactly <variant>.yaml in the model dir.
+      want="$variant"
+    else
+      # No explicit variant: validate the directory-default yaml — the yaml
+      # whose stem matches the model dir name, else the single yaml present.
+      want="$(ls "$mdir" | grep -iF "$(basename "$mdir").yaml" | head -1)"
+      if [ -z "$want" ]; then
+        # Exactly one yaml in the dir acts as the directory default.
+        local y n=0 cand=""
+        for y in "$mdir"/*.yaml; do
+          [ -e "$y" ] || continue
+          n=$((n + 1))
+          cand="$y"
+        done
+        if [ "$n" -eq 1 ]; then
+          want="$(basename "$cand")"
+        fi
+      fi
+    fi
+    if [ -z "$want" ] || ! ls "$mdir" | grep -qiF "$want"; then
+      printf '  FAIL profile %s: variant yaml missing in %s (expected %s.yaml)\n' "$id" "$mdir" "${variant:-<directory-default>}"
       missing=$((missing + 1))
     fi
     pth="$(ls "$mdir"/*.pth 2>/dev/null | head -1)"

@@ -169,6 +169,9 @@ def setup_commands(bot: NotAMusicBot) -> None:
             media.requester = user.screen_name
             media.guild_id = ctx.guild.id
             first_artist = track.artists[0] if track.artists else "unknown artist"
+            # Unify through media.artist (review Round-4 P1): the queued media
+            # carries the artist too, not just the commentary call.
+            media.artist = first_artist
             await _enqueue_commentary(
                 bot,
                 ctx,
@@ -266,5 +269,9 @@ async def _enqueue_youtube(bot: NotAMusicBot, ctx: Context, url: str, *, quick: 
     media.requester = user.screen_name
     media.guild_id = ctx.guild.id
     if not quick:
-        await _enqueue_commentary(bot, ctx, user, song_name=media.title)
+        # Review Round-4 P1: preserve the YouTube uploader as the commentary
+        # artist (legacy parity) instead of "an unknown artist".
+        await _enqueue_commentary(
+            bot, ctx, user, song_name=media.title, artist_name=media.artist or ""
+        )
     bot.guild_state(ctx.guild.id).queue.put_nowait(media)

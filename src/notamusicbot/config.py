@@ -113,7 +113,8 @@ class ContentSettings(BaseModel):
     attn_implementation: str = "sdpa"
     max_new_tokens: int = Field(default=120, ge=1)
     temperature: float = Field(default=0.8, ge=0.0, le=2.0)
-    max_concurrent_generations: int = Field(default=1, ge=1)
+    # NOTE: no per-content concurrency setting — LLM generation admission is
+    # governed by the shared InferenceCoordinator (review Round-4 P2).
     system_prompt: str = ""  # empty -> prompts.RADIO_SYSTEM_PROMPT
 
 

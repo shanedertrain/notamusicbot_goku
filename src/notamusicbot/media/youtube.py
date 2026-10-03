@@ -218,6 +218,9 @@ class YouTubeResolver:
             media_id=media_id or uuid.uuid4().hex[:12],
             kind=MediaKind.STREAM,
             title=info.title,
+            # Preserve the uploader for song commentary (review Round-4 P1).
+            # yt-dlp's "Unknown" placeholder stays, matching legacy behavior.
+            artist=info.uploader,
             # The direct stream URL is best-effort; when it is absent the item
             # still resolves with the canonical webpage URL and the player's
             # download fallback fetches audio via that URL.
