@@ -1,0 +1,65 @@
+{
+  "timestamp": "2026-10-03T05:43:58+00:00",
+  "commit": "80e6146d1d653e39d4340cc5f581ff81ec9d4504",
+  "gpu": "NVIDIA GeForce RTX 4070 Ti SUPER",
+  "driver": "617.14",
+  "torch": "2.14.1+cu130",
+  "cuda_available": "True",
+  "test": "test_full_gpu_residency_no_oom",
+  "stages": [
+    {
+      "name": "idle_after_llm_load",
+      "vram_used_mib": 15933,
+      "vram_total_mib": 16375,
+      "peak_allocated_mib": 7726
+    },
+    {
+      "name": "idle_after_tts_load",
+      "vram_used_mib": 11200,
+      "vram_total_mib": 16375,
+      "peak_allocated_mib": 9780
+    },
+    {
+      "name": "idle_after_all_three_loaded",
+      "vram_used_mib": 11262,
+      "vram_total_mib": 16375,
+      "peak_allocated_mib": 9833
+    },
+    {
+      "name": "content_generation_peak",
+      "vram_used_mib": 11296,
+      "vram_total_mib": 16375,
+      "peak_allocated_mib": 9833
+    },
+    {
+      "name": "tts_generation_peak",
+      "vram_used_mib": 11296,
+      "vram_total_mib": 16375,
+      "peak_allocated_mib": 9854
+    },
+    {
+      "name": "rvc_conversion_peak",
+      "vram_used_mib": 11296,
+      "vram_total_mib": 16375,
+      "peak_allocated_mib": 9854
+    },
+    {
+      "name": "end_to_end_peak",
+      "vram_used_mib": 11296,
+      "vram_total_mib": 16375,
+      "peak_allocated_mib": 9854
+    },
+    {
+      "name": "final",
+      "vram_used_mib": 11296,
+      "vram_total_mib": 16375,
+      "peak_allocated_mib": 9854
+    }
+  ],
+  "model_ids": {
+    "content_llm": "Qwen/Qwen3-4B-Instruct-2507",
+    "tts": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
+    "rvc": "Goku (legacy worker subprocess)"
+  },
+  "pass": true
+}
