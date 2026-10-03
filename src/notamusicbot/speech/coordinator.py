@@ -114,6 +114,15 @@ class InferenceCoordinator:
         self._waiting += 1
         try:
             await self._semaphore.acquire()
+            # Review Round-8 §2: post-GPU-semaphore closed re-check — a caller
+            # that acquired admission before close() and was waiting on the
+            # GPU semaphore must NOT enter after close. No await between this
+            # check and holder registration, so close() cannot interleave.
+            if self._closed:
+                self._semaphore.release()
+                raise CoordinatorClosedError(
+                    "coordinator is closed; GPU-semaphore waiter rejected after close"
+                )
             task = asyncio.current_task()
             assert task is not None
             self._holders.add(task)
@@ -343,6 +352,12 @@ class InferenceCoordinator:
             # _hold_and_run never raises; return_exceptions guards any
             # unexpected machinery error so drain itself always completes.
             await asyncio.gather(*pending, return_exceptions=True)
+        # Review Round-8 §3: direct slot() holders are part of the drain.
+        # After close, new slot entry is impossible (post-admission and
+        # post-semaphore closed checks), so ``_holders`` can only shrink;
+        # await each surviving generation of active holders to completion.
+        while self._holders:
+            await asyncio.gather(*list(self._holders), return_exceptions=True)
 
     # Alias: the review's recommended ``drain()`` name for the same semantics.
     async def drain(self) -> None:

@@ -232,3 +232,65 @@ async def test_slot_rejects_caller_blocked_on_admission_after_close() -> None:
             pytest.fail("slot must not be granted after close")
     await asyncio.wait_for(close_task, 5)
     assert coord.closed is True
+
+
+@pytest.mark.asyncio
+async def test_close_waits_for_active_slot_holder() -> None:
+    """Review Round-8 §3: close() must NOT return while a direct slot()
+    holder is still active; it completes only after the holder exits."""
+    coord = InferenceCoordinator(max_concurrent=1, queue_size=0)
+    release = asyncio.Event()
+    entered = asyncio.Event()
+
+    async def holder_job() -> None:
+        async with coord.slot():
+            entered.set()
+            await release.wait()
+
+    task_a = asyncio.create_task(holder_job())
+    await entered.wait()
+
+    close_task = asyncio.create_task(coord.close())
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    assert not close_task.done(), "close() returned while a slot holder is active"
+
+    release.set()
+    await asyncio.wait_for(task_a, 5)
+    await asyncio.wait_for(close_task, 5)
+    assert coord.closed is True
+
+
+@pytest.mark.asyncio
+async def test_close_rejects_slot_waiter_blocked_on_gpu_semaphore() -> None:
+    """Review Round-8 §2: a caller that acquired admission BEFORE close() and
+    is waiting on the GPU semaphore must be rejected — never enter the slot."""
+    coord = InferenceCoordinator(max_concurrent=1, queue_size=1)
+    release = asyncio.Event()
+    entered: list[str] = []
+
+    async def slot_job(tag: str) -> str:
+        async with coord.slot():
+            entered.append(tag)
+            await release.wait()
+        return tag
+
+    task_a = asyncio.create_task(slot_job("a"))
+    while not coord._holders:  # noqa: SLF001
+        await asyncio.sleep(0)
+
+    task_b = asyncio.create_task(slot_job("b"))
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    assert not task_b.done()  # B holds admission, waits on the GPU semaphore
+
+    close_task = asyncio.create_task(coord.close())
+    await asyncio.sleep(0)
+    release.set()
+    await asyncio.wait_for(task_a, 5)
+
+    with pytest.raises(CoordinatorClosedError):
+        await asyncio.wait_for(task_b, 5)
+    await asyncio.wait_for(close_task, 5)
+    assert entered == ["a"]  # B's body NEVER executed
+    assert coord.closed is True
