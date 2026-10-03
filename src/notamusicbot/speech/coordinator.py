@@ -103,6 +103,14 @@ class InferenceCoordinator:
         """Acquire permission to run one inference; may wait when saturated."""
         self._check_open()
         await self._admission.acquire()
+        # Review Round-7 §2: same post-admission closed re-check as
+        # _run_detached — a caller blocked on admission when close() began
+        # must be rejected, never admitted into the GPU after close.
+        if self._closed:
+            self._admission.release()
+            raise CoordinatorClosedError(
+                "coordinator is closed; queued slot rejected after admission wait"
+            )
         self._waiting += 1
         try:
             await self._semaphore.acquire()
@@ -170,7 +178,18 @@ class InferenceCoordinator:
                 "holds the coordinator slot; this would deadlock"
             )
             raise RuntimeError(msg)
+        self._check_open()
         await self._admission.acquire()
+        # Review Round-7 §2: the pre-wait open check is stale once admission
+        # was granted after a close() began. Re-check AFTER admission and
+        # before any holder registration; there is deliberately no await
+        # between this check and the holder registration below, so close()
+        # cannot interleave between check and registration.
+        if self._closed:
+            self._admission.release()
+            raise CoordinatorClosedError(
+                "coordinator is closed; queued submission rejected after admission wait"
+            )
         self._waiting += 1
         finished = asyncio.Event()
         started = asyncio.Event()

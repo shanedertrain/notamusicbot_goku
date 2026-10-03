@@ -30,7 +30,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from pathlib import Path
 from typing import Any
 
@@ -60,6 +60,36 @@ def cleanup_media_item(media: PlayableMedia) -> None:
         cleanup_temp_artifact(path)
         return
     cleanup_media(media)
+
+
+async def stop_guild_players(states: Iterable[GuildState]) -> None:
+    """Signal every guild player loop to stop and await/cancel its task.
+
+    Review Round-6 §3/B shutdown boundary: guild players are stopped BEFORE
+    any converter teardown, so no player (or post-song content hook) can
+    trigger a speech chain that races — or lazily restarts — the RVC worker
+    after shutdown. Mirrors ``GuildPlayer.stop`` at the state level: request
+    stop, drain queued media (temp files cleaned), await the loop task
+    briefly, then cancel it if it will not exit.
+
+    Deliberately Discord-import-free (review Round-7 §3, Option B): this
+    shutdown helper is unit-tested without the discord package installed.
+    """
+    for state in states:
+        state.request_stop()
+        for media in state.drain_queue():
+            cleanup_media_item(media)
+        task = state.player_task
+        if task is not None and not task.done():
+            try:
+                await asyncio.wait_for(asyncio.shield(task), 10.0)
+            except (TimeoutError, asyncio.CancelledError):
+                task.cancel()
+                logger.warning("Playback task for guild %s cancelled at shutdown", state.guild_id)
+                # Deterministic teardown: await the cancellation so the task
+                # is finished (not merely cancelling) before we return.
+                await asyncio.gather(task, return_exceptions=True)
+        state.player_task = None
 
 
 def ffmpeg_source_factory(media: PlayableMedia) -> Any:

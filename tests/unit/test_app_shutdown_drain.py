@@ -16,8 +16,8 @@ import pytest
 
 from notamusicbot.app import Application
 from notamusicbot.config import AppSettings, SpeechSettings
-from notamusicbot.discord_bot.bot import stop_guild_players
 from notamusicbot.discord_bot.guild_state import GuildState
+from notamusicbot.discord_bot.player import stop_guild_players
 from notamusicbot.domain.speech import (
     AudioArtifact,
     AudioProcessingProfile,

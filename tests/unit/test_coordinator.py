@@ -171,3 +171,64 @@ async def test_drain_is_alias_of_close_and_close_is_idempotent() -> None:
     assert done == ["job"]
     await coord.drain()  # idempotent: second drain returns immediately
     assert coord.closed is True
+
+
+@pytest.mark.asyncio
+async def test_close_rejects_caller_blocked_on_admission() -> None:
+    """Review Round-7 §2 P0: a submission already WAITING on admission when
+    close() begins must be rejected after admission is later granted — it must
+    never execute. (max_concurrent=1, queue_size=0: B blocks on admission.)"""
+    coord = InferenceCoordinator(max_concurrent=1, queue_size=0)
+    release = asyncio.Event()
+    ran: list[str] = []
+
+    async def job(tag: str) -> str:
+        ran.append(tag)
+        await release.wait()
+        return tag
+
+    task_a = asyncio.create_task(coord.run_detached(job, "a"))
+    while not coord._holder_started:  # noqa: SLF001
+        await asyncio.sleep(0)
+
+    task_b = asyncio.create_task(coord.run_detached(job, "b"))
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    assert not task_b.done()
+    assert ran == ["a"]  # A started and is parked; B has not begun
+
+    close_task = asyncio.create_task(coord.close())
+    await asyncio.sleep(0)
+    release.set()  # A finishes; its admission is released
+    await asyncio.wait_for(task_a, 5)
+    with pytest.raises(CoordinatorClosedError):
+        await asyncio.wait_for(task_b, 5)
+    await asyncio.wait_for(close_task, 5)
+    assert ran == ["a"]  # B's function NEVER executed
+    assert coord.closed is True
+
+
+@pytest.mark.asyncio
+async def test_slot_rejects_caller_blocked_on_admission_after_close() -> None:
+    """Same invariant for the slot() context-manager API: a caller waiting on
+    admission when close() begins gets CoordinatorClosedError, never the GPU."""
+    coord = InferenceCoordinator(max_concurrent=1, queue_size=0)
+    release = asyncio.Event()
+
+    async def holder_job() -> None:
+        async with coord.slot():
+            await release.wait()
+
+    task_a = asyncio.create_task(holder_job())
+    while not coord._holders:  # noqa: SLF001
+        await asyncio.sleep(0)
+
+    close_task = asyncio.create_task(coord.close())
+    await asyncio.sleep(0)
+    release.set()
+    await asyncio.wait_for(task_a, 5)
+    with pytest.raises(CoordinatorClosedError):
+        async with coord.slot():
+            pytest.fail("slot must not be granted after close")
+    await asyncio.wait_for(close_task, 5)
+    assert coord.closed is True
