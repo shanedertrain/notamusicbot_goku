@@ -287,7 +287,13 @@ class Worker:
 
     # -- conversion ---------------------------------------------------------
 
-    def convert(self, input_wav_path: str, output_wav_path: str, pitch_shift: Optional[int] = None) -> Dict[str, Any]:
+    def convert(
+        self,
+        input_wav_path: str,
+        output_wav_path: str,
+        pitch_shift: Optional[int] = None,
+        f0_method: Optional[str] = None,
+    ) -> Dict[str, Any]:
         if self._vc is None:
             raise RuntimeError("no model loaded; send load-model first")
 
@@ -301,12 +307,20 @@ class Worker:
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         vc_args = self._vc_args
-        if pitch_shift is not None:
+        if pitch_shift is not None or f0_method is not None:
             # Do not mutate the shared dataclass: build a shallow copy.
             import copy
 
             vc_args = copy.copy(vc_args)
+        if pitch_shift is not None:
             vc_args.f0_pitch = int(pitch_shift)
+        if f0_method is not None:
+            method = str(f0_method)
+            if method not in ALLOWED_F0_METHODS:
+                raise ValueError(
+                    f"invalid f0_method {method!r}; expected one of {sorted(ALLOWED_F0_METHODS)}"
+                )
+            vc_args.f0_method = method
 
         # rvc_cli's VoiceConverter.convert_voice writes "<stem>_converted.wav"
         # next to the input; use a scratch copy of the input in a temp dir so
@@ -337,6 +351,7 @@ class Worker:
             "elapsed_seconds": round(elapsed, 3),
             "model": self._model.model_name,
             "variant": self._model.model_name,
+            "f0_method": str(vc_args.f0_method),
             "pitch_shift": (
                 int(pitch_shift) if pitch_shift is not None else int(self._vc_args.f0_pitch)
             ),
@@ -398,8 +413,17 @@ def _handle(worker: Worker, request: Dict[str, Any]) -> None:
         if pitch is not None and not isinstance(pitch, int):
             _fail(request_id, "pitch_shift must be an integer (semitones)")
             return
+        f0_method = request.get("f0_method")
+        if f0_method is not None and (
+            not isinstance(f0_method, str) or f0_method not in ALLOWED_F0_METHODS
+        ):
+            _fail(
+                request_id,
+                f"invalid f0_method: {f0_method!r}; expected one of {sorted(ALLOWED_F0_METHODS)}",
+            )
+            return
         try:
-            info = worker.convert(input_wav, output_wav, pitch)
+            info = worker.convert(input_wav, output_wav, pitch, f0_method)
         except Exception as exc:  # noqa: BLE001 - report across IPC
             _fail(request_id, f"convert failed: {exc}", traceback=traceback.format_exc(limit=8))
             return

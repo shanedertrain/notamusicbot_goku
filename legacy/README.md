@@ -111,14 +111,23 @@ and switches variants without restarting the worker.
 → {"id":3,"action":"convert",
    "input_wav_path":"/abs/path/in.wav",
    "output_wav_path":"/abs/path/out.wav",
-   "pitch_shift":2}
+   "pitch_shift":2,
+   "f0_method":"pm"}
 ← {"id":3,"status":"ok","output_wav_path":"/abs/path/out.wav",
-   "elapsed_seconds":0.755,"model":"Goku","pitch_shift":2}
+   "elapsed_seconds":0.755,"model":"Goku","pitch_shift":2,"f0_method":"pm"}
 ```
 - Paths are JSON fields — **no shell is involved**; untrusted text never
   reaches a command line.
 - `pitch_shift` is optional (semitones); omitted ⇒ the model YAML's
   `f0_pitch` default (usually 0).
+- `f0_method` is optional; omitted ⇒ the model YAML's `f0_method` (shipped
+  default `harvest`). When present it must be one of `pm`, `harvest`, `dio`,
+  `crepe`, `crepe-tiny` (anything else is a loud `status: "error"`); it
+  overrides the YAML value for this conversion only (the loaded config is
+  never mutated). The adapter sends it when the app config sets
+  `speech.voice_conversion.f0_method_override` — `pm` (parselmouth) is the
+  fast CPU option, `crepe`/`crepe-tiny` extract pitch on the GPU. The reply
+  echoes the f0 method actually used.
 - The conversion runs in a scratch temp dir and the result is moved to
   `output_wav_path`; the worker validates the output (non-empty, finite
   samples, non-zero peak, positive duration) and fails the request loudly on

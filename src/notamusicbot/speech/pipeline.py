@@ -10,6 +10,7 @@ import asyncio
 import logging
 import time
 import uuid
+from dataclasses import replace
 from pathlib import Path
 from typing import Protocol
 
@@ -56,6 +57,7 @@ class SpeechPipeline:
         *,
         keep_artifacts: bool = False,
         failed_job_retention_hours: float = 24.0,
+        f0_method_override: str | None = None,
     ) -> None:
         self._synthesizer = synthesizer
         self._converter = converter
@@ -72,6 +74,22 @@ class SpeechPipeline:
         # ``keep_artifacts=True`` (debug/benchmark mode) retains everything.
         self._keep_artifacts = keep_artifacts
         self._failed_job_retention_hours = failed_job_retention_hours
+        # Config-selected RVC f0 extraction method (speech.voice_conversion
+        # .f0_method_override). ``None`` keeps each profile yaml's value
+        # (shipped default: harvest). Only applied to 'rvc'-backend jobs.
+        self._f0_method_override = f0_method_override
+
+    def _apply_f0_override(self, conversion: VoiceConversionProfile) -> VoiceConversionProfile:
+        """Apply the configured f0_method override to an RVC conversion profile.
+
+        ``None`` override (or a non-RVC backend) returns the profile unchanged:
+        the model yaml's ``f0_method`` (shipped default ``harvest``) applies.
+        """
+        if self._f0_method_override is None or conversion.backend != "rvc":
+            return conversion
+        if conversion.f0_method == self._f0_method_override:
+            return conversion
+        return replace(conversion, f0_method=self._f0_method_override)
 
     def _paths(self, job_id: str) -> tuple[Path, Path, Path]:
         job_dir = self._output_dir / job_id
@@ -101,6 +119,7 @@ class SpeechPipeline:
         running.
         """
         processing = processing or self._processing
+        conversion = self._apply_f0_override(conversion)
         job_id = uuid.uuid4().hex[:12]
         start = time.perf_counter()
 

@@ -33,6 +33,23 @@ class SecretsSettings(BaseSettings):
     spotify_client_secret: str | None = Field(default=None, alias="SPOTIFY_CLIENT_SECRET")
 
 
+class VoiceConversionSettings(BaseModel):
+    """Voice-conversion tuning that overrides the profile YAMLs.
+
+    ``f0_method_override`` replaces the RVC f0 extraction method carried by
+    the model YAMLs (``rvc_cli/models/*/``), which ship ``harvest`` — the
+    slow CPU pitch extractor. ``pm`` (parselmouth) is the fast option
+    (typically 3-10x faster); ``crepe``/``crepe-tiny`` run on the GPU.
+    ``None`` (default) keeps each profile yaml's own value — no silent
+    quality change for existing installs.
+    """
+
+    f0_method_override: str | None = Field(
+        default=None,
+        pattern="^(pm|harvest|dio|crepe|crepe-tiny)$",
+    )
+
+
 class SpeechSettings(BaseModel):
     """Speech pipeline configuration (non-secret)."""
 
@@ -70,6 +87,10 @@ class SpeechSettings(BaseModel):
     #                  emit un-converted source voice)
     #   passthrough -> degrade to passthrough with a warning
     rvc_unavailable_policy: str = "error"
+    # Overrides for values carried by the RVC model YAMLs (see
+    # VoiceConversionSettings). Empty section = yaml values win (shipped
+    # default: f0_method harvest).
+    voice_conversion: VoiceConversionSettings = VoiceConversionSettings()
 
 
 class DiscordSettings(BaseModel):
@@ -113,6 +134,18 @@ class ContentSettings(BaseModel):
     attn_implementation: str = "sdpa"
     max_new_tokens: int = Field(default=120, ge=1)
     temperature: float = Field(default=0.8, ge=0.0, le=2.0)
+    # Cap on spoken commentary length: generated text is trimmed to at most
+    # this many sentences BEFORE TTS (TTS/RVC cost scales with audio length).
+    # null disables trimming. The prompt already asks for 2-3 sentences; this
+    # enforces it (the LLM regularly overshoots).
+    max_sentences: int | None = Field(default=3, ge=1)
+    # Prefetch post-song commentary while a STREAM song is still playing (the
+    # generation runs through the shared InferenceCoordinator, so it
+    # serializes with every other GPU job). At NATURAL completion a ready
+    # prefetched artifact is enqueued immediately (near-zero wait); on
+    # skip/stop/failure — or when the prefetch did not finish in time — it is
+    # discarded and the at-completion generation path runs as before.
+    prefetch_enabled: bool = True
     # NOTE: no per-content concurrency setting — LLM generation admission is
     # governed by the shared InferenceCoordinator (review Round-4 P2).
     system_prompt: str = ""  # empty -> prompts.RADIO_SYSTEM_PROMPT

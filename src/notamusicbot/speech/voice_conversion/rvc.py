@@ -319,6 +319,11 @@ class RvcVoiceConverter:
             "output_wav_path": str(Path(output_path).resolve()),
             "pitch_shift": int(profile.pitch_shift),
         }
+        # Optional f0 extraction method override (config-selectable): only
+        # sent when the profile carries one, so the model yaml value applies
+        # otherwise (shipped default: harvest).
+        if profile.f0_method:
+            request_fields["f0_method"] = str(profile.f0_method)
         try:
             reply = await self._request("convert", timeout=self._convert_timeout, **request_fields)
         except WorkerDiedError:

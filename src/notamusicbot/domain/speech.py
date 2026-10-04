@@ -39,6 +39,11 @@ class VoiceConversionProfile:
     # obama_trans share the Obama weights). None = directory default.
     variant: str | None = None
     pitch_shift: int = 0
+    # Optional per-request override of the RVC f0 extraction method carried by
+    # the model YAML (pm | harvest | dio | crepe | crepe-tiny). ``None`` keeps
+    # the yaml value (harvest in the shipped profiles). Applied by the speech
+    # pipeline from ``speech.voice_conversion.f0_method_override``.
+    f0_method: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

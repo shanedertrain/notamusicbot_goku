@@ -39,6 +39,14 @@ speech:
   #   passthrough -> emit the un-converted source voice with a warning
   rvc_unavailable_policy: error
 
+  # Config-selectable override of the RVC f0 extraction method carried by the
+  # model YAMLs (rvc_cli/models/*/). The shipped yamls use `harvest` — the
+  # slow CPU pitch extractor. `pm` (parselmouth) is the fast option
+  # (typically 3-10x faster); `crepe`/`crepe-tiny` run on the GPU. null keeps
+  # the profile yaml value (no silent quality change).
+  voice_conversion:
+    f0_method_override: null          # null | pm | harvest | dio | crepe | crepe-tiny
+
 # Local content generation (Phase F). Fully offline: no LLM API key needed.
 # persona/style come from config/voices/*.yaml (persona.description).
 content:
