@@ -1,4 +1,4 @@
-# Implementation Report — notamusicbot rework (Qwen3-TTS), Round-8 re-review return
+# Implementation Report — notamusicbot rework (Qwen3-TTS), Final review return — implementation ACCEPTED
 
 Rework of the legacy flat "notamusicbot" Discord bot onto a typed package
 (`src/notamusicbot/`) with Qwen3-TTS as the speech backend and RVC voice
@@ -12,7 +12,13 @@ below is retained as clearly dated historical records.
 
 - **START_COMMIT = `f9673d75d0cf21bbde5a335fc72e8f52800d7a5b`**
   (`docs: honest Round-6 TEST_RESULTS.md — retract false concurrent-RVC claim…`)
-- **END_COMMIT = `94b6fe282f4255504c4d436b667662cd5e821029`** (Round-8 code commit `9c5167ba72c99075e2fef211654ffa08d7747ac6`; this docs commit finalizes the return)
+- **END_COMMIT (final code) = `f9eccef22b18dadea9b53ed3f8c52615545444af`**
+  (`fix(concurrency): detect close() from inside a held slot (final-review hardening note)` —
+  the non-blocking hardening from the Final Review, introduced during documentation
+  reconciliation as the review permitted). Final-review disposition:
+  **software implementation ACCEPTED**; only documentation reconciliation remained.
+  Round-8 code commit was `9c5167ba72c99075e2fef211654ffa08d7747ac6`; Round-7 code commits
+  `5de5770…`, `cceb819…`, `77ff4e7…`.
   — Round-8 fixes on top of the Round-7 code commits below:
   - `9c5167b` — Round-7 §2 P0: post-admission closed-state re-check in `InferenceCoordinator._run_detached` and `slot()` (a caller blocked on admission when `close()` begins is rejected with `CoordinatorClosedError` and its function never executes; no `await` between re-check and holder registration). Round-7 §3 P1: `stop_guild_players` extracted from `bot.py` into Discord-import-free `discord_bot/player.py` (review Option B) — the portable no-Discord unit gate is restored (stripped env: 266 passed / 2 justified skips / 0 failed, collection succeeds).
   - Round-7 base: END_COMMIT at the Round-7 return was `77ff4e7225338932f21f369189e6ae1654dfd637`

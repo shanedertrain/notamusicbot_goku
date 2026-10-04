@@ -1,6 +1,10 @@
-# Review notes — notamusicbot_goku rework (branch rework/qwen3-tts), Round-8 return
+# Review notes — notamusicbot_goku rework (branch rework/qwen3-tts), Final review return — implementation ACCEPTED
 
-HEAD at evidence time: **END_COMMIT (code) = `04a0a19`, full SHA `04a0a19dccdb4e950a607870583459d8f13c96ca`** — Round-8 review fixes
+HEAD at evidence time (FINAL): **END_COMMIT (final code) = `f9eccef22b18dadea9b53ed3f8c52615545444af`** —
+Final Review disposition: **software implementation ACCEPTED**, documentation-only
+reconciliation (this revision). Final-review hardening note implemented
+(`close()` from a held `slot()` → clear `RuntimeError`, not self-deadlock).
+Final-review code base was  `04a0a19dccdb4e950a607870583459d8f13c96ca`** — Round-8 review fixes
 (§2 `slot()` post-semaphore closed re-check; §3 `close()` drains active
 `slot()` holders; both pinned by deterministic tests) on top of the
 Round-8 commit `9c5167ba72c99075e2fef211654ffa08d7747ac6` (detached
@@ -31,17 +35,16 @@ Round-7 commits (closing the Round-6 review; SHAs verified with
   all guild player tasks via `stop_guild_players` **BEFORE** converter
   teardown and `super().close()`.
 
-## Current state (Round-9 return)
+## Current state (Final review reconciliation)
 
-- Unit suite (main venv): **276 passed / 0 failed / 0 skipped** (274 + 2 new
-  `slot()` lifecycle tests; re-run this session).
-- Portable stripped env (no discord/qwen): collection succeeds, justified
-  skips only (265 passed / 3 skipped in the review sandbox; 266/2 where the
-  legacy RVC runtime is present).
+- Unit suite (main venv): **277 passed / 0 failed / 0 skipped** (276 + 1
+  close()-self-deadlock hardening test; re-run this session).
+- Portable stripped env (no discord/qwen): **269 passed / 2 skipped / 0
+  failed** — collection succeeds, justified skips only.
 - mypy: **0 errors in 48 files**. ruff check + format: clean.
 - Evidence files: `gpu_arbitration.json`, `gpu_residency.json`,
   `rvc_cross_model_switching.json`, `rvc_same_model_warm.json`.
-- Where to look: `git diff --stat f9673d7..04a0a19`.
+- Where to look: `git diff --stat f9673d7..f9eccef`.
 - Live Discord voice playback: NOT_RUN (human VC test). Worker-cache future
   work (~6.3 s cross-model switch, ~0.6 s warm) unchanged.
 - Round-6 items disposition (all closed in Round-7):

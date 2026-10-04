@@ -1,13 +1,13 @@
-# Test Results — notamusicbot rework (Round-8 re-review return)
+# Test Results — notamusicbot rework (Final review return (implementation ACCEPTED))
 
 Semantics: every result is PASS / FAIL / SKIPPED / NOT_RUN. Nothing
-unavailable was converted into a pass. The **current state** is the Round-8
-return: Round-7 review fixes (commit `9c5167b` on top of Round-7 commits
+unavailable was converted into a pass. The **current state** is the Final Review reconciliation: final-review hardening
+commit `f9eccef…` on top of Round-8 commit `9c5167b…` and Round-7 commits
 `5de5770aed6235b43f3351b9b6be1c6db91bd3b4`,
 `cceb819a1ecdca6704fb92f8eb2c6ec471ca7939`, `77ff4e7225338932f21f369189e6ae1654dfd637`;
 START_COMMIT `f9673d75d0cf21bbde5a335fc72e8f52800d7a5b`; re-run this session).
 Earlier-round tables below are **historical records kept for traceability**
-(239 at Round-4, 253 at Round-5, 259 at Round-6, 272 at Round-7) and are
+(239 at Round-4, 253 at Round-5, 259 at Round-6, 272 at Round-7, 274 at Round-8) and are
 clearly dated; they are not current-state claims.
 
 Correction of record (Round-5 review §5): the Round-5 report claimed a
@@ -26,7 +26,29 @@ same from-scratch build proven in the Round-2/Round-3 returns, Gate R7) and
 the full unit suite then passes **272/272**. The failure was an environment
 incident, not a product defect; no test was changed to make it pass.
 
-## Current round (Round-8) — Round-7 review items §2/§3
+## Current round (Final review reconciliation)
+
+Final review disposition: **software implementation ACCEPTED**; documentation-only
+cleanup required (this section). Non-blocking hardening note implemented:
+`coordinator.close()` called from a task holding `slot()` raises a clear
+`RuntimeError` instead of self-deadlocking (`f9eccef…`, test
+`test_close_from_inside_slot_raises_instead_of_deadlock`).
+
+| Check | Command / environment | Result | Count |
+|---|---|---|---|
+| Unit tests (main venv) | `.venv-main/bin/python -m pytest tests/unit` | **PASS** | **277 passed, 0 failed, 0 skipped, NO deselects** (re-run this session). Development-environment count. |
+| Portable unit suite (no discord/qwen) | stripped venv, `PYTHONPATH=src pytest -q tests/unit` | **PASS** | **269 passed, 2 skipped, 0 failed** — collection succeeds without Discord/Qwen; skips are the two justified `importorskip("discord")` modules. |
+| mypy | `.venv-main/bin/python -m mypy src/notamusicbot` | **PASS** | **0 errors in 48 files**. |
+| ruff | check + format --check | **PASS** | clean. |
+| Evidence files | `evidence/` | **PASS** | `gpu_arbitration.json`, `gpu_residency.json`, `rvc_cross_model_switching.json`, `rvc_same_model_warm.json`. |
+| Live Discord voice playback | human VC test | **NOT_RUN** | Requires the user in a Discord voice channel (`!gplay`). |
+
+Known limitations (accepted): persistent per-model RVC worker cache future work
+(~6.3 s cross-model switch, ~0.6 s warm; variant hot-swap in-process); GPU
+evidence dates from the 80e6146/43a39ef era (lifecycle changes affect shutdown
+ordering only, per Final Review no re-run required).
+
+## Historical: Round-8 — Round-7 review items §2/§3
 
 Gate mapping (Round-7 review return): §2 coordinator admission-boundary race
 **FAIL → PASS**; §3 portable unit suite **FAIL → PASS**; §4 portable/main
