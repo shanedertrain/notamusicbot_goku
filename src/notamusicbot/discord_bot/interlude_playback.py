@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from notamusicbot.content.trim import trim_sentences
 from notamusicbot.discord_bot.commentary import (
     generate_commentary_media,
     resolve_commentary_text,
@@ -24,6 +25,11 @@ from notamusicbot.discord_bot.commentary import (
 from notamusicbot.domain.voice_profiles import to_conversion_profile, to_processing_profile
 
 logger = logging.getLogger(__name__)
+
+
+def _max_sentences(host: Any) -> int | None:
+    """``content.max_sentences`` from settings (None = no trimming)."""
+    return getattr(host.app.settings.content, "max_sentences", None)
 
 
 async def enqueue_profile_commentary(
@@ -82,12 +88,14 @@ async def fire_post_song_content(host: Any, guild_id: int) -> bool:
     try:
         if host.podcasts.active(guild_id):
             turns = await host.podcasts.segment_turns(guild_id)
+            max_sentences = _max_sentences(host)
             enqueued = False
             # Each turn is inserted at the head, so enqueue in reverse to keep
             # the conversation turn order.
             for turn in reversed(turns):
+                text = trim_sentences(turn.text, max_sentences)
                 if await enqueue_profile_commentary(
-                    host, guild_id, turn.voice_profile_id, turn.text, requester="podcast"
+                    host, guild_id, turn.voice_profile_id, text, requester="podcast"
                 ):
                     enqueued = True
             if turns and not enqueued:
@@ -109,7 +117,9 @@ async def fire_post_song_content(host: Any, guild_id: int) -> bool:
             )
         provider = host.app.build_content_provider()
         request = host.interstitials.build_request(topic, persona)
-        text = await resolve_commentary_text(provider, request)
+        text = await resolve_commentary_text(
+            provider, request, max_sentences=_max_sentences(host)
+        )
         return await enqueue_profile_commentary(
             host, guild_id, profile_id, text, requester="interstitial"
         )

@@ -14,29 +14,40 @@ from typing import Any
 
 from notamusicbot.content import prompts
 from notamusicbot.content.base import ContentRequest
+from notamusicbot.content.trim import trim_sentences
 from notamusicbot.domain.media import MediaKind, PlayableMedia
 from notamusicbot.domain.speech import TtsRequest, VoiceConversionProfile
 
 logger = logging.getLogger(__name__)
 
 
-async def resolve_commentary_text(provider: Any, request: ContentRequest) -> str:
+async def resolve_commentary_text(
+    provider: Any,
+    request: ContentRequest,
+    *,
+    max_sentences: int | None = None,
+) -> str:
     """Generate commentary text via the provider, falling back to the template.
 
     ``provider is None`` (content disabled) and provider failures both yield
-    the static template text, so the result is always speakable.
+    the static template text, so the result is always speakable. When
+    ``max_sentences`` is set, the text (LLM or template) is trimmed to at
+    most that many sentences before it reaches TTS
+    (``content.max_sentences``).
     """
     if provider is None:
-        return _static_for(request)
-    try:
-        return await provider.generate(request)
-    except Exception:
-        logger.warning(
-            "Content provider failed (%s); using static template commentary",
-            request.kind.name,
-            exc_info=True,
-        )
-        return _static_for(request)
+        text = _static_for(request)
+    else:
+        try:
+            text = await provider.generate(request)
+        except Exception:
+            logger.warning(
+                "Content provider failed (%s); using static template commentary",
+                request.kind.name,
+                exc_info=True,
+            )
+            text = _static_for(request)
+    return trim_sentences(text, max_sentences)
 
 
 def _static_for(request: ContentRequest) -> str:
