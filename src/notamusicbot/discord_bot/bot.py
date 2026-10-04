@@ -21,6 +21,7 @@ from notamusicbot.discord_bot.commands import setup_commands
 from notamusicbot.discord_bot.guild_state import GuildState, GuildStateRegistry
 from notamusicbot.discord_bot.interlude_playback import fire_post_song_content
 from notamusicbot.discord_bot.player import GuildPlayer, stop_guild_players
+from notamusicbot.discord_bot.prefetch import CommentaryPrefetcher
 from notamusicbot.domain.media import MediaKind, PlayableMedia, PlaybackOutcome
 from notamusicbot.media.downloader import download_media_audio
 from notamusicbot.media.spotify import SpotifyResolver
@@ -80,6 +81,11 @@ class NotAMusicBot(commands.Bot):
             provider_factory=app.build_content_provider,
             pipeline_factory=lambda: app.pipeline,
         )
+        # Background prefetch of post-song commentary while a STREAM song
+        # plays (speech/content.prefetch_enabled). Generation goes through
+        # the shared InferenceCoordinator, so it never overlaps other GPU
+        # inference; see discord_bot/prefetch.py for the lifecycle.
+        self.prefetch = CommentaryPrefetcher()
         if content_settings.enabled:
             logger.info(
                 "Content generation enabled; interstitials=%s podcast=%s",
@@ -145,6 +151,13 @@ class NotAMusicBot(commands.Bot):
                 logger.warning(
                     "Failed to send now-playing announcement in guild %s", guild_id, exc_info=True
                 )
+            # Kick off post-song commentary prefetch while the song plays.
+            # Fire-and-forget: start_prefetch only spawns a task, but guard it
+            # anyway so announcement failures can never touch playback.
+            try:
+                self.prefetch.start_prefetch(self, guild_id, media)
+            except Exception:
+                logger.warning("Commentary prefetch failed to start in guild %s", guild_id)
 
         return _announce
 
@@ -163,6 +176,18 @@ class NotAMusicBot(commands.Bot):
         async def _on_complete(media: PlayableMedia, outcome: PlaybackOutcome) -> None:
             if media.kind is not MediaKind.STREAM or outcome is not PlaybackOutcome.NATURAL:
                 return
+            # Fast path: a prefetched artifact for THIS song that is ready is
+            # enqueued immediately (near-zero wait, no second LLM/TTS run).
+            # Any non-usable prefetch (still running / failed / not fired /
+            # different song) is discarded here, and the at-completion
+            # generation path below runs exactly as before prefetching.
+            try:
+                if await self.prefetch.consume(self, guild_id, media):
+                    return
+            except Exception:
+                logger.warning(
+                    "Prefetch consume failed in guild %s; falling back", guild_id, exc_info=True
+                )
             try:
                 await fire_post_song_content(self, guild_id)
             except Exception:
@@ -195,6 +220,7 @@ class NotAMusicBot(commands.Bot):
         restarts — the RVC worker after shutdown.
         """
         await self._stop_guild_players()
+        self.prefetch.discard_all()
         try:
             await super().close()
         finally:
