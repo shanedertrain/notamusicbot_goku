@@ -22,7 +22,6 @@ from notamusicbot.domain.speech import (
 )
 from notamusicbot.speech.pipeline import SpeechPipeline
 
-
 # ------------------------------------------------------------------ settings
 
 
@@ -165,11 +164,7 @@ def _run_fake_convert(tmp_path: Path, helper: Any, f0_method: str | None) -> lis
         source_wav.write_bytes(b"fake")
         profile = VoiceConversionProfile(backend="rvc", model="Fake", f0_method=f0_method)
         out = tmp_path / "out.wav"
-        asyncio.run(
-            converter.convert(
-                helper.make_source(source_wav), profile, out
-            )
-        )
+        asyncio.run(converter.convert(helper.make_source(source_wav), profile, out))
         assert out.is_file()
     finally:
         RvcVoiceConverter._spawn_and_wait_ready = original  # type: ignore[method-assign]

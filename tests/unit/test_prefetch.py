@@ -7,12 +7,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 from notamusicbot.discord_bot.prefetch import CommentaryPrefetcher
-from notamusicbot.domain.media import MediaKind, PlaybackOutcome, PlayableMedia
-from notamusicbot.domain.speech import AudioArtifact, TtsRequest, VoiceConversionProfile
-
+from notamusicbot.domain.media import MediaKind, PlayableMedia
+from notamusicbot.domain.speech import AudioArtifact, TtsRequest
 
 # ------------------------------------------------------------------- fakes
 
@@ -133,9 +130,7 @@ class FakeHost:
             {
                 "should_fire": lambda self, guild_id: True,
                 "build_request": lambda self, topic, persona: object(),
-                "topic_source": type(
-                    "T", (), {"pick": staticmethod(_pick_topic)}
-                )(),
+                "topic_source": type("T", (), {"pick": staticmethod(_pick_topic)})(),
             },
         )()
 
@@ -274,9 +269,7 @@ async def async_turns(_self, _guild_id: int) -> list[FakeTurn]:
 
 async def test_interstitial_not_fired_falls_back_without_enqueue(tmp_path: Path) -> None:
     host = FakeHost(tmp_path)
-    host.interstitials = type(
-        "I", (), {"should_fire": lambda self, guild_id: False}
-    )()
+    host.interstitials = type("I", (), {"should_fire": lambda self, guild_id: False})()
     prefetcher = CommentaryPrefetcher()
     prefetcher.start_prefetch(host, 42, make_stream_media())
     await asyncio.sleep(0.05)

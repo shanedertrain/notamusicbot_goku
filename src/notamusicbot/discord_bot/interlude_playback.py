@@ -29,7 +29,9 @@ logger = logging.getLogger(__name__)
 
 def _max_sentences(host: Any) -> int | None:
     """``content.max_sentences`` from settings (None = no trimming)."""
-    return getattr(host.app.settings.content, "max_sentences", None)
+    settings = getattr(host.app, "settings", None)
+    content = getattr(settings, "content", None)
+    return getattr(content, "max_sentences", None)
 
 
 async def enqueue_profile_commentary(
@@ -117,9 +119,7 @@ async def fire_post_song_content(host: Any, guild_id: int) -> bool:
             )
         provider = host.app.build_content_provider()
         request = host.interstitials.build_request(topic, persona)
-        text = await resolve_commentary_text(
-            provider, request, max_sentences=_max_sentences(host)
-        )
+        text = await resolve_commentary_text(provider, request, max_sentences=_max_sentences(host))
         return await enqueue_profile_commentary(
             host, guild_id, profile_id, text, requester="interstitial"
         )

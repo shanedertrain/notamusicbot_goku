@@ -79,7 +79,7 @@ class CommentaryPrefetcher:
         prefetch task was created.
         """
         settings = host.app.settings
-        if not getattr(settings.content, "prefetch_enabled", False):
+        if not getattr(getattr(settings, "content", None), "prefetch_enabled", False):
             return False
         if media.kind is not MediaKind.STREAM:
             return False
@@ -177,7 +177,7 @@ class CommentaryPrefetcher:
 
     async def _generate_media(self, host: Any, guild_id: int) -> list[PlayableMedia]:
         """Mirror of the fire-time decision + generation, WITHOUT enqueueing."""
-        max_sentences = getattr(host.app.settings.content, "max_sentences", None)
+        max_sentences = getattr(getattr(host.app.settings, "content", None), "max_sentences", None)
         if host.podcasts.active(guild_id):
             turns = await host.podcasts.segment_turns(guild_id)
             media: list[PlayableMedia] = []
