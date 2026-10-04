@@ -10,3 +10,6 @@ genai/logs/*
 tools/deno/
 var/
 benchmark/
+
+# Local runtime config (copy of the tracked config/app.example.yaml)
+config/app.yaml

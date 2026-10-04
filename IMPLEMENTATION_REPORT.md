@@ -307,7 +307,8 @@ changes do not alter GPU scheduling): `evidence/gpu_arbitration.json`,
 
 ## Known limitations / follow-up (stated honestly)
 
-- **Live voice-channel playback NOT_RUN** — needs a human in a VC; left for
+- **Live voice-channel playback** — was NOT_RUN; **PASS (user-observed 2026-10-03)**:
+  bot joined voice, `!gplay` + post-song Obama commentary played.
   the user.
 - **Persistent per-model RVC worker cache not implemented** — documented as
   future work; a cross-MODEL (Obama↔Goku) switch still costs ~6.3 s

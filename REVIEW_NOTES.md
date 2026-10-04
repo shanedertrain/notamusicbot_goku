@@ -45,7 +45,7 @@ Round-7 commits (closing the Round-6 review; SHAs verified with
 - Evidence files: `gpu_arbitration.json`, `gpu_residency.json`,
   `rvc_cross_model_switching.json`, `rvc_same_model_warm.json`.
 - Where to look: `git diff --stat f9673d7..f9eccef`.
-- Live Discord voice playback: NOT_RUN (human VC test). Worker-cache future
+- Live Discord voice playback: **PASS (user-observed 2026-10-03)** — bot online as Goku#8715, voice connection, `!gplay` playback + post-song Obama commentary through the voice channel; VRAM 11,072/16,375 MiB. Worker-cache future
   work (~6.3 s cross-model switch, ~0.6 s warm) unchanged.
 - Round-6 items disposition (all closed in Round-7):
 
@@ -80,12 +80,13 @@ suite passes 272/272. Environment incident, not a product defect.
 - Unit suite (main venv, this session): **272 passed / 0 failed / 0
   skipped, no deselects**. mypy: **0 errors in 48 files**. ruff check +
   format --check clean.
-- Live voice-channel playback: **NOT_RUN** — needs a human in a Discord
+- Live voice-channel playback: **PASS (user-observed 2026-10-03)** — was the last
+NOT_RUN; see current state above.
   VC; left for the user (carried).
 
 ## Remaining known items (stated honestly)
 
-1. **Live voice-channel playback NOT_RUN** — needs a human in a Discord
+1. **Live voice-channel playback** — was NOT_RUN through Round 9; **PASS (user-observed 2026-10-03)**: bot online as Goku#8715, `!gplay` playback + post-song Obama commentary in a live voice channel, VRAM 11,072/16,375 MiB.
    VC; left for the user.
 2. **Persistent per-model RVC worker cache not implemented** — future work.
    A cross-MODEL (Obama↔Goku) switch costs ~6.3 s (worker restart + model
@@ -179,7 +180,7 @@ PASS.
 
 ## Remaining known items (stated honestly)
 
-1. **Live voice-channel playback NOT_RUN** — needs a human in a Discord
+1. **Live voice-channel playback** — was NOT_RUN through Round 9; **PASS (user-observed 2026-10-03)**: bot online as Goku#8715, `!gplay` playback + post-song Obama commentary in a live voice channel, VRAM 11,072/16,375 MiB.
    VC; left for the user.
 2. **Persistent per-model RVC worker cache not implemented** — future work.
    A cross-MODEL (Obama↔Goku) switch costs ~6.23 s (worker restart + model

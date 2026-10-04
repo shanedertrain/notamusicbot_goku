@@ -41,7 +41,7 @@ cleanup required (this section). Non-blocking hardening note implemented:
 | mypy | `.venv-main/bin/python -m mypy src/notamusicbot` | **PASS** | **0 errors in 48 files**. |
 | ruff | check + format --check | **PASS** | clean. |
 | Evidence files | `evidence/` | **PASS** | `gpu_arbitration.json`, `gpu_residency.json`, `rvc_cross_model_switching.json`, `rvc_same_model_warm.json`. |
-| Live Discord voice playback | human VC test | **NOT_RUN** | Requires the user in a Discord voice channel (`!gplay`). |
+| Live Discord voice playback | human VC test (2026-10-03) | **PASS (user-observed)** | Bot logged in as Goku#8715, joined voice, `!gplay` song completed, post-song Obama commentary generated (LLM 11.3 s / TTS 44.4 s / RVC Obama variant loaded on cuda:0) and played through the voice channel; VRAM 11,072/16,375 MiB after LLM load. |
 
 Known limitations (accepted): persistent per-model RVC worker cache future work
 (~6.3 s cross-model switch, ~0.6 s warm; variant hot-swap in-process); GPU
@@ -87,7 +87,7 @@ reconciliation).
 | §3 Discord close ordering | unit | **PASS** | `bot.close()` stops all guild player tasks via `stop_guild_players` (await/cancel) **BEFORE** converter teardown and `super().close()`. |
 | mypy | `.venv-main/bin/python -m mypy src/notamusicbot` | **PASS** | **0 errors in 48 files** (unchanged; re-run this round). |
 | ruff check + format --check (changed files) | on `src/notamusicbot/**` and the changed test files | **PASS** | clean. |
-| Live voice-channel playback | human in a Discord VC | **NOT_RUN** | requires a human participant; left for the user (carried). |
+| Live voice-channel playback | human in a Discord VC | **PASS (user-observed 2026-10-03)** | bot joined voice, `!gplay` + post-song Obama commentary played; carried from the historical row below. |
 
 GPU evidence note (review §7.D): the real-GPU runs were **not** re-run this
 round, per the review's explicit allowance — the Round-7 lifecycle changes
@@ -189,7 +189,7 @@ Results carried from the Round-4 return (`f804284` → `9d370fe`,
 | Check | Result | Count |
 |---|---|---|
 | Live Discord smoke (gateway connect + command registration) | **PASS** | coordinator, 2026-10-02 |
-| Live voice-channel playback | **NOT_RUN** | requires a human in a VC; left for the user |
+| Live voice-channel playback | **NOT_RUN at the time** | historical row — completed 2026-10-03, see the current-state table above. |
 
 ## Notes
 
