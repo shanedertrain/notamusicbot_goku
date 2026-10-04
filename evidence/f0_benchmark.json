@@ -1,0 +1,32 @@
+{
+  "timestamp_utc": "2026-10-04T04:55:30.064593+00:00",
+  "commit": "1e51f4f",
+  "gpu": "NVIDIA GeForce RTX 4070 Ti SUPER",
+  "input_wav": "/home/cbash23/projects/notamusicbot_goku/rvc_cli/input/hello.wav",
+  "input_duration_s": 36.96,
+  "model": "Obama",
+  "variant": null,
+  "results": [
+    {
+      "method": "harvest",
+      "wall_seconds": 18.265,
+      "output_wav": "/home/cbash23/projects/notamusicbot_goku/var/f0_benchmark/out_obama_harvest.wav",
+      "output_duration_s": 36.94,
+      "rtf": 0.494
+    },
+    {
+      "method": "pm",
+      "wall_seconds": 0.662,
+      "output_wav": "/home/cbash23/projects/notamusicbot_goku/var/f0_benchmark/out_obama_pm.wav",
+      "output_duration_s": 36.94,
+      "rtf": 0.018
+    },
+    {
+      "method": "crepe",
+      "wall_seconds": 15.735,
+      "output_wav": "/home/cbash23/projects/notamusicbot_goku/var/f0_benchmark/out_obama_crepe.wav",
+      "output_duration_s": 36.94,
+      "rtf": 0.426
+    }
+  ]
+}

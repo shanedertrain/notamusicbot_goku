@@ -42,6 +42,10 @@ os.chdir(REPO_ROOT)  # voice_converter resolves "hubert_base.pt" relative to cwd
 CONVERT_TIMEOUT_SECONDS = float(os.environ.get("RVC_WORKER_CONVERT_TIMEOUT", "120"))
 LOAD_TIMEOUT_SECONDS = float(os.environ.get("RVC_WORKER_LOAD_TIMEOUT", "300"))
 
+# f0 extraction methods rvc_cli's vc_infer_pipeline supports. Requests may
+# override the model yaml's f0_method with one of these (config-selectable).
+ALLOWED_F0_METHODS = {"pm", "harvest", "dio", "crepe", "crepe-tiny"}
+
 # Set to the protocol stream at startup in main(); falls back to stdout.
 _PROTOCOL_OUT = sys.stdout
 

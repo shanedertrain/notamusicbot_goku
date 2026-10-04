@@ -1,0 +1,29 @@
+{
+  "timestamp_utc": "2026-10-04T04:57:44.431434+00:00",
+  "commit": "1e51f4f",
+  "gpu": "NVIDIA GeForce RTX 4070 Ti SUPER",
+  "uncapped": {
+    "tag": "uncapped",
+    "max_sentences": null,
+    "llm_seconds": 4.394,
+    "raw_text_chars": 243,
+    "spoken_text": "Alice, you're asking for Queen\u2019s *Bohemian Rhapsody*\u2014so I\u2019m guessing you\u2019ve got a mysterious side, like a hidden solo act in the galaxy. Just like the song\u2019s dramatic breaks, I bet you\u2019ve got a secret opera-worthy life plan we\u2019ve never seen! \ud83d\ude80",
+    "spoken_sentences": 2,
+    "tts_seconds": 31.434,
+    "audio_duration_s": 15.6,
+    "tts_rtf": 2.013,
+    "final_wav": "/home/cbash23/projects/notamusicbot_goku/var/commentary_len_bench/uncapped/05560988b7c7/final.wav"
+  },
+  "capped": {
+    "tag": "capped_3",
+    "max_sentences": 3,
+    "llm_seconds": 3.89,
+    "raw_text_chars": 355,
+    "spoken_text": "Hey galactic listeners, it\u2019s your host, and we\u2019re diving into Queen\u2019s legendary *Bohemian Rhapsody*\u2014a song that\u2019s got more layers than Alice\u2019s favorite space coffee shop! Honestly, I can\u2019t believe she asked for this\u2014she\u2019s got the *mood* of a rock opera and the energy of a spaceship docking at the nearest nebula. Let\u2019s ride that rhapsody into the cosmos!",
+    "spoken_sentences": 2,
+    "tts_seconds": 39.967,
+    "audio_duration_s": 21.84,
+    "tts_rtf": 1.829,
+    "final_wav": "/home/cbash23/projects/notamusicbot_goku/var/commentary_len_bench/capped/cc42cc3a69b5/final.wav"
+  }
+}
