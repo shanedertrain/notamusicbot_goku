@@ -21,3 +21,7 @@ class VoiceConverter(Protocol):
     ) -> AudioArtifact:
         """Convert ``source`` speech toward the target voice; PCM WAV out."""
         ...
+
+    async def shutdown(self) -> None:
+        """Release backend resources (no-op for stateless backends)."""
+        ...

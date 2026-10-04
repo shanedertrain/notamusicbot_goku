@@ -17,6 +17,7 @@ no process restart, no weight reload.
 from __future__ import annotations
 
 import asyncio
+import atexit
 import json
 import logging
 import os
@@ -139,6 +140,11 @@ class RvcVoiceConverter:
             convert_timeout_s or os.environ.get("RVC_WORKER_CONVERT_TIMEOUT", "120")
         )
         self._process: subprocess.Popen[str] | None = None
+        # Live-shutdown hardening (user report: a second Ctrl+C bypasses the
+        # async close path and would orphan the worker subprocess, which keeps
+        # VRAM allocated). atexit runs on ANY interpreter exit — clean,
+        # KeyboardInterrupt-forced, or os._exit-excepted — and reaps the worker.
+        atexit.register(self._kill_worker_at_exit)
         self._next_request_id = 1
         # Loaded-model cache identity: (resolved model directory, yaml
         # variant). Two variants of one directory are DISTINCT identities
@@ -418,6 +424,26 @@ class RvcVoiceConverter:
         self._process = None
         self._loaded_key = None
         await self.start()
+
+    def _kill_worker_at_exit(self) -> None:
+        """atexit last-resort: reap the worker subprocess on any exit path.
+
+        The async ``shutdown()`` is the clean path; this catches the unclean
+        ones (second Ctrl+C, ``os._exit``, unhandled crash) so the worker
+        cannot outlive the application holding GPU memory.
+        """
+        process = self._process
+        if process is None or process.poll() is not None:
+            return
+        try:
+            process.kill()
+        except (OSError, ValueError):
+            return
+        try:
+            process.wait(timeout=5)
+            logger.info("RVC worker reaped at interpreter exit")
+        except subprocess.TimeoutExpired:
+            logger.warning("RVC worker did not die after exit kill; it may be orphaned")
 
     @staticmethod
     def _terminate(process: subprocess.Popen[str]) -> None:

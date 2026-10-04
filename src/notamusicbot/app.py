@@ -9,8 +9,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import signal
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from notamusicbot.config import AppSettings, SecretsSettings, load_app_settings
 from notamusicbot.content.base import ContentProvider
@@ -69,6 +72,9 @@ class _LazySpeechSynthesizer:
 
 
 class Application:
+    # Live-shutdown hardening: bound the inference drain so Ctrl+C stays
+    # responsive even when a TTS clip (~45 s) is in flight.
+    SHUTDOWN_DRAIN_TIMEOUT_S = 30.0
     """Owns all long-lived components; constructed once per process."""
 
     def __init__(
@@ -275,8 +281,21 @@ class Application:
             except asyncio.CancelledError:
                 pass
         self._warmup_task = None
-        await self.coordinator.close()
-        await self.converter_router.shutdown()
+        # Live-shutdown hardening (user report: Ctrl+C looked hung): the drain
+        # waits for in-flight GPU work (a TTS clip can run ~45 s). Bound it so
+        # interactive shutdown stays responsive; the coordinator is still
+        # closed (flag set first inside close), we just stop waiting for
+        # stragglers before tearing down the backends.
+        try:
+            await asyncio.wait_for(self.coordinator.close(), timeout=self.SHUTDOWN_DRAIN_TIMEOUT_S)
+        except TimeoutError:
+            logger.warning(
+                "Inference drain timed out after %ss; proceeding with backend teardown",
+                self.SHUTDOWN_DRAIN_TIMEOUT_S,
+            )
+        # Use the backing attribute: tests inject protocol-level converter
+        # spies that satisfy shutdown() but are not VoiceConverterRouter.
+        await self.converter.shutdown()
 
     async def warmup(self) -> None:
         """Best-effort model warmup; failures are logged and never fatal."""
@@ -317,7 +336,22 @@ class Application:
 def main() -> None:
     configure_logging()
     app = Application(load_app_settings())
+    # Live-shutdown hardening (user report): a second Ctrl+C during the
+    # bounded close means the user wants OUT now. Force-exit instead of
+    # unwinding through teardown that may itself block; the RVC worker is
+    # reaped by its atexit hook either way.
+    _sigint_count = 0
+
+    def _on_sigint(signum: int, frame: Any) -> None:
+        nonlocal _sigint_count
+        _sigint_count += 1
+        if _sigint_count >= 2:
+            logger.warning("Second Ctrl+C received; forcing exit")
+            os._exit(130)
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGINT, _on_sigint)
     try:
         app.run_discord()
     except KeyboardInterrupt:
-        logger.info("Shutting down")
+        logger.info("Shutting down (press Ctrl+C again to force exit)")

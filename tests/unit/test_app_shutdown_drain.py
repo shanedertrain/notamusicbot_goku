@@ -246,3 +246,55 @@ class _FakeMedia:  # minimal duck-typed queue item for drain/cleanup
     kind = None
     source_path = None  # cleanup_media_item() no-ops on unbacked items
     temp_file = False
+
+
+@pytest.mark.asyncio
+async def test_shutdown_drain_is_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Live-shutdown hardening: if the coordinator drain stalls (a long TTS
+    clip in flight), app.shutdown() must not wait forever — it proceeds to
+    router teardown after the (shortened, injected) drain timeout."""
+    app = _app()
+    app.converter = _CountingConverter()  # type: ignore[assignment]
+
+    class _StalledCoordinator:
+        def __init__(self) -> None:
+            self.close_calls = 0
+
+        async def close(self) -> None:
+            self.close_calls += 1
+            await asyncio.Event().wait()  # never completes
+
+        async def run_detached(self, async_fn: Any, *args: Any) -> Any:
+            return await async_fn()
+
+    app.coordinator = _StalledCoordinator()  # type: ignore[assignment]
+    monkeypatch.setattr(Application, "SHUTDOWN_DRAIN_TIMEOUT_S", 0.2)
+
+    await asyncio.wait_for(app.shutdown(), 10)
+
+    assert app.coordinator.close_calls == 1
+    assert app.converter.shutdowns == 1  # teardown happened despite the stall
+
+
+@pytest.mark.asyncio
+async def test_shutdown_still_drains_when_job_finishes_in_time() -> None:
+    """The normal path is unchanged: a coordinator that closes promptly is
+    awaited to completion before router teardown."""
+    app = _app()
+    app.converter = _CountingConverter()  # type: ignore[assignment]
+    order: list[str] = []
+
+    class _PromptCoordinator:
+        async def close(self) -> None:
+            order.append("drained")
+
+    app.coordinator = _PromptCoordinator()  # type: ignore[assignment]
+
+    class _OrderingConverter(_CountingConverter):
+        async def shutdown(self) -> None:
+            order.append("rvc-shutdown")
+            await super().shutdown()
+
+    app.converter = _OrderingConverter()  # type: ignore[assignment]
+    await app.shutdown()
+    assert order == ["drained", "rvc-shutdown"]

@@ -31,3 +31,7 @@ class PassthroughVoiceConverter:
             sample_rate_hz=source.sample_rate_hz,
             duration_s=source.duration_s,
         )
+
+    async def shutdown(self) -> None:
+        """No resources to release: passthrough copies files and exits."""
+        return None
