@@ -294,3 +294,28 @@ async def test_close_rejects_slot_waiter_blocked_on_gpu_semaphore() -> None:
     await asyncio.wait_for(close_task, 5)
     assert entered == ["a"]  # B's body NEVER executed
     assert coord.closed is True
+
+
+@pytest.mark.asyncio
+async def test_close_from_inside_slot_raises_instead_of_deadlock() -> None:
+    """Final-review hardening note: close() called from a task that currently
+    holds slot() would self-wait on _holders; it raises a clear RuntimeError
+    instead."""
+    coord = InferenceCoordinator(max_concurrent=1, queue_size=0)
+    err: BaseException | None = None
+
+    async def holder_job() -> None:
+        nonlocal err
+        async with coord.slot():
+            try:
+                await coord.close()
+            except RuntimeError as exc:
+                err = exc
+
+    await asyncio.wait_for(holder_job(), 5)
+    assert err is not None and "holds slot()" in str(err)
+    # The coordinator is NOT closed (close aborted before flag set); close()
+    # from a healthy task still works.
+    assert coord.closed is False
+    await coord.close()
+    assert coord.closed is True

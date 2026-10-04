@@ -334,10 +334,19 @@ class InferenceCoordinator:
            job that began keeps its lease until its coroutine/ thread finished
            (same invariant as caller cancellation, Round-4 P0).
 
-        Returns only when no coordinator work is in flight, so an application
-        can safely tear down inference backends (e.g. the RVC worker)
         afterwards without racing a late GPU job. Idempotent.
+
+        Hardening (final review non-blocking note): calling ``close()`` from
+        inside a task that currently holds ``slot()`` would self-wait on
+        ``_holders``; that is detected and raises a clear ``RuntimeError``
+        instead of deadlocking.
         """
+        caller = asyncio.current_task()
+        if caller is not None and caller in self._holders:
+            raise RuntimeError(
+                "coordinator.close() called from a task that currently holds "
+                "slot(); exit the slot before closing"
+            )
         self._closed = True
         pending: list[asyncio.Task[Any]] = []
         for holder, started in list(self._holder_started.items()):
