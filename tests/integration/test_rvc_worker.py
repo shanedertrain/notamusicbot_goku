@@ -2,8 +2,8 @@
 
 Skipped cleanly unless the legacy assets are present:
 
-- repo-root ``.venv/bin/python``  (Python 3.10 legacy env with fairseq/torch cu121)
-- ``hubert_base.pt`` at the repo root
+- repo-root ``.venv/bin/python``  (Python 3.12 legacy env with torch cu121)
+- ``hubert_base.state_dict.pt`` at the repo root
 - at least one complete model under ``rvc_cli/models/`` (e.g. Goku)
 
 Run for real with the MAIN venv's pytest (test process) while the worker
@@ -29,7 +29,7 @@ import soundfile as sf
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKER = REPO_ROOT / "legacy" / "rvc_worker.py"
 LEGACY_PYTHON = REPO_ROOT / ".venv" / "bin" / "python"
-HUBERT = REPO_ROOT / "hubert_base.pt"
+HUBERT = REPO_ROOT / "hubert_base.state_dict.pt"
 MODELS_DIR = REPO_ROOT / "rvc_cli" / "models"
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 
@@ -68,7 +68,7 @@ def _assets_available() -> bool:
 
 pytestmark_skip = pytest.mark.skipif(
     not _assets_available(),
-    reason="legacy RVC assets missing (.venv, hubert_base.pt or rvc_cli/models/<name>)",
+    reason="legacy RVC assets missing (.venv, hubert_base.state_dict.pt or rvc_cli/models/<name>)",
 )
 
 

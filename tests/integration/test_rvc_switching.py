@@ -2,7 +2,7 @@
 
 Review Round-2 P1 evidence: measures per-switch reload cost (worker restart +
 model load) when alternating Obama/Goku versus same-model warm conversions.
-Requires the legacy env (.venv), hubert_base.pt and both model dirs; skipped
+Requires the legacy env (.venv), hubert_base.state_dict.pt and both model dirs; skipped
 otherwise. Run with:
 
     .venv-main/bin/python -m pytest tests/integration/test_rvc_switching.py \
@@ -33,7 +33,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 def _assets_ready() -> bool:
     if not (REPO_ROOT / ".venv" / "bin" / "python").is_file():
         return False
-    if not (REPO_ROOT / "hubert_base.pt").is_file():
+    if not (REPO_ROOT / "hubert_base.state_dict.pt").is_file():
         return False
     return len(available_models(["Goku", "Obama"])) >= 2
 

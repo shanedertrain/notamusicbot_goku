@@ -3,6 +3,7 @@ input/*
 logs/*
 output/*
 hubert_base.pt
+hubert_base.state_dict.pt
 .env
 .cache
 genai/logs/*

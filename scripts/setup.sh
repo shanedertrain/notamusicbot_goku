@@ -5,17 +5,19 @@
 # Usage:
 #   ./scripts/setup.sh              # full setup + non-GPU sanity checks
 #   ./scripts/setup.sh --gpu-check  # additionally run Qwen TTS + RVC smoke tests
-#   ./scripts/setup.sh --no-rvc     # skip the legacy Python 3.10 RVC environment
+#   ./scripts/setup.sh --no-rvc     # skip the legacy Python 3.12 RVC environment
 #
 # PLATFORM REQUIREMENT (P2-21): the runtime targets **Linux / WSL only**.
 # Windows is not natively supported — use WSL2 on Windows. The script and the
 # application rely on POSIX paths (.venv-main/bin/python), Bash and ffmpeg.
 #
 # REQUIRED RVC ASSETS (not distributed with the repo; must be supplied locally):
-#   - hubert_base.pt                 at the repository root (HuBERT feature
-#                                    extractor; obtain from the RVC project
-#                                    releases, e.g. fatetudio/retrieve or the
-#                                    Retrieval-based-Voice-Conversion repo).
+#   - hubert_base.state_dict.pt      at the repository root (HuBERT feature
+#                                    extractor as a plain tensor state dict,
+#                                    loaded by rvc_cli/hubert_loader.py — no
+#                                    fairseq needed). Produced ONCE from
+#                                    hubert_base.pt with the old py3.10 fairseq
+#                                    venv; see LEGACY_VENV.md.
 #   - rvc_cli/models/<Name>/*.pth    per-voice model weights (one directory per
 #                                    voice, mixed-case directory names such as
 #                                    models/Obama, models/Goku).
@@ -24,7 +26,7 @@
 #                                    stem is the legacy model name (e.g.
 #                                    obama_trans.yaml defines OBAMA_TRANS, which
 #                                    shares the Obama weights).
-# Without hubert_base.pt the legacy RVC worker cannot start; voice profiles can
+# Without hubert_base.state_dict.pt the legacy RVC worker cannot start; voice profiles can
 # still use voice_conversion.backend: passthrough.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -238,15 +240,14 @@ with open(sys.argv[1], encoding="utf-8") as fh:
 }
 
 # ---------------------------------------------------------------------------
-log "6/7 Legacy RVC environment (Python 3.10, fairseq)"
+log "6/7 Legacy RVC environment (Python 3.12, no fairseq)"
 if [ "$WITH_RVC" = "1" ]; then
-  if [ -x .venv/bin/python ] && .venv/bin/python -c "import fairseq" 2>/dev/null; then
-    ok "legacy .venv (py3.10 + fairseq) already present"
+  if [ -x .venv/bin/python ] && .venv/bin/python -c "import torch, librosa" 2>/dev/null; then
+    ok "legacy .venv (py3.12, no fairseq) already present"
   else
-    warn "Building legacy RVC venv (large: torch cu121 + fairseq build)..."
-    uv venv --python 3.10 .venv
-    uv pip install -p .venv "numpy==1.26.4" "cython<3" wheel "setuptools<81"
-    uv pip install -p .venv fairseq==0.12.2
+    warn "Building legacy RVC venv (large: torch cu121)..."
+    uv venv --python 3.12 .venv
+    uv pip install -p .venv "numpy==1.26.4"
     uv pip install -p .venv "torch==2.5.0" "torchaudio==2.5.0" --index-url https://download.pytorch.org/whl/cu121
     uv pip install -p .venv setuptools librosa faiss-cpu soundfile praat-parselmouth resampy soxr pyworld torchcrepe audiostretchy pydub gTTS pyttsx3 pyyaml python-dotenv "cython<3"
     # ffmpeg-python shim: legacy rvc_cli imports it; system ffmpeg CLI is used.
@@ -255,7 +256,7 @@ if [ "$WITH_RVC" = "1" ]; then
     uv pip install -p .venv ffmpeg-python || true
     ok "legacy RVC venv built"
   fi
-  [ -f hubert_base.pt ] || fail "hubert_base.pt missing at repo root — required by RVC. See 'REQUIRED RVC ASSETS' in this script's header for where to obtain it."
+  [ -f hubert_base.state_dict.pt ] || fail "hubert_base.state_dict.pt missing at repo root — required by RVC. It is produced once from hubert_base.pt (see LEGACY_VENV.md)."
   ls rvc_cli/models >/dev/null 2>&1 && ok "RVC voice models present ($(ls rvc_cli/models | wc -l) models)" || warn "no rvc_cli/models — target voices unavailable"
   # Review Round-3 P2: hard-fail on missing required assets for every enabled
   # rvc profile (model dir, variant yaml, weights, index). Previously this was

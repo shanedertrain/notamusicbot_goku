@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 """Legacy RVC voice-conversion worker.
 
-Long-running process that must be executed with the legacy Python 3.10
-environment (repo-root ``.venv``) because it imports the ``rvc_cli``
-submodule, which needs fairseq 0.12.2 / torch 2.5.0+cu121.
+Long-running process that must be executed with the legacy RVC environment
+(repo-root ``.venv``, Python 3.12) because it imports the ``rvc_cli``
+submodule, which needs torch 2.5.0+cu121 (HuBERT via rvc_cli/hubert_loader.py, no fairseq).
 
 It loads ONE RVC model persistently and serves line-based JSON requests on
 stdin / responses on stdout.  See legacy/README.md for the protocol.
@@ -37,7 +37,7 @@ RVC_CLI_DIR = REPO_ROOT / "rvc_cli"
 # working directory instead of relying on the caller's environment.
 sys.path.insert(0, str(RVC_CLI_DIR))
 sys.path.insert(0, str(REPO_ROOT))
-os.chdir(REPO_ROOT)  # voice_converter resolves "hubert_base.pt" relative to cwd
+os.chdir(REPO_ROOT)  # voice_converter resolves "hubert_base.state_dict.pt" relative to cwd
 
 CONVERT_TIMEOUT_SECONDS = float(os.environ.get("RVC_WORKER_CONVERT_TIMEOUT", "120"))
 LOAD_TIMEOUT_SECONDS = float(os.environ.get("RVC_WORKER_LOAD_TIMEOUT", "300"))

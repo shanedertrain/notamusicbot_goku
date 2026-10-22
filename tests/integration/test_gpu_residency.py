@@ -34,7 +34,7 @@ pytestmark = [
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 LEGACY_PYTHON = REPO_ROOT / ".venv" / "bin" / "python"
-HUBERT = REPO_ROOT / "hubert_base.pt"
+HUBERT = REPO_ROOT / "hubert_base.state_dict.pt"
 GOKU_DIR = REPO_ROOT / "rvc_cli" / "models" / "Goku"
 
 

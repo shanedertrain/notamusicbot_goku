@@ -74,9 +74,15 @@ combination (torch 2.14.1+cu130, transformers 4.57.3) is documented in
 
 Deliberately **not** dependencies of the main environment:
 
-- `fairseq`, `pyworld`, `faiss`, `torchcrepe`, etc. stay only in the legacy
-  Python 3.10 RVC venv (`.venv`) used by `legacy/rvc_worker.py` / `rvc_cli`.
-  The main environment never imports them. Round-4 `9d370fe` also makes
+- `pyworld`, `faiss`, `torchcrepe`, etc. stay only in the legacy Python 3.12
+  RVC venv (`.venv`) used by `legacy/rvc_worker.py` / `rvc_cli`.
+  `fairseq` was **removed** from that venv: 0.12.2 does not support
+  Python >= 3.11, and the legacy venv is now Python 3.12. HuBERT is loaded by
+  `rvc_cli/hubert_loader.py` (pure PyTorch, a reimplementation of fairseq's
+  `HubertModel.extract_features`) from `hubert_base.state_dict.pt`, a plain
+  tensor state dict generated once from `hubert_base.pt` with the old py3.10
+  fairseq venv (see `LEGACY_VENV.md`).
+  The main environment never imports any of them. Round-4 `9d370fe` also makes
   `setup.sh` validate each enabled RVC profile's assets (model dir,
   `<variant>.yaml`, `.pth`, `.index`) and exit non-zero when missing — no new
   Python packages were added for this.
@@ -92,16 +98,21 @@ Deliberately **not** dependencies of the main environment:
 
 ## Legacy RVC venv dependencies (`scripts/setup.sh`, Gate R7)
 
-The legacy Python 3.10 RVC environment is built **from scratch** by
+The legacy RVC environment is **Python 3.12** and is built **from scratch** by
 `scripts/setup.sh` (proven on a fresh clone in the Round-3 return; setup
 exits non-zero on missing assets). Its dependency list was completed in
 `548b15007f87eb11d85cb52523d2e460de159e3d`:
 
 - previously missing legacy deps now installed: `audiostretchy`, `pydub`,
   `gTTS`, `pyttsx3`, `pyyaml`, `python-dotenv`;
-- `setuptools<81` pinned in that venv — setuptools 84 dropped
-  `pkg_resources`, which the legacy stack (fairseq era) still imports;
-- `fairseq` is compiled there (torch 2.5.0+cu121).
+- `fairseq` is **not** installed: 0.12.2 does not support Python >= 3.11, so
+  the venv moved to Python 3.12 and the fairseq build (and the
+  `cython<3`/`wheel`/`setuptools<81` pre-install that only existed to build
+  it) was dropped;
+- HuBERT is loaded by `rvc_cli/hubert_loader.py` (pure PyTorch) from
+  `hubert_base.state_dict.pt`; that file is generated once from
+  `hubert_base.pt` using the old py3.10 fairseq venv (see `LEGACY_VENV.md`);
+- torch 2.5.0+cu121 is still installed there.
 
 These stay out of the main environment; the main app never imports them.
 
