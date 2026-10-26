@@ -54,6 +54,10 @@ class StreamParams:
     f0_method: str = "pm"
     use_index: bool = False
     index_rate: float | None = None
+    index_nprobe: int | None = None
+    f0_algo: str = "pm"  # "pm" (default, cheap) or "rmvpe" (GPU, needs rvc_f0 + weights)
+    protect: float | None = None  # None / 0.5 = off; 0..0.5 keeps raw features on unvoiced frames
+    f0_post: dict | None = None  # rvc_f0.F0PostConfig fields
 
     def validate(self) -> None:
         for name, (low, high) in _RANGES_MS.items():
@@ -76,6 +80,27 @@ class StreamParams:
             raise ValueError("streaming supports only pm")
         if self.index_rate is not None and not 0.0 <= float(self.index_rate) <= 1.0:
             raise ValueError("index_rate must be in 0..1")
+        if self.f0_algo not in ("pm", "rmvpe"):
+            raise ValueError(f"f0_algo must be 'pm' or 'rmvpe', got {self.f0_algo!r}")
+        if self.index_nprobe is not None and (
+            isinstance(self.index_nprobe, bool)
+            or not isinstance(self.index_nprobe, int)
+            or not 1 <= self.index_nprobe <= 256
+        ):
+            raise ValueError("index_nprobe must be an int in 1..256")
+        if self.protect is not None and (
+            isinstance(self.protect, bool)
+            or not isinstance(self.protect, (int, float))
+            or not 0.0 <= float(self.protect) <= 0.5
+        ):
+            raise ValueError("protect must be a number in 0..0.5")
+        if self.f0_post is not None:
+            if not isinstance(self.f0_post, dict):
+                raise ValueError("f0_post must be an object")
+            allowed = {"median_width", "octave_repair", "clamp_min_hz", "clamp_max_hz", "fill_gap_frames"}
+            unknown = sorted(set(self.f0_post) - allowed)
+            if unknown:
+                raise ValueError(f"unknown f0_post keys: {unknown}")
 
     @classmethod
     def from_fields(cls, fields_: dict[str, Any]) -> StreamParams:
@@ -293,6 +318,9 @@ class StreamEngine:
 
 def _resolve_index_path(vc: Any) -> str | None:
     """Locate the faiss index file; the stored path is relative to rvc_cli/."""
+    abs_path = getattr(vc, "index_abs_path", None)
+    if isinstance(abs_path, str) and os.path.isfile(abs_path):
+        return abs_path
     raw = getattr(vc, "index_path_stripped", None)
     if not raw:
         return None
@@ -333,12 +361,24 @@ def make_rvc_window_converter(vc: Any, vc_args: Any, params: StreamParams) -> Wi
     index_rows = None
     index_rate = float(params.index_rate if params.index_rate is not None else vc_args.index_rate)
     if params.use_index and index_rate:
-        index_path = _resolve_index_path(vc)
-        if index_path is not None:
-            import faiss
+        if hasattr(vc, "get_index") and getattr(vc, "index_abs_path", None):
+            index, index_rows = vc.get_index(params.index_nprobe)  # read once per model
+        else:
+            index_path = _resolve_index_path(vc)
+            if index_path is not None:
+                import faiss
 
-            index = faiss.read_index(index_path)
-            index_rows = index.reconstruct_n(0, index.ntotal)
+                index = faiss.read_index(index_path)
+                index_rows = index.reconstruct_n(0, index.ntotal)
+                if params.index_nprobe is not None:
+                    faiss.ParameterSpace().set_index_parameter(index, "nprobe", int(params.index_nprobe))
+    protect = params.protect if params.protect is not None and params.protect < 0.5 else None
+    rvc_f0 = None
+    f0_post_cfg = None
+    if params.f0_algo == "rmvpe":
+        import rvc_f0  # legacy/rvc_f0.py; the script directory is on sys.path
+
+        f0_post_cfg = rvc_f0.F0PostConfig(**params.f0_post) if params.f0_post else None
 
     if tgt_sr == OUT_SAMPLE_RATE_HZ:
         up = down = 1
@@ -352,7 +392,10 @@ def make_rvc_window_converter(vc: Any, vc_args: Any, params: StreamParams) -> Wi
         x16 = signal.filtfilt(hp_b, hp_a, x16).astype(np.float32)
         p_len = x16.shape[0] // 160
         # f0 (pm) + the mel quantisation of VC.get_f0, minus its print().
-        f0 = pipe.get_f0_pm_computation(x16, 10.0, f0_min, f0_max, p_len)
+        if rvc_f0 is not None:
+            f0 = np.array(rvc_f0.extract_f0(x16, p_len, "rmvpe", f0_min=f0_min, f0_max=f0_max, post=f0_post_cfg))
+        else:
+            f0 = pipe.get_f0_pm_computation(x16, 10.0, f0_min, f0_max, p_len)
         f0 = f0 * pow(2, pitch_shift / 12)
         f0_mel = 1127 * np.log(1 + f0 / 700)
         f0_mel[f0_mel > 0] = (f0_mel[f0_mel > 0] - mel_min) * 254 / (mel_max - mel_min) + 1
@@ -370,12 +413,19 @@ def make_rvc_window_converter(vc: Any, vc_args: Any, params: StreamParams) -> Wi
                 source=feats, padding_mask=mask, output_layer=layer
             )
             feats = vc.hubert_model.final_proj(logits[0]) if is_v1 else logits[0]
+            feats0 = feats if protect is not None else None
             if index is not None:
                 npy = feats[0].float().cpu().numpy()
+                npy_in = npy
                 score, ix = index.search(npy, k=8)
+                score = np.maximum(score, 1e-6)
                 weight = np.square(1 / score)
-                weight /= weight.sum(axis=1, keepdims=True)
+                wsum = weight.sum(axis=1, keepdims=True)
+                weight /= np.maximum(wsum, 1e-30)
                 npy = np.sum(index_rows[ix] * np.expand_dims(weight, 2), axis=1)
+                empty = (ix < 0).all(axis=1)
+                if empty.any():
+                    npy[empty] = npy_in[empty]
                 if is_half:
                     npy = npy.astype("float16")
                 blended = torch.from_numpy(npy).unsqueeze(0).to(device)
@@ -383,6 +433,17 @@ def make_rvc_window_converter(vc: Any, vc_args: Any, params: StreamParams) -> Wi
             feats = torch.nn.functional.interpolate(feats.permute(0, 2, 1), scale_factor=2)
             feats = feats.permute(0, 2, 1)
             n = min(p_len, feats.shape[1])
+            if feats0 is not None:
+                feats0 = torch.nn.functional.interpolate(feats0.permute(0, 2, 1), scale_factor=2).permute(0, 2, 1)
+                pitchff = pitchf.clone()
+                pitchff[pitchf > 0] = 1
+                pitchff[pitchf < 1] = protect
+                pitchff = pitchff.unsqueeze(-1)
+                n_f = feats.shape[1]
+                if pitchff.shape[1] < n_f:
+                    pitchff = torch.nn.functional.pad(pitchff, (0, 0, 0, n_f - pitchff.shape[1]), value=1.0)
+                pitchff = pitchff[:, :n_f]
+                feats = (feats * pitchff + feats0 * (1 - pitchff)).to(feats0.dtype)
             lengths = torch.tensor([n], device=device).long()
             sid = torch.tensor(sid_value, device=device).unsqueeze(0).long()
             out = vc.net_g.infer(feats, lengths, pitch[:, :n], pitchf[:, :n], sid)[0][0, 0]

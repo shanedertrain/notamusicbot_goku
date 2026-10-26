@@ -31,6 +31,11 @@ CHAT_SYSTEM_PROMPT = (
 )
 
 
+def chat_system_prompt(request: ContentRequest) -> str:
+    """System message for a listen-mode reply: the persona's own prompt, else Goku's."""
+    return request.system_prompt.strip() or CHAT_SYSTEM_PROMPT
+
+
 def _persona_clause(persona_description: str) -> str:
     persona = persona_description.strip() or "a friendly radio host"
     return f"You are {persona} and remember to speak in first person."

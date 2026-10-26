@@ -56,3 +56,26 @@ def test_non_listen_prompts_unchanged() -> None:
     assert "18 words" not in prompts.build_news_comment_prompt(news)
     reddit = ContentRequest(kind=ContentKind.REDDIT, post_title="t", post_text="x")
     assert "18 words" not in prompts.build_reddit_comment_prompt(reddit)
+
+
+def test_chat_system_prompt_defaults_to_goku_and_honours_persona_override() -> None:
+    from notamusicbot.content.base import ContentKind, ContentRequest
+
+    plain = ContentRequest(kind=ContentKind.CHAT)
+    assert prompts.chat_system_prompt(plain) == prompts.CHAT_SYSTEM_PROMPT
+    custom = ContentRequest(kind=ContentKind.CHAT, system_prompt="  You are Barack Obama.  ")
+    assert prompts.chat_system_prompt(custom) == "You are Barack Obama."
+
+
+def test_obama_profile_carries_its_own_chat_prompt() -> None:
+    from pathlib import Path
+
+    import yaml
+
+    from notamusicbot.domain.voice_profiles import VoiceProfile
+
+    path = Path(__file__).resolve().parents[2] / "config" / "voices" / "obama.yaml"
+    profile = VoiceProfile(**yaml.safe_load(path.read_text()))
+    assert "Barack Obama" in profile.persona.chat_prompt
+    assert "Goku" not in profile.persona.chat_prompt
+    assert profile.voice_conversion.model == "Obama"

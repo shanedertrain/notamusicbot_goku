@@ -48,6 +48,9 @@ class ContentRequest:
     # pre-rendered one line per turn (oldest first).
     transcript_text: str = ""
     chat_history: tuple[str, ...] = ()
+    # Persona-specific listen-mode system prompt (voice profile ``persona.chat_prompt``);
+    # empty = the default Goku ``prompts.CHAT_SYSTEM_PROMPT``.
+    system_prompt: str = ""
 
 
 @runtime_checkable

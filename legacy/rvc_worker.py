@@ -101,7 +101,130 @@ class _FakeEngine:
 
 # f0 extraction methods rvc_cli's vc_infer_pipeline supports. Requests may
 # override the model yaml's f0_method with one of these (config-selectable).
-ALLOWED_F0_METHODS = {"pm", "harvest", "dio", "crepe", "crepe-tiny"}
+# "rmvpe" is accepted for convert only (needs legacy/rvc_f0.py + the weights);
+# stream_open keeps f0_method pm-only and selects rmvpe through ``f0_algo``.
+ALLOWED_F0_METHODS = {"pm", "harvest", "dio", "crepe", "crepe-tiny", "rmvpe"}
+
+_F0_POST_KEYS = ("median_width", "octave_repair", "clamp_min_hz", "clamp_max_hz", "fill_gap_frames")
+_CONVERT_QUALITY_KEYS = (
+    "use_index",
+    "index_rate",
+    "index_nprobe",
+    "protect",
+    "rms_mix_rate",
+    "f0_post",
+    "auto_pitch",
+)
+_STREAM_QUALITY_KEYS = ("use_index", "index_rate", "index_nprobe", "protect", "f0_post")
+
+
+def _rmvpe_available() -> bool:
+    """True when legacy/rvc_f0.py is importable and reports the RMVPE weights present."""
+    if _fake_mode():
+        return True  # fake mode has no model; accept the field and echo it
+    try:
+        import rvc_f0  # legacy/rvc_f0.py; the script directory is on sys.path
+
+        return bool(rvc_f0.rmvpe_available())
+    except Exception:  # noqa: BLE001 - import or weights problem
+        return False
+
+
+def _faiss_available() -> bool:
+    import importlib.util
+
+    try:
+        return importlib.util.find_spec("faiss") is not None
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _is_num(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def _check_num(name: str, value: Any, lo: float, hi: float) -> None:
+    if not _is_num(value) or not lo <= value <= hi:
+        raise ValueError(f"{name} must be a number in {lo}..{hi}, got {value!r}")
+
+
+def _check_int(name: str, value: Any, lo: int, hi: int) -> None:
+    if isinstance(value, bool) or not isinstance(value, int) or not lo <= value <= hi:
+        raise ValueError(f"{name} must be an integer in {lo}..{hi}, got {value!r}")
+
+
+def _validate_f0_post(value: Any) -> Dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError("f0_post must be an object")
+    unknown = sorted(set(value) - set(_F0_POST_KEYS))
+    if unknown:
+        raise ValueError(f"unknown f0_post keys: {unknown}")
+    out: Dict[str, Any] = {}
+    for key, item in value.items():
+        if item is None:
+            continue
+        if key == "median_width":
+            _check_int(key, item, 0, 101)
+            if item != 0 and (item < 3 or item % 2 == 0):
+                raise ValueError("f0_post.median_width must be 0 or an odd integer >= 3")
+        elif key == "octave_repair":
+            if not isinstance(item, bool):
+                raise ValueError("f0_post.octave_repair must be a boolean")
+        elif key in ("clamp_min_hz", "clamp_max_hz"):
+            _check_num("f0_post." + key, item, 1.0, 4000.0)
+        else:  # fill_gap_frames
+            _check_int("f0_post.fill_gap_frames", item, 0, 100)
+        out[key] = item
+    lo, hi = out.get("clamp_min_hz"), out.get("clamp_max_hz")
+    if lo is not None and hi is not None and lo >= hi:
+        raise ValueError("f0_post.clamp_min_hz must be < clamp_max_hz")
+    return out
+
+
+def _validate_auto_pitch(value: Any) -> Dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError("auto_pitch must be an object")
+    unknown = sorted(set(value) - {"target_median_hz", "max_abs", "strength"})
+    if unknown:
+        raise ValueError(f"unknown auto_pitch keys: {unknown}")
+    if "target_median_hz" not in value:
+        raise ValueError("auto_pitch requires target_median_hz")
+    _check_num("auto_pitch.target_median_hz", value["target_median_hz"], 30.0, 1000.0)
+    out: Dict[str, Any] = {"target_median_hz": float(value["target_median_hz"])}
+    if value.get("max_abs") is not None:
+        _check_int("auto_pitch.max_abs", value["max_abs"], 0, 24)
+        out["max_abs"] = value["max_abs"]
+    if value.get("strength") is not None:
+        _check_num("auto_pitch.strength", value["strength"], 0.0, 2.0)
+        out["strength"] = float(value["strength"])
+    return out
+
+
+def _validate_quality(fields: Dict[str, Any], stream: bool = False) -> Dict[str, Any]:
+    """Validate the optional quality fields; returns only the non-null ones. Raises ValueError."""
+    allowed = _STREAM_QUALITY_KEYS if stream else _CONVERT_QUALITY_KEYS
+    out: Dict[str, Any] = {}
+    for key in allowed:
+        value = fields.get(key)
+        if value is None:
+            continue
+        if key == "use_index":
+            if not isinstance(value, bool):
+                raise ValueError("use_index must be a boolean")
+        elif key == "index_rate":
+            _check_num(key, value, 0.0, 1.0)
+        elif key == "index_nprobe":
+            _check_int(key, value, 1, 256)
+        elif key == "protect":
+            _check_num(key, value, 0.0, 0.5)
+        elif key == "rms_mix_rate":
+            _check_num(key, value, 0.0, 1.0)
+        elif key == "f0_post":
+            value = _validate_f0_post(value)
+        elif key == "auto_pitch":
+            value = _validate_auto_pitch(value)
+        out[key] = value
+    return out
 
 # Set to the protocol stream at startup in main(); falls back to stdout.
 _PROTOCOL_OUT = sys.stdout
@@ -241,8 +364,10 @@ class Worker:
     def load_model(self, name: str, variant: Optional[str] = None) -> Dict[str, Any]:
         self._drop_stream(abort=True)
         if _fake_mode():
+            import types
+
             self._vc = object()
-            self._vc_args = object()
+            self._vc_args = types.SimpleNamespace(f0_pitch=0, f0_method="harvest", index_rate=0.0, sid=0)
             self._model = type("_FakeModel", (), {"model_name": name})()
             return {
                 "model": name,
@@ -375,6 +500,8 @@ class Worker:
                 "cuda_available": False,
                 "device": "fake" if self._vc else None,
                 "stream": stream_info,
+                "rmvpe_available": _rmvpe_available(),
+                "faiss": _faiss_available(),
             }
         import torch
 
@@ -387,6 +514,8 @@ class Worker:
         if torch.cuda.is_available():
             info["gpu_name"] = torch.cuda.get_device_name(0)
         info["stream"] = stream_info
+        info["rmvpe_available"] = _rmvpe_available()
+        info["faiss"] = _faiss_available()
         return info
 
     # -- streaming ------------------------------------------------------------
@@ -419,6 +548,22 @@ class Worker:
         replaced = self._drop_stream(abort=True)
         with _timeout(STREAM_OPEN_TIMEOUT_SECONDS):
             engine = self._make_engine(fields)
+        index_used = False
+        if fields.get("use_index"):
+            rate = fields.get("index_rate")
+            if rate is None:
+                rate = getattr(self._vc_args, "index_rate", 0.0)
+            wanted = bool(rate)
+            if _fake_mode() or self._engine_factory is not None:
+                index_used = wanted
+            else:
+                index_used = wanted and getattr(self._vc, "_index", None) is not None
+                if wanted and not index_used:
+                    try:
+                        engine.abort()
+                    except Exception:  # noqa: BLE001
+                        pass
+                    raise RuntimeError("use_index requested but the faiss index could not be loaded")
         self._stream = (stream_id, engine, fields)
         return {
             "stream_id": stream_id,
@@ -430,6 +575,9 @@ class Worker:
             "replaced_stream": replaced,
             "model": self._model.model_name,
             "f0_method": "pm",
+            "f0_algo": fields.get("f0_algo", "pm"),
+            "index_used": index_used,
+            "protect": fields.get("protect"),
         }
 
     @staticmethod
@@ -526,9 +674,16 @@ class Worker:
         output_wav_path: str,
         pitch_shift: Optional[int] = None,
         f0_method: Optional[str] = None,
+        **opts: Any,
     ) -> Dict[str, Any]:
+        """Convert one file. ``opts`` = the optional quality fields (see README, ``convert``):
+        use_index, index_rate, index_nprobe, protect, rms_mix_rate, f0_post, auto_pitch."""
         if self._vc is None:
             raise RuntimeError("no model loaded; send load-model first")
+        unknown = sorted(set(opts) - set(_CONVERT_QUALITY_KEYS))
+        if unknown:
+            raise ValueError(f"unknown convert options: {unknown}")
+        quality = _validate_quality(opts)
 
         input_path = Path(input_wav_path)
         output_path = Path(output_wav_path)
@@ -554,6 +709,16 @@ class Worker:
                     f"invalid f0_method {method!r}; expected one of {sorted(ALLOWED_F0_METHODS)}"
                 )
             vc_args.f0_method = method
+        if str(vc_args.f0_method) == "rmvpe" and not _rmvpe_available():
+            raise ValueError(
+                "f0_method 'rmvpe' is unavailable: legacy/rvc_f0.py or the RMVPE weights are missing "
+                "(health reports rmvpe_available)"
+            )
+        base_shift = int(vc_args.f0_pitch)
+        eff_rate = quality.get("index_rate")
+        if eff_rate is None:
+            eff_rate = float(getattr(vc_args, "index_rate", 0.0) or 0.0)
+        want_index = bool(quality.get("use_index")) and bool(eff_rate)
 
         # rvc_cli's VoiceConverter.convert_voice writes "<stem>_converted.wav"
         # next to the input; use a scratch copy of the input in a temp dir so
@@ -564,12 +729,31 @@ class Worker:
             tmp_in = Path(tmp) / ("in" + input_path.suffix)
             shutil.copyfile(input_path, tmp_in)
 
-            with _timeout(CONVERT_TIMEOUT_SECONDS):
-                produced = self._vc.convert_voice(tmp_in, vc_args)
+            if _fake_mode():
+                produced = Path(tmp) / "fake_converted.wav"
+                shutil.copyfile(tmp_in, produced)
+                info = {
+                    "index_used": want_index,
+                    "index_path": "fake.index" if want_index else None,
+                    "pitch_shift_applied": base_shift,
+                    "source_f0_median_hz": None,
+                }
+            else:
+                call_kw = {k: v for k, v in quality.items() if k != "use_index" or v}
+                with _timeout(CONVERT_TIMEOUT_SECONDS):
+                    produced = self._vc.convert_voice(tmp_in, vc_args, **call_kw)
+                last = getattr(self._vc, "last_info", None)
+                info = dict(last) if isinstance(last, dict) and call_kw else {}
+                info.setdefault("index_used", False)
+                info.setdefault("index_path", None)
+                info.setdefault("pitch_shift_applied", base_shift)
+                info.setdefault("source_f0_median_hz", None)
             elapsed = time.monotonic() - start
 
             if produced is None:
                 raise RuntimeError("rvc_cli VoiceConverter.convert_voice returned None (see worker stderr)")
+            if want_index and not info["index_used"]:
+                raise RuntimeError("use_index requested but the faiss index could not be loaded")
 
             produced = Path(produced)
             if not produced.is_file():
@@ -577,7 +761,8 @@ class Worker:
 
             shutil.move(str(produced), output_path)
 
-        self._validate_output(output_path)
+        if not _fake_mode():
+            self._validate_output(output_path)
 
         return {
             "output_wav_path": str(output_path),
@@ -588,6 +773,10 @@ class Worker:
             "pitch_shift": (
                 int(pitch_shift) if pitch_shift is not None else int(self._vc_args.f0_pitch)
             ),
+            "pitch_shift_applied": int(info["pitch_shift_applied"]),
+            "source_f0_median_hz": info["source_f0_median_hz"],
+            "index_used": bool(info["index_used"]),
+            "index_path": info["index_path"],
         }
 
     @staticmethod
@@ -608,6 +797,11 @@ class Worker:
         if duration <= 0:
             raise RuntimeError("output audio has non-positive duration")
         return None
+
+
+def render_file(worker: Worker, input_wav: str, output_wav: str, **convert_fields: Any) -> Dict[str, Any]:
+    """Engine entry for in-process callers: ``worker.convert`` with the optional quality fields."""
+    return worker.convert(input_wav, output_wav, **convert_fields)
 
 
 def _handle(worker: Worker, request: Dict[str, Any]) -> None:
@@ -656,7 +850,12 @@ def _handle(worker: Worker, request: Dict[str, Any]) -> None:
             )
             return
         try:
-            info = worker.convert(input_wav, output_wav, pitch, f0_method)
+            quality = _validate_quality(request)
+        except ValueError as exc:
+            _fail(request_id, f"invalid convert field: {exc}")
+            return
+        try:
+            info = worker.convert(input_wav, output_wav, pitch, f0_method, **quality)
         except Exception as exc:  # noqa: BLE001 - report across IPC
             _fail(request_id, f"convert failed: {exc}", traceback=traceback.format_exc(limit=8))
             return
@@ -693,6 +892,24 @@ def _handle(worker: Worker, request: Dict[str, Any]) -> None:
             )
             return
         fields["f0_method"] = "pm"
+        f0_algo = request.get("f0_algo")
+        if f0_algo is not None:
+            if f0_algo not in ("pm", "rmvpe"):
+                _fail(request_id, f"invalid f0_algo: {f0_algo!r}; expected 'pm' or 'rmvpe'", stream_closed=False)
+                return
+            if f0_algo == "rmvpe" and not _rmvpe_available():
+                _fail(
+                    request_id,
+                    "f0_algo 'rmvpe' is unavailable: legacy/rvc_f0.py or the RMVPE weights are missing",
+                    stream_closed=False,
+                )
+                return
+            fields["f0_algo"] = f0_algo
+        try:
+            fields.update(_validate_quality(request, stream=True))
+        except ValueError as exc:
+            _fail(request_id, f"invalid stream_open field: {exc}", stream_closed=False)
+            return
         for key in STREAM_MS_FIELDS:
             value = request.get(key)
             if value is None:

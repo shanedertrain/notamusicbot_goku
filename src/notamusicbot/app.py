@@ -325,6 +325,7 @@ class Application:
             keep_artifacts=s.keep_artifacts,
             failed_job_retention_hours=s.failed_job_retention_hours,
             f0_method_override=s.voice_conversion.f0_method_override,
+            quality=s.voice_conversion,
         )
         return self.pipeline
 

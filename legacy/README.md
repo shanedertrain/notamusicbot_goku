@@ -76,8 +76,10 @@ Errors carry `"error"` (message) and usually `"traceback"` (trimmed).
 → {"id":1,"action":"health"}
 ← {"id":1,"status":"ok","loaded_model":"Goku","torch":"2.5.0+cu121",
    "cuda_available":true,"device":"cuda:0","gpu_name":"NVIDIA GeForce RTX 4070 Ti SUPER",
-   "stream":{"open":false,"stream_id":null}}
+   "stream":{"open":false,"stream_id":null},"rmvpe_available":true,"faiss":true}
 ```
+`rmvpe_available` is true when `legacy/rvc_f0.py` imports and the RMVPE weights exist;
+`faiss` says whether the faiss module is installed (both additive).
 
 ### `load-model`
 ```json
@@ -136,6 +138,26 @@ and switches variants without restarting the worker.
   NaN/Inf/silence.
 - Timeout: `RVC_WORKER_CONVERT_TIMEOUT` (default 120 s, SIGALRM-enforced).
 
+**Quality fields (all optional; absent = the behaviour above, byte for byte).** Invalid values
+(wrong type, a bool where a number is expected, out of range, unknown keys) are a loud
+`status: "error"`.
+
+| field | type / range | meaning |
+|---|---|---|
+| `use_index` | bool, default false | Blend retrieved features from the model's faiss index. The index is resolved to an absolute path (the worker cwd does not matter), read once per loaded model and cached. If requested (with a non-zero rate) but it cannot load, the request fails. |
+| `index_rate` | 0..1 | Blend weight; null = the model yaml's `index_rate`. Only used when `use_index`. |
+| `index_nprobe` | int 1..256 | IVF probes; null = the index's own value. |
+| `protect` | 0..0.5 | Upstream RVC consonant/breath protection: unvoiced frames keep `1-protect` of the raw HuBERT features. null or 0.5 = off. Only matters with `use_index`. |
+| `rms_mix_rate` | 0..1 | Upstream RVC volume-envelope mix: 1 (or null) keeps the output level, 0 follows the input envelope. Whole-file only. |
+| `f0_method` | adds `rmvpe` | RMVPE pitch (needs `rvc_f0.py` + weights; error if `health.rmvpe_available` is false). |
+| `f0_post` | object | `{median_width, octave_repair, clamp_min_hz, clamp_max_hz, fill_gap_frames}` post-processing of the f0 track (`rvc_f0.F0PostConfig`), applied to any f0 method. |
+| `auto_pitch` | `{target_median_hz, max_abs=12, strength=1.0}` | Applied shift = `pitch_shift` (or the yaml default) + `auto_pitch_shift(median f0 of the source, target)`; the source median is measured with the requested f0 method. |
+
+Reply additions: `pitch_shift_applied` (int, the semitones actually used), `source_f0_median_hz`
+(float, only with `auto_pitch`, else null), `index_used` (bool), `index_path` (str or null).
+`RVC_WORKER_FP32=1` (environment, worker start) loads HuBERT and the synthesizer in fp32 instead of
+fp16; default unchanged.
+
 ### Streaming: `stream_open` / `stream_push` / `stream_close`
 Opt-in streaming conversion (design: `docs/RVC_STREAMING_DESIGN.md`). The engine lives in
 `legacy/rvc_stream.py`; the worker only validates, frames and times requests. **`f0_method` is `pm`
@@ -167,13 +189,23 @@ line** (no binary framing). Input 24 kHz, output 48 kHz.
   or timeout abort and drop the stream (`stream_closed:true`). `no model loaded; send load-model
   first`, `no open stream`, `stream id mismatch`, bad `stream_open` fields leave state as it was
   (`stream_closed:false`).
+- **Stream quality fields (all optional, default = today).** `f0_method` stays `pm`-only (anything
+  else is an error mentioning pm); RMVPE is selected with the new `f0_algo` (`"pm"` default or
+  `"rmvpe"`). Also `use_index` (bool), `index_rate` (0..1, null = yaml), `index_nprobe` (1..256),
+  `protect` (0..0.5), and `f0_post` (same object as in `convert`). The index is read once per
+  loaded model (shared with `convert`) and a stream opened with `use_index` fails if it cannot load.
+  There is no `rms_mix_rate` or `auto_pitch` for streams (they would break block continuity);
+  send the final `pitch_shift`. The reply keeps `"f0_method":"pm"` and adds `f0_algo`,
+  `index_used`, `protect`.
 - `load-model` while a stream is open aborts it first. `convert` and `health` stay legal during a
   stream; `health` gains `"stream":{"open":bool,"stream_id":str|null}` (additive).
 - Timeouts (SIGALRM): `RVC_WORKER_STREAM_OPEN_TIMEOUT` (default 30 s) for open,
   `RVC_WORKER_STREAM_TIMEOUT` (default 10 s) per push/close.
 - **Fake mode**: `RVC_WORKER_FAKE=1` makes `load-model` return canned info (device `fake`) without
   importing torch/rvc_cli, `health` skip torch, and the default stream engine a 2x sample-repeat stub
-  (a push whose first sample is exactly `1234.5` raises `fake boom`). Used by
+  (a push whose first sample is exactly `1234.5` raises `fake boom`); `convert` copies the input to
+  the output and echoes the quality fields (`rmvpe` is accepted, `source_f0_median_hz` is null).
+  Used by `tests/unit/test_rvc_worker_quality.py` and
   `tests/unit/test_rvc_worker_stream.py` and bot-side tests.
 
 ### `shutdown`

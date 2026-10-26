@@ -47,6 +47,21 @@ class VoiceConversionProfile:
     # the yaml value (harvest in the shipped profiles). Applied by the speech
     # pipeline from ``speech.voice_conversion.f0_method_override``.
     f0_method: str | None = None
+    # RVC output-quality options (docs/RVC_QUALITY_PLAN.md 3.2/3.3). Defaults
+    # equal the previous behaviour; the adapter only sends a field when it is
+    # set. ``f0_post`` is a sorted tuple of (key, value) items (hashable form
+    # of the worker's f0_post dict: median_width, octave_repair, clamp_min_hz,
+    # clamp_max_hz).
+    use_index: bool = False
+    index_rate: float | None = None
+    index_nprobe: int | None = None
+    protect: float | None = None
+    rms_mix_rate: float | None = None
+    auto_pitch_target_hz: float | None = None
+    auto_pitch_strength: float = 1.0
+    auto_pitch_max: int = 12
+    f0_post: tuple[tuple[str, float | int | bool], ...] | None = None
+    stream_f0_algo: str = "pm"
 
 
 @dataclass(frozen=True, slots=True)

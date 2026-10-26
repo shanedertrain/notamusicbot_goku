@@ -16,6 +16,7 @@ from typing import Protocol
 
 import soundfile as sf
 
+from notamusicbot.config import VoiceConversionSettings
 from notamusicbot.domain.speech import (
     AudioArtifact,
     AudioProcessingProfile,
@@ -58,6 +59,7 @@ class SpeechPipeline:
         keep_artifacts: bool = False,
         failed_job_retention_hours: float = 24.0,
         f0_method_override: str | None = None,
+        quality: VoiceConversionSettings | None = None,
     ) -> None:
         self._synthesizer = synthesizer
         self._converter = converter
@@ -78,18 +80,62 @@ class SpeechPipeline:
         # .f0_method_override). ``None`` keeps each profile yaml's value
         # (shipped default: harvest). Only applied to 'rvc'-backend jobs.
         self._f0_method_override = f0_method_override
+        # RVC output-quality settings (docs/RVC_QUALITY_PLAN.md 3.3); ``None``
+        # or all-default settings leave every profile exactly as it was.
+        self._quality = quality
 
     def _apply_f0_override(self, conversion: VoiceConversionProfile) -> VoiceConversionProfile:
-        """Apply the configured f0_method override to an RVC conversion profile.
+        """Merge the configured RVC overrides into an RVC conversion profile.
 
-        ``None`` override (or a non-RVC backend) returns the profile unchanged:
-        the model yaml's ``f0_method`` (shipped default ``harvest``) applies.
+        Applies ``f0_method_override`` and the output-quality settings. With
+        everything at its default (or a non-RVC backend) the profile is
+        returned unchanged: the model yaml's ``f0_method`` (shipped default
+        ``harvest``) applies.
         """
-        if self._f0_method_override is None or conversion.backend != "rvc":
+        if conversion.backend != "rvc":
             return conversion
-        if conversion.f0_method == self._f0_method_override:
-            return conversion
-        return replace(conversion, f0_method=self._f0_method_override)
+        changes: dict[str, object] = {}
+        override = self._f0_method_override
+        if override is not None and conversion.f0_method != override:
+            changes["f0_method"] = override
+        changes.update(self._quality_changes(conversion))
+        return replace(conversion, **changes) if changes else conversion
+
+    def _quality_changes(self, conversion: VoiceConversionProfile) -> dict[str, object]:
+        q = self._quality
+        if q is None:
+            return {}
+        changes: dict[str, object] = {}
+        if q.pitch_shift_offset:
+            changes["pitch_shift"] = conversion.pitch_shift + q.pitch_shift_offset
+        if q.use_index:
+            changes["use_index"] = True
+        if q.index_rate is not None:
+            changes["index_rate"] = q.index_rate
+        if q.index_nprobe is not None:
+            changes["index_nprobe"] = q.index_nprobe
+        if q.protect is not None:
+            changes["protect"] = q.protect
+        if q.rms_mix_rate is not None:
+            changes["rms_mix_rate"] = q.rms_mix_rate
+        if q.auto_pitch and conversion.model:
+            targets = {k.casefold(): v for k, v in q.target_f0_median_hz.items()}
+            target = targets.get(conversion.model.casefold())
+            if target is not None:
+                changes["auto_pitch_target_hz"] = target
+                changes["auto_pitch_strength"] = q.auto_pitch_strength
+                changes["auto_pitch_max"] = q.auto_pitch_max
+        if q.f0_post_median or q.f0_post_octave_repair or q.f0_post_clamp is not None:
+            post: dict[str, float | int | bool] = {
+                "median_width": q.f0_post_median,
+                "octave_repair": q.f0_post_octave_repair,
+            }
+            if q.f0_post_clamp is not None:
+                post["clamp_min_hz"], post["clamp_max_hz"] = q.f0_post_clamp
+            changes["f0_post"] = tuple(sorted(post.items()))
+        if q.stream_f0_algo != "pm":
+            changes["stream_f0_algo"] = q.stream_f0_algo
+        return changes
 
     def _paths(self, job_id: str) -> tuple[Path, Path, Path]:
         job_dir = self._output_dir / job_id

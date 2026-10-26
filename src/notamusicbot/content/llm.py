@@ -187,14 +187,16 @@ class LocalQwenLlmProvider:
         prompt = prompts.build_prompt(request)
         if request.kind is ContentKind.CHAT:
             return await self._gpu.run_blocking(
-                self._generate_sync, prompt, self._chat_system_prompt()
+                self._generate_sync, prompt, self._chat_system_prompt(request)
             )
         return await self._gpu.run_blocking(self._generate_sync, prompt)
 
-    def _chat_system_prompt(self) -> str:
+    def _chat_system_prompt(self, request: ContentRequest | None = None) -> str:
         """Chat persona prompt; an explicitly configured custom prompt wins."""
         if self._system_prompt != prompts.RADIO_SYSTEM_PROMPT:
             return self._system_prompt
+        if request is not None:
+            return prompts.chat_system_prompt(request)
         return prompts.CHAT_SYSTEM_PROMPT
 
     def _generate_sync(self, prompt: str, system_prompt: str | None = None) -> str:

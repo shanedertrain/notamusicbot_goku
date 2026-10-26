@@ -47,7 +47,7 @@ speech:
   # (typically 3-10x faster); `crepe`/`crepe-tiny` run on the GPU. null keeps
   # the profile yaml value (no silent quality change).
   voice_conversion:
-    f0_method_override: null          # null | pm | harvest | dio | crepe | crepe-tiny
+    f0_method_override: null          # null | pm | harvest | dio | crepe | crepe-tiny | rmvpe
     # Opt-in streaming RVC: convert the TTS stream block by block (first audio
     # in ~250 ms) instead of whole sentences. Needs the rvc backend; f0 is
     # forced to pm for streams. All *_ms values are multiples of 20.
@@ -58,6 +58,24 @@ speech:
     # stream_lookahead_ms: 100
     # stream_crossfade_ms: 40
     # stream_search_ms: 20
+    #
+    # RVC output-quality knobs (docs/RVC_QUALITY_PLAN.md). All default to the
+    # old behaviour. use_index / auto_pitch / rmvpe need the RVC quality work
+    # in the worker and the RMVPE weights (rmvpe.pt, one-time download).
+    # use_index: false               # retrieve from the model's faiss index
+    # index_rate: null               # 0..1 index blend; null = model yaml value
+    # index_nprobe: null             # 1..256 faiss probes; null = index default
+    # protect: null                  # 0..0.5 consonant/breath protection; null = off
+    # rms_mix_rate: null             # 0..1 loudness-envelope mix; null = off (1.0)
+    # pitch_shift_offset: 0          # -24..24 semitones added to each profile's shift
+    # auto_pitch: false              # shift source toward target_f0_median_hz per utterance
+    # auto_pitch_strength: 1.0       # 0..1 fraction of the computed shift applied
+    # auto_pitch_max: 12             # 0..24 max |semitones| of the automatic shift
+    # target_f0_median_hz: {Obama: 108, Goku: 145}  # RVC model name -> Hz (40..600, case-insensitive)
+    # f0_post_median: 0              # f0 median filter width: 0 (off) or odd >= 3
+    # f0_post_octave_repair: false   # fix octave jumps in the f0 track
+    # f0_post_clamp: null            # [min_hz, max_hz] f0 clamp, e.g. [50, 500]
+    # stream_f0_algo: pm             # pm | rmvpe, f0 tracker for streaming RVC
 
 # Local content generation (Phase F). Fully offline: no LLM API key needed.
 # persona/style come from config/voices/*.yaml (persona.description).

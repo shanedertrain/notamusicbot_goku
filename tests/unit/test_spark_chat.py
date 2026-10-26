@@ -348,3 +348,19 @@ async def test_thinking_low_empty_twice_still_raises_and_off_never_retries() -> 
     with pytest.raises(EmptyModelText):
         await _collect(_provider(server), _request())
     assert sum(p.endswith("/chat/completions") for p in server.paths()) == 1
+
+
+async def test_system_message_uses_the_persona_prompt_when_present() -> None:
+    from notamusicbot.content.base import ContentKind, ContentRequest
+
+    server = Server()
+    provider = _provider(server)
+    request = ContentRequest(
+        kind=ContentKind.CHAT,
+        requester_name="Sam",
+        transcript_text="hi",
+        system_prompt="You are Barack Obama.",
+    )
+    await provider.generate(request)
+    body = json.loads(server.requests[1].content)
+    assert body["messages"][0] == {"role": "system", "content": "You are Barack Obama."}

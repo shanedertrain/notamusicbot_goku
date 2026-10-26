@@ -131,6 +131,30 @@ class _StderrDrainer:
             pass
 
 
+def _quality_fields(profile: VoiceConversionProfile) -> dict[str, Any]:
+    """Wire fields shared by ``convert`` and ``stream_open``; only those set."""
+    fields: dict[str, Any] = {}
+    if profile.use_index:
+        fields["use_index"] = True
+        if profile.index_rate is not None:
+            fields["index_rate"] = float(profile.index_rate)
+        if profile.index_nprobe is not None:
+            fields["index_nprobe"] = int(profile.index_nprobe)
+    if profile.protect is not None:
+        fields["protect"] = float(profile.protect)
+    if profile.f0_post:
+        fields["f0_post"] = dict(profile.f0_post)
+    return fields
+
+
+def _stream_quality_fields(profile: VoiceConversionProfile) -> dict[str, Any]:
+    """Extra ``stream_open`` fields (no rms_mix, no auto pitch in streams)."""
+    fields = _quality_fields(profile)
+    if profile.stream_f0_algo != "pm":
+        fields["f0_algo"] = profile.stream_f0_algo
+    return fields
+
+
 class RvcVoiceConverter:
     """Voice converter backed by one persistent legacy RVC worker subprocess.
 
@@ -369,6 +393,17 @@ class RvcVoiceConverter:
         # otherwise (shipped default: harvest).
         if profile.f0_method:
             request_fields["f0_method"] = str(profile.f0_method)
+        # RVC output-quality fields (docs/RVC_QUALITY_PLAN.md 3.2): sent only
+        # when set, so an unconfigured request is unchanged.
+        request_fields.update(_quality_fields(profile))
+        if profile.rms_mix_rate is not None:
+            request_fields["rms_mix_rate"] = float(profile.rms_mix_rate)
+        if profile.auto_pitch_target_hz is not None:
+            request_fields["auto_pitch"] = {
+                "target_median_hz": float(profile.auto_pitch_target_hz),
+                "max_abs": int(profile.auto_pitch_max),
+                "strength": float(profile.auto_pitch_strength),
+            }
         try:
             reply = await self._request("convert", timeout=self._convert_timeout, **request_fields)
         except WorkerDiedError:
@@ -454,6 +489,7 @@ class RvcVoiceConverter:
                 stream_id=sid,
                 pitch_shift=int(profile.pitch_shift),
                 f0_method="pm",
+                **_stream_quality_fields(profile),
                 first_block_ms=params.first_block_ms,
                 block_ms=params.block_ms,
                 context_ms=params.context_ms,

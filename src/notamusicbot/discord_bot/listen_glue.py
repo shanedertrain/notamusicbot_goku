@@ -419,6 +419,7 @@ class ListenSession:
             bot_id,
             guild_id=self._guild.id,
             persona_description=profile.persona.description,
+            system_prompt=profile.persona.chat_prompt,
             name_resolver=self._display_name,
         )
         self._sink = ListenDaveSink(

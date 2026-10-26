@@ -133,7 +133,7 @@ class SparkChatProvider:
         body: dict[str, Any] = {
             "model": model,
             "messages": [
-                {"role": "system", "content": prompts.CHAT_SYSTEM_PROMPT},
+                {"role": "system", "content": prompts.chat_system_prompt(request)},
                 {"role": "user", "content": prompts.build_chat_prompt(request)},
             ],
             "stream": True,

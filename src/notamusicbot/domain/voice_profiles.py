@@ -12,6 +12,8 @@ from pydantic import BaseModel, Field, ValidationError
 class Persona(BaseModel):
     display_name: str
     description: str = ""
+    # Optional listen-mode system prompt; empty = the default Goku chat prompt.
+    chat_prompt: str = ""
 
 
 class TtsProfile(BaseModel):

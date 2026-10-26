@@ -87,6 +87,7 @@ def build_chat_request(
     speaker_name: str,
     transcript_text: str,
     history: Sequence[ConversationTurn],
+    system_prompt: str = "",
 ) -> ContentRequest:
     """Content request for one spoken reply; ``history`` is rendered oldest first."""
     return ContentRequest(
@@ -95,6 +96,7 @@ def build_chat_request(
         requester_name=speaker_name,
         transcript_text=transcript_text,
         chat_history=tuple(t.render() for t in history),
+        system_prompt=system_prompt,
     )
 
 

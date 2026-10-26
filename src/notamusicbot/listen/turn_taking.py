@@ -186,6 +186,7 @@ class TurnManager:
         *,
         guild_id: int | str = 0,
         persona_description: str = "",
+        system_prompt: str = "",
         name_resolver: Callable[[int], str] | None = None,
     ) -> None:
         self._settings = settings
@@ -201,6 +202,7 @@ class TurnManager:
         self._bot_user_id = bot_user_id
         self._guild_id = guild_id
         self._persona = persona_description
+        self._system_prompt = system_prompt
         self._name_of = name_resolver or (lambda user_id: f"User {user_id}")
 
         self._state = TurnState.IDLE
@@ -534,6 +536,7 @@ class TurnManager:
             speaker,
             heard,
             self._conversation.history()[-PROMPT_HISTORY_TURNS:],
+            self._system_prompt,
         )
         for p in lines:
             self._conversation.add_user(p.name, p.text)

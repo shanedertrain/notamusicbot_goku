@@ -65,8 +65,26 @@ class VoiceConversionSettings(BaseModel):
 
     f0_method_override: str | None = Field(
         default=None,
-        pattern="^(pm|harvest|dio|crepe|crepe-tiny)$",
+        pattern="^(pm|harvest|dio|crepe|crepe-tiny|rmvpe)$",
     )
+    # RVC output-quality knobs (docs/RVC_QUALITY_PLAN.md 3.3). Every default
+    # reproduces the previous behaviour; ``use_index``, ``auto_pitch`` and the
+    # ``rmvpe`` f0 methods need the quality work and the RMVPE weights.
+    use_index: bool = False
+    index_rate: float | None = Field(default=None, ge=0.0, le=1.0)
+    index_nprobe: int | None = Field(default=None, ge=1, le=256)
+    protect: float | None = Field(default=None, ge=0.0, le=0.5)
+    rms_mix_rate: float | None = Field(default=None, ge=0.0, le=1.0)
+    pitch_shift_offset: int = Field(default=0, ge=-24, le=24)
+    auto_pitch: bool = False
+    auto_pitch_strength: float = Field(default=1.0, ge=0.0, le=1.0)
+    auto_pitch_max: int = Field(default=12, ge=0, le=24)
+    # RVC model name -> target median f0 (Hz); lookup is case-insensitive.
+    target_f0_median_hz: dict[str, float] = Field(default_factory=dict)
+    f0_post_median: int = Field(default=0, ge=0, le=101)
+    f0_post_octave_repair: bool = False
+    f0_post_clamp: tuple[float, float] | None = None
+    stream_f0_algo: str = Field(default="pm", pattern="^(pm|rmvpe)$")
     # Opt-in streaming RVC (docs/RVC_STREAMING_DESIGN.md): the reply path
     # converts the TTS stream block by block instead of whole sentences.
     # Streams force the ``pm`` f0 method. ``False`` keeps today's behavior.
@@ -77,6 +95,31 @@ class VoiceConversionSettings(BaseModel):
     stream_lookahead_ms: int = Field(default=100, ge=40, le=500)
     stream_crossfade_ms: int = Field(default=40, ge=10, le=200)
     stream_search_ms: int = Field(default=20, ge=0, le=100)
+
+    @field_validator("f0_post_median")
+    @classmethod
+    def _validate_median_width(cls, value: int) -> int:
+        if value != 0 and (value < 3 or value % 2 == 0):
+            msg = f"f0_post_median must be 0 or an odd number >= 3 (got {value})"
+            raise ValueError(msg)
+        return value
+
+    @field_validator("f0_post_clamp")
+    @classmethod
+    def _validate_clamp(cls, value: tuple[float, float] | None) -> tuple[float, float] | None:
+        if value is not None and not 0 < value[0] < value[1]:
+            msg = f"f0_post_clamp must satisfy 0 < min < max (got {value})"
+            raise ValueError(msg)
+        return value
+
+    @field_validator("target_f0_median_hz")
+    @classmethod
+    def _validate_targets(cls, value: dict[str, float]) -> dict[str, float]:
+        for name, hz in value.items():
+            if not 40.0 <= hz <= 600.0:
+                msg = f"target_f0_median_hz[{name!r}] must be within 40..600 Hz (got {hz})"
+                raise ValueError(msg)
+        return value
 
     @model_validator(mode="after")
     def _validate_stream_timing(self) -> VoiceConversionSettings:

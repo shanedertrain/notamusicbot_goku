@@ -919,3 +919,154 @@ Restart the bot (the worker loads the new code on restart). `warm_stream` runs a
 | S-RVC streaming | DONE (code), reviewed | default off; owner enables `streaming: true` and listens |
 | P11 | READY for owner | config lines above |
 | P12 | BLOCKED | after P11 |
+
+
+## 23. RVC output quality (2026-10-26, orchestrator)
+
+Owner feedback: converted speech is robotic/metallic, pitch wobbles / is off-key, and does not sound like the target. Plan: `docs/RVC_QUALITY_PLAN.md`. Lab: `tools/rvc_quality_lab.py` (+ `tools/rvc_quality_sources.py`). Work dir: `/home/cbash23/.cache/listen-speed/rvc-quality/` (`index.md` = tables with wav links, `results.json`, `samples/<model>/<variant>/s0..5.wav`). Nothing committed; the bot was not started. The numbers below are PROXIES computed from the renders; nobody has listened yet.
+
+### Diagnosis
+
+1. The faiss index never loaded (relative path vs worker cwd): the model's own timbre retrieval was off, so output kept the Ryan source timbre ("wrong timbre").
+2. f0 came from `pm` (octave errors, ~6 jumps/s, track corr 0.74 vs RMVPE 0.87): the wobble / off-key / robotic pitch.
+3. No pitch shift: Ryan's median is about 157 Hz, Obama's target 108 Hz, so Obama's register error was about 3.7 semitones (Goku about 3.6).
+4. protect, rms_mix, index_nprobe were not reachable.
+
+### What landed (all new settings default to the old behaviour)
+
+- `legacy/rvc_f0.py`: RMVPE (weights vetted, see below), f0 post-processing (octave repair, clamp, median, gap fill), `auto_pitch_shift`.
+- Worker/stream/rvc_cli: index loads by absolute path (`use_index`, `index_rate`, `index_nprobe`), `protect`, `rms_mix_rate` (whole path only), `f0_post`, `auto_pitch`, `f0_method=rmvpe`; stream gets `f0_algo=rmvpe`, index, protect, f0_post; `RVC_WORKER_FP32=1`. Streams keep `f0_method` pm-only.
+- Bot: `speech.voice_conversion` gains `use_index, index_rate, index_nprobe, protect, rms_mix_rate, pitch_shift_offset, auto_pitch, auto_pitch_strength, auto_pitch_max, target_f0_median_hz, f0_post_median, f0_post_octave_repair, f0_post_clamp, stream_f0_algo`; `f0_method_override` accepts `rmvpe`. `config/app.yaml` is NOT changed.
+- Review fixes: lab `c9_fp32` was skipped (it looked for the switch in the wrong file); fixed and run. Added tripwire test for rmvpe-unavailable. `ruff format` on `legacy/rvc_f0.py`.
+
+### Proxy table: Obama (target 108 Hz; 6 clips; whole-path unless named e*)
+
+| variant | octave_err | jump/s | smooth cents | f0 corr | register err st | voiced ratio | hiss | flags |
+|---|---|---|---|---|---|---|---|---|
+| ref_harvest_idx05 | 0.013 | 3.70 | 104 | 0.861 | 1.12 | 1.17 | 0.001 |  |
+| v00_baseline | 0.020 | 5.87 | 138 | 0.737 | 3.67 | 1.06 | 0.001 |  |
+| a1_pm_idx05 | 0.024 | 4.71 | 129 | 0.697 | 3.18 | 1.02 | 0.001 |  |
+| a2_rmvpe | 0.011 | 3.37 | 104 | 0.869 | 3.88 | 1.12 | 0.002 |  |
+| a3_rmvpe_post | 0.010 | 4.42 | 125 | 0.852 | 3.46 | 1.15 | 0.004 |  |
+| a4_rmvpe_post_idx05 | 0.011 | 4.31 | 127 | 0.808 | 3.27 | 1.14 | 0.002 |  |
+| a5_harvest_idx05 | 0.017 | 3.70 | 111 | 0.867 | 3.51 | 1.15 | 0.002 |  |
+| b1_shift_fixed_m3 | 0.009 | 4.04 | 113 | 0.785 | 3.52 | 1.10 | 0.001 |  |
+| b2_shift_fixed_m4 | 0.015 | 3.20 | 104 | 0.782 | 3.53 | 1.09 | 0.002 |  |
+| b3_shift_fixed_m5 | 0.015 | 2.84 | 99 | 0.866 | 4.22 | 1.03 | 0.001 |  |
+| b4_autoshift | 0.010 | 4.20 | 110 | 0.887 | 1.01 | 1.14 | 0.003 |  |
+| b5_autoshift_half | 0.009 | 3.44 | 101 | 0.894 | 1.78 | 1.14 | 0.002 |  |
+| c1_idx03 | 0.010 | 4.29 | 116 | 0.844 | 1.70 | 1.14 | 0.002 |  |
+| c2_idx075 | 0.012 | 3.87 | 113 | 0.840 | 1.64 | 1.13 | 0.002 |  |
+| c3_nprobe1 | 0.014 | 4.03 | 113 | 0.850 | 1.79 | 1.14 | 0.002 |  |
+| c4_nprobe32 | 0.006 | 3.33 | 99 | 0.884 | 1.99 | 1.12 | 0.002 | BEST_OVERALL |
+| c5_protect033 | 0.007 | 3.37 | 98 | 0.905 | 2.12 | 1.05 | 0.003 |  |
+| c6_protect05 | 0.009 | 3.85 | 112 | 0.874 | 1.85 | 1.13 | 0.002 |  |
+| c7_rms025 | 0.012 | 3.75 | 104 | 0.842 | 1.99 | 1.15 | 0.002 |  |
+| c8_rms10 | 0.008 | 3.91 | 120 | 0.856 | 1.76 | 1.14 | 0.002 |  |
+| c9_fp32 | 0.009 | 3.40 | 101 | 0.850 | 1.89 | 1.13 | 0.003 |  |
+| d1_aiden | 0.012 | 3.60 | 112 | 0.788 | 0.60 | 1.03 | 0.002 |  |
+| d2_eric | 0.012 | 3.00 | 104 | 0.841 | 1.35 | 1.05 | 0.005 |  |
+| d3_dylan | 0.010 | 3.38 | 97 | 0.910 | 1.21 | 1.03 | 0.003 |  |
+| e1_stream_pm_ctx1000 | 0.033 | 5.74 | 138 | 0.670 | 3.18 | 1.00 | 0.000 |  |
+| e2_stream_pm_ctx2000 | 0.023 | 4.87 | 116 | 0.746 | 3.99 | 0.93 | 0.000 |  |
+| e3_stream_rmvpe_ctx1000 | 0.003 | 2.24 | 86 | 0.890 | 3.50 | 1.06 | 0.001 |  |
+| e4_stream_rmvpe_ctx2000 | 0.009 | 3.59 | 108 | 0.841 | 3.57 | 1.08 | 0.001 | BEST_STREAM |
+
+### Proxy table: Goku (target 145 Hz; partial matrix)
+
+| variant | octave_err | jump/s | smooth cents | f0 corr | register err st | voiced ratio | hiss | flags |
+|---|---|---|---|---|---|---|---|---|
+| ref_harvest_idx05 | 0.006 | 2.39 | 92 | 0.917 | 0.30 | 1.02 | 0.067 |  |
+| v00_baseline | 0.015 | 4.31 | 116 | 0.607 | 3.65 | 0.83 | 0.021 |  |
+| a1_pm_idx05 | 0.016 | 4.94 | 137 | 0.596 | 3.60 | 0.87 | 0.028 |  |
+| a4_rmvpe_post_idx05 | 0.006 | 2.89 | 106 | 0.868 | 4.05 | 0.96 | 0.060 |  |
+| a5_harvest_idx05 | 0.006 | 1.74 | 85 | 0.929 | 4.00 | 0.97 | 0.047 | BEST_OVERALL |
+| b1_shift_fixed_0 | 0.008 | 2.18 | 93 | 0.905 | 4.00 | 0.99 | 0.066 |  |
+| b2_shift_fixed_p2 | 0.007 | 2.68 | 86 | 0.908 | 3.66 | 1.01 | 0.063 |  |
+| b4_autoshift | 0.009 | 2.44 | 87 | 0.886 | 0.54 | 1.00 | 0.056 |  |
+| b5_autoshift_half | 0.006 | 2.55 | 89 | 0.895 | 2.00 | 0.99 | 0.060 |  |
+| c1_idx03 | 0.007 | 3.02 | 95 | 0.893 | 0.52 | 1.01 | 0.054 |  |
+| c2_idx075 | 0.006 | 1.94 | 87 | 0.913 | 0.57 | 1.03 | 0.071 |  |
+| c5_protect033 | 0.005 | 2.90 | 99 | 0.872 | 0.52 | 1.03 | 0.058 |  |
+| c6_protect05 | 0.009 | 2.62 | 94 | 0.836 | 0.47 | 1.03 | 0.069 |  |
+| e4_stream_rmvpe_ctx2000 | 0.012 | 2.95 | 109 | 0.900 | 3.63 | 1.07 | 0.027 | BEST_STREAM |
+
+Read with care: `register err` is the output median f0 vs the target median. Stage A/B/C rows carry the stage's own base (stage A has no auto shift). `retrieval_dist` and index-blended scores are circular (see plan 4); `hiss` for Goku (about 0.05-0.07) is a model property. Metrics use harvest on the output, which itself yields about 3 jumps/s on good audio.
+
+### Headline proxy improvements (Obama, baseline v00 -> chosen)
+
+| metric | v00_baseline (pm) | c4/c5 (rmvpe + auto shift + index + nprobe32 / protect) |
+|---|---|---|
+| f0 jumps per s | 5.9 | 3.3 |
+| octave error rate | 0.020 | 0.006-0.007 |
+| f0 track corr | 0.74 | 0.88-0.905 |
+| register error (st) | 3.7 | 1.9-2.1 (auto shift 0.5), 1.0 with strength 1.0 (b4) |
+| smoothness (cents) | 138 | 98-99 |
+
+Goku: auto shift cuts register error 3.6-4.0 -> 0.3-0.5 st; harvest/rmvpe + index lifts f0 corr 0.61 -> 0.87-0.93 and jumps 4.3 -> 1.7-2.9/s. Stream (rmvpe, ctx 2000): Obama join_max about 2.0, Goku about 3.5 (above the ~2 target); pm stream is clearly worse (octave 0.02-0.03, corr 0.67-0.75). Streams have no auto pitch (fixed shift only), so their register error stays about 3.5 st.
+
+### Mutation tripwires
+
+| mutation | result |
+|---|---|
+| index path fix reverted (`read_index(index_path_stripped)`) | KILLED (legacy tests) |
+| rmvpe unavailable falls back silently to pm | SURVIVED at first; test `test_rmvpe_unavailable_is_an_error_not_a_silent_pm_fallback` added; now KILLED |
+| octave repair removed | KILLED |
+| `use_index` default ON | KILLED |
+| `protect` not forwarded | KILLED |
+| `rms_mix_rate` not forwarded | KILLED |
+| stream_open accepts any f0_method | KILLED |
+| stream_open drops `f0_algo` | KILLED |
+
+### RMVPE provenance
+
+`rmvpe.pt`, 181184272 bytes, sha256 `6d62215f4306e3ca278246188607209f09af3dc77ed4232efdd069798c4ec193` (re-verified), at `/home/cbash23/.cache/listen-speed/rvc-quality/weights/rmvpe.pt` (env `RVC_RMVPE_PATH` overrides). Pickle inspected without executing: only `collections.OrderedDict`, `torch.HalfStorage`, `torch._utils._rebuild_tensor_v2`; no STACK_GLOBAL/os/builtins/eval. Loaded with `torch.load(weights_only=True)` (`legacy/rvc_f0.py`), strict state-dict match. Record: `legacy/rvc_f0_weights.md`. Runtime stays offline.
+
+### Recommended config (proxies only; enable per profile after listening)
+
+Whole path, Obama and Goku (shared; the auto-shift targets are per model):
+
+```yaml
+speech:
+  voice_conversion:
+    f0_method_override: rmvpe
+    use_index: true
+    index_rate: 0.5
+    index_nprobe: 32
+    protect: 0.33
+    auto_pitch: true
+    auto_pitch_strength: 0.5      # Obama; 1.0 measures a smaller register error, listen to both
+    target_f0_median_hz: {Obama: 108, Goku: 145}
+    f0_post_octave_repair: true   # safety only; median/clamp raised jumps and roughness (a2 vs a3), leave off
+    streaming: false              # whole path first; stream has no auto pitch and Goku join_max is 3.5
+```
+
+Stream (if kept on): `stream_f0_algo: rmvpe`, `stream_context_ms: 2000`, plus the same `use_index`, `index_rate`, `protect`.
+
+Caveats: rmvpe + post-processing is not better than plain rmvpe on these proxies; index rate 0.5 vs 0.75 is within noise; for Goku `f0_method_override: harvest` with the index scored best in the unshifted stage (a5: corr 0.93, jumps 1.7), so try that too. One `f0_method_override` applies to both profiles.
+
+### Listen to first (Obama; same sentence s0..s2 each; compare against v00_baseline)
+
+1. `samples/Obama/c4_nprobe32/` (BEST_OVERALL proxy: rmvpe + index nprobe 32 + auto shift 0.5).
+2. `samples/Obama/c5_protect033/` (best f0 track corr 0.905; breathier consonants protected).
+3. `samples/Obama/d3_dylan/` (different Qwen source speaker, Dylan: best smoothness/corr, tests the "wrong timbre" complaint at its source; `d1_aiden` has the lowest register error 0.6 st).
+Reference: `samples/Obama/v00_baseline/` (today). Then Goku: `samples/Goku/ref_harvest_idx05/`, then `samples/Goku/c2_idx075/`. Base path `/home/cbash23/.cache/listen-speed/rvc-quality/`.
+
+### Open issues
+
+1. Nobody has listened; every number is a proxy. Index blending can change timbre of both paths (off by default).
+2. Streams cannot auto-shift; a fixed per-profile shift for streams is untested. Goku stream join_max 3.5 exceeds the ~2 target.
+3. `f0_method_override` is global, not per profile.
+4. Goku matrix is partial (14 variants, no D stage); `change_rms` follows the input envelope coarsely (0.5 s hop).
+5. `convert` with `index_nprobe` changes the cached index's nprobe for the next stream open.
+6. `rmvpe_available()` checks only the default path, not `RVC_RMVPE_PATH`.
+7. `rvc_cli` is a dirty submodule (edits to named functions only). Existing stash `stash@{0}` origin unknown.
+8. The RMVPE tests that need pyworld/parselmouth skip under the bot venv; they pass under the legacy venv.
+
+### Status (after RVC output quality)
+
+| ID | Status | Note |
+|---|---|---|
+| Q1-Q4 RVC quality build | DONE (code), reviewed | all new settings default to old behaviour |
+| RVC quality listen | READY for owner | order above; then edit `config/app.yaml` |
+| RVC quality enable | BLOCKED | after listening |
