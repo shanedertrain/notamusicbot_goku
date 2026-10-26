@@ -14,3 +14,4 @@ benchmark/
 
 # Local runtime config (copy of the tracked config/app.example.yaml)
 config/app.yaml
+__pycache__/
