@@ -1,0 +1,20 @@
+id: goku_raw
+
+persona:
+  display_name: Goku
+  description: >
+    Energetic, friendly Saiyan radio host. Casual, enthusiastic commentary
+    used by the content-generation provider.
+
+tts:
+  backend: qwen_custom_voice
+  model: Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice
+  language: English
+  speaker: Ryan
+
+voice_conversion:
+  backend: passthrough
+
+audio:
+  speed: 1.0
+  target_peak_dbfs: -1.0

@@ -1,0 +1,2151 @@
+{
+  "date": "2026-10-25 22:35:22",
+  "host": "omarchy",
+  "note": "Input is synthetic clean TTS speech fed in real time (20 ms packets, one thread), not real microphones. Replies are played in real time by the fake player (sleep for the PCM duration), so a turn takes its full audio length. Reply path is the production TurnManager: streamed Spark text through FallbackChatProvider (listen.llm defaults, model auto), StreamChunker caps from listen.reply (8/12), the TTS length cap, the early backchannel and the trimmed BackchannelCache; max_new_tokens comes from listen.reply.max_new_tokens via the production provider (no override). The in-process LLM is not loaded at startup. Stage keys keep their old names but now mean: asr->llm = ASR done to first chunk text ready (time to first chunk); llm->tts1 = first chunk ready to its TTS+RVC audio ready; tts1->audio = audio ready to playback start (waits for the backchannel clip to finish); total = end of speech to first reply audio. Loaders get hub ids under HF_HUB_OFFLINE=1.",
+  "offline_env_changed": {
+    "HF_HUB_OFFLINE": "1",
+    "TRANSFORMERS_OFFLINE": "1",
+    "HF_HUB_DISABLE_TELEMETRY": "1"
+  },
+  "budget": {
+    "total_p50_s": 6.0,
+    "total_p90_s": 9.0,
+    "backchannel_s": 0.8
+  },
+  "baseline_vram_used_mib": 2030,
+  "owner_config_mirror": {
+    "llm.thinking": true,
+    "voice_profile": true,
+    "reply.backchannel_enabled": true,
+    "reply.max_sentences": true,
+    "reply.first_chunk_max_words": true,
+    "reply.later_chunk_max_words": true,
+    "owner_asr": {
+      "backend": "parakeet_onnx",
+      "model_id": "istupakov/parakeet-tdt-0.6b-v2-onnx",
+      "whisper_model_id": "openai/whisper-small.en",
+      "device": "cpu",
+      "threads": 4,
+      "quantization": "int8",
+      "language": "en",
+      "timeout_s": 10.0
+    },
+    "owner_vad_end_silence_ms": 600
+  },
+  "listen_llm_settings": {
+    "provider": "spark",
+    "base_url": "http://127.0.0.1:8000/v1",
+    "model": "auto",
+    "timeout_s": 20.0,
+    "first_token_timeout_s": 8.0,
+    "fallback": "local",
+    "health_interval_s": 30.0,
+    "thinking": "low",
+    "thinking_token_budget": 300
+  },
+  "listen_reply_settings": {
+    "max_sentences": 1,
+    "max_new_tokens": 70,
+    "backchannel_enabled": false,
+    "backchannel_texts": [
+      "Hm?",
+      "Oh yeah?",
+      "Let me think."
+    ],
+    "barge_in_min_speech_ms": 650,
+    "per_user_cooldown_s": 2.0,
+    "max_replies_per_minute": 12,
+    "history_turns": 8,
+    "llm_timeout_s": 20.0,
+    "first_chunk_max_words": 40,
+    "later_chunk_max_words": 40,
+    "tts_max_seconds_per_word": 1.6,
+    "tts_cap_floor_seconds": 3.5
+  },
+  "spark_models_before": [
+    "deepseek-v4.1-flash",
+    "GLM-5.3-Flash-EXL3"
+  ],
+  "llm_model_id": "Qwen/Qwen3-4B-Instruct-2507",
+  "tts_model_id": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
+  "llm_startup_s": 0.0,
+  "inprocess_llm_loaded_at_startup": false,
+  "llm_max_new_tokens": 70,
+  "tts_load_s": 7.06,
+  "rvc_startup_s": 0.68,
+  "asr_load_s": 1.14,
+  "asr_backend": "parakeet_onnx",
+  "asr_settings": {
+    "backend": "parakeet_onnx",
+    "model_id": "istupakov/parakeet-tdt-0.6b-v2-onnx",
+    "whisper_model_id": "openai/whisper-small.en",
+    "device": "cuda",
+    "threads": 4,
+    "quantization": "fp32",
+    "language": "en",
+    "timeout_s": 10.0
+  },
+  "after_load_vram_used_mib": 8195,
+  "vram_check": {
+    "baseline_mib": 2030,
+    "after_load_mib": 8195,
+    "resident_above_baseline_mib": 6165,
+    "prior_baseline_mib": 1676,
+    "prior_after_load_mib": 11802,
+    "prior_resident_above_baseline_mib": 10126,
+    "after_load_minus_prior_after_load_mib": -3607,
+    "resident_drop_vs_prior_mib": 3961
+  },
+  "clips": [
+    {
+      "text": "Hey Goku, what's your favorite food, and how much of it can you eat?",
+      "duration_s": 5.68
+    },
+    {
+      "text": "Goku, who was the toughest opponent you have ever fought?",
+      "duration_s": 5.84
+    },
+    {
+      "text": "Hey Goku, how do you stay so strong while training every single day?",
+      "duration_s": 5.36
+    },
+    {
+      "text": "What would you do if you had one whole day with nothing to fight?",
+      "duration_s": 7.52
+    },
+    {
+      "text": "Hey Goku, can you tell me about your first time turning Super Saiyan?",
+      "duration_s": 4.56
+    },
+    {
+      "text": "Goku, what is the hardest thing you have ever had to learn?",
+      "duration_s": 4.88
+    },
+    {
+      "text": "Hey Goku, do you ever get nervous before a really big fight?",
+      "duration_s": 5.04
+    },
+    {
+      "text": "Tell me, Goku, what was it like training with Master Roshi as a kid?",
+      "duration_s": 5.28
+    }
+  ],
+  "rvc_warmed": false,
+  "spark_warmup_reply": "I'm doing awesome today, thanks\u2014always ready to power up and have some fun!",
+  "spark_model_id_resolved": "deepseek-v4.1-flash",
+  "backchannel": {
+    "enabled": false
+  },
+  "can_stream": true,
+  "tts_fast_model": "QwenCustomVoiceSynthesizer",
+  "tts_supports_streaming": true,
+  "not_opted_in_turn": {
+    "packets_sent": 349,
+    "decoder_calls": 0,
+    "buffered_samples": 0,
+    "transcribe_calls": 0,
+    "llm_calls": 0,
+    "metrics_lines": 0,
+    "plays": 0,
+    "passed": true
+  },
+  "percentile_method": "nearest rank: value at 1-based rank ceil(p/100*n)",
+  "stage_labels": {
+    "eos->asr": "asr (end of speech to transcript)",
+    "asr->llm": "time to first chunk (transcript to first chunk text)",
+    "llm->tts1": "tts first chunk (first chunk text to its audio)",
+    "tts1->audio": "audio (audio ready to playback start)",
+    "total": "end of speech to first reply audio"
+  },
+  "spark_models_after": [
+    "deepseek-v4.1-flash",
+    "GLM-5.3-Flash-EXL3"
+  ],
+  "provider_warnings_during_turns": [
+    "notamusicbot.content.fallback: Spark chat failed (EmptyModelText: Spark stream ended with no content text); using the in-process local model (a cold load may be slow)"
+  ],
+  "inprocess_llm_loaded_after_turns": true,
+  "turns": [
+    {
+      "turn": 1,
+      "question": "Hey Goku, what's your favorite food, and how much of it can you eat?",
+      "clip_s": 5.68,
+      "failure": null,
+      "endpoint_wait_s": 0.427,
+      "metrics_line": "listen turn guild=1 user=1 eos->asr=0.49 asr->llm=3.23 llm->tts1=0.21 tts1->audio=0.00 total=3.93",
+      "stages_s": {
+        "eos->asr": 0.49,
+        "asr->llm": 3.23,
+        "llm->tts1": 0.21,
+        "tts1->audio": 0.0,
+        "total": 3.93
+      },
+      "eos_to_backchannel_s": null,
+      "first_reply_play_minus_eos_s": 3.929,
+      "plays": [
+        {
+          "at_eos_plus_s": 3.929,
+          "end_at_eos_plus_s": 11.375,
+          "audio_s": 7.44,
+          "backchannel": false
+        }
+      ],
+      "dead_air_gaps_s": [],
+      "first_pcm_chunk_s": 3.929,
+      "streams": [
+        {
+          "n_chunks": 13,
+          "audio_s": 7.44,
+          "chunk_gaps_s": [
+            0.183,
+            0.18,
+            0.181,
+            0.18,
+            0.178,
+            0.181,
+            0.176,
+            0.178,
+            0.177,
+            0.176,
+            0.117,
+            0.0
+          ],
+          "underruns_s": [],
+          "play_start_at_eos_plus_s": 3.929,
+          "max_chunk_gap_s": 0.183
+        }
+      ],
+      "synth_texts": [
+        "I'll eat anything, but my favorite is rice, and I can put away a whole mountain of it!"
+      ],
+      "chunk_word_counts": [
+        18
+      ],
+      "tts_results": [
+        {
+          "words": 18,
+          "audio_s": 7.44,
+          "cap_s": 28.8,
+          "truncated": false,
+          "completed": true,
+          "streamed": true
+        }
+      ],
+      "n_utterances_in_turn": 1,
+      "n_asr_calls_in_turn": 1,
+      "chunks_truncated_by_tts_cap": [],
+      "spark_first_delta_s": 3.057,
+      "used_local_model": false,
+      "provider_warnings": [],
+      "emoji_or_markdown_in_tts": []
+    },
+    {
+      "turn": 2,
+      "question": "Goku, who was the toughest opponent you have ever fought?",
+      "clip_s": 5.84,
+      "failure": null,
+      "endpoint_wait_s": 0.397,
+      "metrics_line": "listen turn guild=1 user=1 eos->asr=0.44 asr->llm=0.67 llm->tts1=0.20 tts1->audio=0.00 total=1.31",
+      "stages_s": {
+        "eos->asr": 0.44,
+        "asr->llm": 0.67,
+        "llm->tts1": 0.2,
+        "tts1->audio": 0.0,
+        "total": 1.31
+      },
+      "eos_to_backchannel_s": null,
+      "first_reply_play_minus_eos_s": 1.305,
+      "plays": [
+        {
+          "at_eos_plus_s": 1.305,
+          "end_at_eos_plus_s": 6.35,
+          "audio_s": 5.04,
+          "backchannel": false
+        }
+      ],
+      "dead_air_gaps_s": [],
+      "first_pcm_chunk_s": 1.305,
+      "streams": [
+        {
+          "n_chunks": 9,
+          "audio_s": 5.04,
+          "chunk_gaps_s": [
+            0.173,
+            0.175,
+            0.176,
+            0.173,
+            0.175,
+            0.174,
+            0.153,
+            0.0
+          ],
+          "underruns_s": [],
+          "play_start_at_eos_plus_s": 1.305,
+          "max_chunk_gap_s": 0.176
+        }
+      ],
+      "synth_texts": [
+        "Probably Beerus, since I still haven't really beaten him yet."
+      ],
+      "chunk_word_counts": [
+        10
+      ],
+      "tts_results": [
+        {
+          "words": 10,
+          "audio_s": 5.04,
+          "cap_s": 16.0,
+          "truncated": false,
+          "completed": true,
+          "streamed": true
+        }
+      ],
+      "n_utterances_in_turn": 1,
+      "n_asr_calls_in_turn": 1,
+      "chunks_truncated_by_tts_cap": [],
+      "spark_first_delta_s": 0.467,
+      "used_local_model": false,
+      "provider_warnings": [],
+      "emoji_or_markdown_in_tts": []
+    },
+    {
+      "turn": 3,
+      "question": "Hey Goku, how do you stay so strong while training every single day?",
+      "clip_s": 5.36,
+      "failure": null,
+      "endpoint_wait_s": 0.427,
+      "metrics_line": "listen turn guild=1 user=1 eos->asr=0.47 asr->llm=1.23 llm->tts1=0.20 tts1->audio=0.00 total=1.90",
+      "stages_s": {
+        "eos->asr": 0.47,
+        "asr->llm": 1.23,
+        "llm->tts1": 0.2,
+        "tts1->audio": 0.0,
+        "total": 1.9
+      },
+      "eos_to_backchannel_s": null,
+      "first_reply_play_minus_eos_s": 1.904,
+      "plays": [
+        {
+          "at_eos_plus_s": 1.904,
+          "end_at_eos_plus_s": 6.949,
+          "audio_s": 5.04,
+          "backchannel": false
+        }
+      ],
+      "dead_air_gaps_s": [],
+      "first_pcm_chunk_s": 1.904,
+      "streams": [
+        {
+          "n_chunks": 9,
+          "audio_s": 5.04,
+          "chunk_gaps_s": [
+            0.181,
+            0.186,
+            0.187,
+            0.18,
+            0.179,
+            0.184,
+            0.164,
+            0.0
+          ],
+          "underruns_s": [],
+          "play_start_at_eos_plus_s": 1.904,
+          "max_chunk_gap_s": 0.187
+        }
+      ],
+      "synth_texts": [
+        "I just keep pushing past my limits and eat a ton of good food afterward."
+      ],
+      "chunk_word_counts": [
+        15
+      ],
+      "tts_results": [
+        {
+          "words": 15,
+          "audio_s": 5.04,
+          "cap_s": 24.0,
+          "truncated": false,
+          "completed": true,
+          "streamed": true
+        }
+      ],
+      "n_utterances_in_turn": 1,
+      "n_asr_calls_in_turn": 1,
+      "chunks_truncated_by_tts_cap": [],
+      "spark_first_delta_s": 0.705,
+      "used_local_model": false,
+      "provider_warnings": [],
+      "emoji_or_markdown_in_tts": []
+    },
+    {
+      "turn": 4,
+      "question": "What would you do if you had one whole day with nothing to fight?",
+      "clip_s": 7.52,
+      "failure": null,
+      "endpoint_wait_s": 0.416,
+      "metrics_line": "listen turn guild=1 user=1 eos->asr=0.43 asr->llm=2.56 llm->tts1=0.19 tts1->audio=0.00 total=3.18",
+      "stages_s": {
+        "eos->asr": 0.43,
+        "asr->llm": 2.56,
+        "llm->tts1": 0.19,
+        "tts1->audio": 0.0,
+        "total": 3.18
+      },
+      "eos_to_backchannel_s": null,
+      "first_reply_play_minus_eos_s": 3.184,
+      "plays": [
+        {
+          "at_eos_plus_s": 3.184,
+          "end_at_eos_plus_s": 9.43,
+          "audio_s": 6.24,
+          "backchannel": false
+        }
+      ],
+      "dead_air_gaps_s": [],
+      "first_pcm_chunk_s": 3.184,
+      "streams": [
+        {
+          "n_chunks": 11,
+          "audio_s": 6.24,
+          "chunk_gaps_s": [
+            0.343,
+            0.174,
+            0.173,
+            0.173,
+            0.174,
+            0.177,
+            0.174,
+            0.173,
+            0.135,
+            0.0
+          ],
+          "underruns_s": [],
+          "play_start_at_eos_plus_s": 3.184,
+          "max_chunk_gap_s": 0.343
+        }
+      ],
+      "synth_texts": [
+        "I'd train anyway, then eat a huge meal with friends and family and enjoy the peace."
+      ],
+      "chunk_word_counts": [
+        16
+      ],
+      "tts_results": [
+        {
+          "words": 16,
+          "audio_s": 6.24,
+          "cap_s": 25.6,
+          "truncated": false,
+          "completed": true,
+          "streamed": true
+        }
+      ],
+      "n_utterances_in_turn": 1,
+      "n_asr_calls_in_turn": 1,
+      "chunks_truncated_by_tts_cap": [],
+      "spark_first_delta_s": 2.417,
+      "used_local_model": false,
+      "provider_warnings": [],
+      "emoji_or_markdown_in_tts": []
+    },
+    {
+      "turn": 5,
+      "question": "Hey Goku, can you tell me about your first time turning Super Saiyan?",
+      "clip_s": 4.56,
+      "failure": null,
+      "endpoint_wait_s": 0.426,
+      "metrics_line": "listen turn guild=1 user=1 eos->asr=0.47 asr->llm=2.03 llm->tts1=0.20 tts1->audio=0.00 total=2.70",
+      "stages_s": {
+        "eos->asr": 0.47,
+        "asr->llm": 2.03,
+        "llm->tts1": 0.2,
+        "tts1->audio": 0.0,
+        "total": 2.7
+      },
+      "eos_to_backchannel_s": null,
+      "first_reply_play_minus_eos_s": 2.697,
+      "plays": [
+        {
+          "at_eos_plus_s": 2.697,
+          "end_at_eos_plus_s": 21.591,
+          "audio_s": 18.88,
+          "backchannel": false
+        }
+      ],
+      "dead_air_gaps_s": [],
+      "first_pcm_chunk_s": 2.697,
+      "streams": [
+        {
+          "n_chunks": 31,
+          "audio_s": 18.88,
+          "chunk_gaps_s": [
+            0.172,
+            0.174,
+            0.174,
+            0.173,
+            0.173,
+            0.175,
+            0.176,
+            0.174,
+            0.174,
+            0.173,
+            0.174,
+            0.175,
+            0.176,
+            0.174,
+            0.178,
+            0.176,
+            0.176,
+            0.175,
+            0.174,
+            0.175,
+            0.176,
+            0.179,
+            0.177,
+            0.174,
+            0.177,
+            0.176,
+            0.175,
+            0.175,
+            0.095,
+            0.0
+          ],
+          "underruns_s": [],
+          "play_start_at_eos_plus_s": 2.697,
+          "max_chunk_gap_s": 0.179
+        }
+      ],
+      "synth_texts": [
+        "Man, that first Super Saiyan moment hit when Frieza hurt Krillin, and my rage just exploded!"
+      ],
+      "chunk_word_counts": [
+        16
+      ],
+      "tts_results": [
+        {
+          "words": 16,
+          "audio_s": 18.88,
+          "cap_s": 25.6,
+          "truncated": false,
+          "completed": true,
+          "streamed": true
+        }
+      ],
+      "n_utterances_in_turn": 1,
+      "n_asr_calls_in_turn": 1,
+      "chunks_truncated_by_tts_cap": [],
+      "spark_first_delta_s": 1.327,
+      "used_local_model": false,
+      "provider_warnings": [],
+      "emoji_or_markdown_in_tts": []
+    },
+    {
+      "turn": 6,
+      "question": "Goku, what is the hardest thing you have ever had to learn?",
+      "clip_s": 4.88,
+      "failure": null,
+      "endpoint_wait_s": 0.417,
+      "metrics_line": "listen turn guild=1 user=1 eos->asr=0.47 asr->llm=1.47 llm->tts1=0.20 tts1->audio=0.00 total=2.14",
+      "stages_s": {
+        "eos->asr": 0.47,
+        "asr->llm": 1.47,
+        "llm->tts1": 0.2,
+        "tts1->audio": 0.0,
+        "total": 2.14
+      },
+      "eos_to_backchannel_s": null,
+      "first_reply_play_minus_eos_s": 2.143,
+      "plays": [
+        {
+          "at_eos_plus_s": 2.143,
+          "end_at_eos_plus_s": 8.308,
+          "audio_s": 6.16,
+          "backchannel": false
+        }
+      ],
+      "dead_air_gaps_s": [],
+      "first_pcm_chunk_s": 2.143,
+      "streams": [
+        {
+          "n_chunks": 11,
+          "audio_s": 6.16,
+          "chunk_gaps_s": [
+            0.175,
+            0.173,
+            0.177,
+            0.174,
+            0.174,
+            0.174,
+            0.179,
+            0.18,
+            0.119,
+            0.0
+          ],
+          "underruns_s": [],
+          "play_start_at_eos_plus_s": 2.143,
+          "max_chunk_gap_s": 0.18
+        }
+      ],
+      "synth_texts": [
+        "Honestly, learning to hold back my power so I don't hurt the people I'm protecting."
+      ],
+      "chunk_word_counts": [
+        15
+      ],
+      "tts_results": [
+        {
+          "words": 15,
+          "audio_s": 6.16,
+          "cap_s": 24.0,
+          "truncated": false,
+          "completed": true,
+          "streamed": true
+        }
+      ],
+      "n_utterances_in_turn": 1,
+      "n_asr_calls_in_turn": 1,
+      "chunks_truncated_by_tts_cap": [],
+      "spark_first_delta_s": 1.066,
+      "used_local_model": false,
+      "provider_warnings": [],
+      "emoji_or_markdown_in_tts": []
+    },
+    {
+      "turn": 7,
+      "question": "Hey Goku, do you ever get nervous before a really big fight?",
+      "clip_s": 5.04,
+      "failure": null,
+      "endpoint_wait_s": 0.427,
+      "metrics_line": "listen turn guild=1 user=1 eos->asr=0.47 asr->llm=2.05 llm->tts1=0.19 tts1->audio=0.00 total=2.71",
+      "stages_s": {
+        "eos->asr": 0.47,
+        "asr->llm": 2.05,
+        "llm->tts1": 0.19,
+        "tts1->audio": 0.0,
+        "total": 2.71
+      },
+      "eos_to_backchannel_s": null,
+      "first_reply_play_minus_eos_s": 2.711,
+      "plays": [
+        {
+          "at_eos_plus_s": 2.711,
+          "end_at_eos_plus_s": 10.318,
+          "audio_s": 7.6,
+          "backchannel": false
+        }
+      ],
+      "dead_air_gaps_s": [],
+      "first_pcm_chunk_s": 2.711,
+      "streams": [
+        {
+          "n_chunks": 13,
+          "audio_s": 7.6,
+          "chunk_gaps_s": [
+            0.171,
+            0.177,
+            0.179,
+            0.175,
+            0.175,
+            0.182,
+            0.186,
+            0.185,
+            0.186,
+            0.181,
+            0.164,
+            0.0
+          ],
+          "underruns_s": [],
+          "play_start_at_eos_plus_s": 2.711,
+          "max_chunk_gap_s": 0.186
+        }
+      ],
+      "synth_texts": [
+        "Yeah, sometimes, but that nervous energy just fires me up to push even harder!"
+      ],
+      "chunk_word_counts": [
+        14
+      ],
+      "tts_results": [
+        {
+          "words": 14,
+          "audio_s": 7.6,
+          "cap_s": 22.400000000000002,
+          "truncated": false,
+          "completed": true,
+          "streamed": true
+        }
+      ],
+      "n_utterances_in_turn": 1,
+      "n_asr_calls_in_turn": 1,
+      "chunks_truncated_by_tts_cap": [],
+      "spark_first_delta_s": 1.872,
+      "used_local_model": false,
+      "provider_warnings": [],
+      "emoji_or_markdown_in_tts": []
+    },
+    {
+      "turn": 8,
+      "question": "Tell me, Goku, what was it like training with Master Roshi as a kid?",
+      "clip_s": 5.28,
+      "failure": null,
+      "endpoint_wait_s": 0.417,
+      "metrics_line": "listen turn guild=1 user=1 eos->asr=0.46 asr->llm=2.76 llm->tts1=0.20 tts1->audio=0.00 total=3.42",
+      "stages_s": {
+        "eos->asr": 0.46,
+        "asr->llm": 2.76,
+        "llm->tts1": 0.2,
+        "tts1->audio": 0.0,
+        "total": 3.42
+      },
+      "eos_to_backchannel_s": null,
+      "first_reply_play_minus_eos_s": 0.117,
+      "plays": [
+        {
+          "at_eos_plus_s": 0.117,
+          "end_at_eos_plus_s": 8.844,
+          "audio_s": 8.72,
+          "backchannel": false
+        },
+        {
+          "at_eos_plus_s": 10.291,
+          "end_at_eos_plus_s": 19.818,
+          "audio_s": 9.52,
+          "backchannel": false
+        }
+      ],
+      "dead_air_gaps_s": [
+        1.447
+      ],
+      "first_pcm_chunk_s": 0.117,
+      "streams": [
+        {
+          "n_chunks": 15,
+          "audio_s": 8.72,
+          "chunk_gaps_s": [
+            0.179,
+            0.177,
+            0.181,
+            0.174,
+            0.173,
+            0.174,
+            0.174,
+            0.173,
+            0.175,
+            0.174,
+            0.173,
+            0.174,
+            0.115,
+            0.0
+          ],
+          "underruns_s": [],
+          "play_start_at_eos_plus_s": 0.117,
+          "max_chunk_gap_s": 0.181
+        },
+        {
+          "n_chunks": 16,
+          "audio_s": 9.52,
+          "chunk_gaps_s": [
+            0.173,
+            0.175,
+            0.174,
+            0.174,
+            0.173,
+            0.173,
+            0.173,
+            0.175,
+            0.173,
+            0.174,
+            0.174,
+            0.173,
+            0.175,
+            0.154,
+            0.0
+          ],
+          "underruns_s": [],
+          "play_start_at_eos_plus_s": 10.291,
+          "max_chunk_gap_s": 0.175
+        }
+      ],
+      "synth_texts": [
+        "Alright, here's the deal: I turn that nervous buzz into pure fighting spirit and go all out!",
+        "Man, Roshi worked us hard, but those milk deliveries and early mornings made me way stronger!"
+      ],
+      "chunk_word_counts": [
+        17,
+        16
+      ],
+      "tts_results": [
+        {
+          "words": 17,
+          "audio_s": 8.72,
+          "cap_s": 27.200000000000003,
+          "truncated": false,
+          "completed": true,
+          "streamed": true
+        },
+        {
+          "words": 16,
+          "audio_s": 9.52,
+          "cap_s": 25.6,
+          "truncated": false,
+          "completed": true,
+          "streamed": true
+        }
+      ],
+      "n_utterances_in_turn": 2,
+      "n_asr_calls_in_turn": 2,
+      "chunks_truncated_by_tts_cap": [],
+      "spark_first_delta_s": 0.57,
+      "used_local_model": false,
+      "provider_warnings": [],
+      "emoji_or_markdown_in_tts": []
+    },
+    {
+      "turn": 9,
+      "question": "Hey Goku, what's your favorite food, and how much of it can you eat?",
+      "clip_s": 5.68,
+      "failure": null,
+      "endpoint_wait_s": 0.419,
+      "metrics_line": "listen turn guild=1 user=1 eos->asr=0.46 asr->llm=1.22 llm->tts1=0.20 tts1->audio=0.00 total=1.89",
+      "stages_s": {
+        "eos->asr": 0.46,
+        "asr->llm": 1.22,
+        "llm->tts1": 0.2,
+        "tts1->audio": 0.0,
+        "total": 1.89
+      },
+      "eos_to_backchannel_s": null,
+      "first_reply_play_minus_eos_s": 1.889,
+      "plays": [
+        {
+          "at_eos_plus_s": 1.889,
+          "end_at_eos_plus_s": 7.97,
+          "audio_s": 6.08,
+          "backchannel": false
+        }
+      ],
+      "dead_air_gaps_s": [],
+      "first_pcm_chunk_s": 1.889,
+      "streams": [
+        {
+          "n_chunks": 11,
+          "audio_s": 6.08,
+          "chunk_gaps_s": [
+            0.178,
+            0.175,
+            0.178,
+            0.179,
+            0.179,
+            0.181,
+            0.18,
+            0.183,
+            0.098,
+            0.0
+          ],
+          "underruns_s": [],
+          "play_start_at_eos_plus_s": 1.889,
+          "max_chunk_gap_s": 0.183
+        }
+      ],
+      "synth_texts": [
+        "Oh, definitely Chi-Chi's cooking, and I can eat a whole mountain of it easily!"
+      ],
+      "chunk_word_counts": [
+        14
+      ],
+      "tts_results": [
+        {
+          "words": 14,
+          "audio_s": 6.08,
+          "cap_s": 22.400000000000002,
+          "truncated": false,
+          "completed": true,
+          "streamed": true
+        }
+      ],
+      "n_utterances_in_turn": 1,
+      "n_asr_calls_in_turn": 1,
+      "chunks_truncated_by_tts_cap": [],
+      "spark_first_delta_s": 0.565,
+      "used_local_model": false,
+      "provider_warnings": [],
+      "emoji_or_markdown_in_tts": []
+    },
+    {
+      "turn": 10,
+      "question": "Goku, who was the toughest opponent you have ever fought?",
+      "clip_s": 5.84,
+      "failure": null,
+      "endpoint_wait_s": 0.396,
+      "metrics_line": "listen turn guild=1 user=1 eos->asr=0.44 asr->llm=1.57 llm->tts1=0.20 tts1->audio=0.00 total=2.21",
+      "stages_s": {
+        "eos->asr": 0.44,
+        "asr->llm": 1.57,
+        "llm->tts1": 0.2,
+        "tts1->audio": 0.0,
+        "total": 2.21
+      },
+      "eos_to_backchannel_s": null,
+      "first_reply_play_minus_eos_s": 2.211,
+      "plays": [
+        {
+          "at_eos_plus_s": 2.211,
+          "end_at_eos_plus_s": 18.938,
+          "audio_s": 16.72,
+          "backchannel": false
+        }
+      ],
+      "dead_air_gaps_s": [],
+      "first_pcm_chunk_s": 2.211,
+      "streams": [
+        {
+          "n_chunks": 28,
+          "audio_s": 16.72,
+          "chunk_gaps_s": [
+            0.174,
+            0.174,
+            0.174,
+            0.175,
+            0.175,
+            0.175,
+            0.174,
+            0.175,
+            0.174,
+            0.174,
+            0.177,
+            0.175,
+            0.174,
+            0.174,
+            0.173,
+            0.173,
+            0.174,
+            0.18,
+            0.179,
+            0.178,
+            0.178,
+            0.179,
+            0.178,
+            0.173,
+            0.175,
+            0.036,
+            0.0
+          ],
+          "underruns_s": [],
+          "play_start_at_eos_plus_s": 2.211,
+          "max_chunk_gap_s": 0.18
+        }
+      ],
+      "synth_texts": [
+        "Probably Beerus, because fighting a god of destruction really pushed me past every limit I had!"
+      ],
+      "chunk_word_counts": [
+        16
+      ],
+      "tts_results": [
+        {
+          "words": 16,
+          "audio_s": 16.72,
+          "cap_s": 25.6,
+          "truncated": false,
+          "completed": true,
+          "streamed": true
+        }
+      ],
+      "n_utterances_in_turn": 1,
+      "n_asr_calls_in_turn": 1,
+      "chunks_truncated_by_tts_cap": [],
+      "spark_first_delta_s": 0.767,
+      "used_local_model": false,
+      "provider_warnings": [],
+      "emoji_or_markdown_in_tts": []
+    },
+    {
+      "turn": 11,
+      "question": "Hey Goku, how do you stay so strong while training every single day?",
+      "clip_s": 5.36,
+      "failure": null,
+      "endpoint_wait_s": 0.43,
+      "metrics_line": "listen turn guild=1 user=1 eos->asr=0.49 asr->llm=1.01 llm->tts1=0.20 tts1->audio=0.00 total=1.69",
+      "stages_s": {
+        "eos->asr": 0.49,
+        "asr->llm": 1.01,
+        "llm->tts1": 0.2,
+        "tts1->audio": 0.0,
+        "total": 1.69
+      },
+      "eos_to_backchannel_s": null,
+      "first_reply_play_minus_eos_s": 1.695,
+      "plays": [
+        {
+          "at_eos_plus_s": 1.695,
+          "end_at_eos_plus_s": 6.979,
+          "audio_s": 5.28,
+          "backchannel": false
+        }
+      ],
+      "dead_air_gaps_s": [],
+      "first_pcm_chunk_s": 1.695,
+      "streams": [
+        {
+          "n_chunks": 10,
+          "audio_s": 5.28,
+          "chunk_gaps_s": [
+            0.173,
+            0.176,
+            0.176,
+            0.179,
+            0.18,
+            0.179,
+            0.18,
+            0.057,
+            0.0
+          ],
+          "underruns_s": [],
+          "play_start_at_eos_plus_s": 1.695,
+          "max_chunk_gap_s": 0.18
+        }
+      ],
+      "synth_texts": [
+        "Honestly, I just love the fight so much that training never feels like a chore to me!"
+      ],
+      "chunk_word_counts": [
+        17
+      ],
+      "tts_results": [
+        {
+          "words": 17,
+          "audio_s": 5.28,
+          "cap_s": 27.200000000000003,
+          "truncated": false,
+          "completed": true,
+          "streamed": true
+        }
+      ],
+      "n_utterances_in_turn": 1,
+      "n_asr_calls_in_turn": 1,
+      "chunks_truncated_by_tts_cap": [],
+      "spark_first_delta_s": 0.518,
+      "used_local_model": false,
+      "provider_warnings": [],
+      "emoji_or_markdown_in_tts": []
+    },
+    {
+      "turn": 12,
+      "question": "What would you do if you had one whole day with nothing to fight?",
+      "clip_s": 7.52,
+      "failure": null,
+      "endpoint_wait_s": 0.42,
+      "metrics_line": "listen turn guild=1 user=1 eos->asr=0.44 asr->llm=2.20 llm->tts1=0.20 tts1->audio=0.00 total=2.84",
+      "stages_s": {
+        "eos->asr": 0.44,
+        "asr->llm": 2.2,
+        "llm->tts1": 0.2,
+        "tts1->audio": 0.0,
+        "total": 2.84
+      },
+      "eos_to_backchannel_s": null,
+      "first_reply_play_minus_eos_s": 2.835,
+      "plays": [
+        {
+          "at_eos_plus_s": 2.835,
+          "end_at_eos_plus_s": 8.039,
+          "audio_s": 5.2,
+          "backchannel": false
+        }
+      ],
+      "dead_air_gaps_s": [],
+      "first_pcm_chunk_s": 2.835,
+      "streams": [
+        {
+          "n_chunks": 10,
+          "audio_s": 5.2,
+          "chunk_gaps_s": [
+            0.175,
+            0.176,
+            0.181,
+            0.177,
+            0.174,
+            0.176,
+            0.178,
+            0.037,
+            0.0
+          ],
+          "underruns_s": [],
+          "play_start_at_eos_plus_s": 2.835,
+          "max_chunk_gap_s": 0.181
+        }
+      ],
+      "synth_texts": [
+        "I'd eat a huge meal, then train with my friends and family until sunset!"
+      ],
+      "chunk_word_counts": [
+        14
+      ],
+      "tts_results": [
+        {
+          "words": 14,
+          "audio_s": 5.2,
+          "cap_s": 22.400000000000002,
+          "truncated": false,
+          "completed": true,
+          "streamed": true
+        }
+      ],
+      "n_utterances_in_turn": 1,
+      "n_asr_calls_in_turn": 1,
+      "chunks_truncated_by_tts_cap": [],
+      "spark_first_delta_s": 2.004,
+      "used_local_model": false,
+      "provider_warnings": [],
+      "emoji_or_markdown_in_tts": []
+    },
+    {
+      "turn": 13,
+      "question": "Hey Goku, can you tell me about your first time turning Super Saiyan?",
+      "clip_s": 4.56,
+      "failure": null,
+      "endpoint_wait_s": 0.418,
+      "metrics_line": "listen turn guild=1 user=1 eos->asr=0.46 asr->llm=6.72 llm->tts1=0.20 tts1->audio=0.00 total=7.38",
+      "stages_s": {
+        "eos->asr": 0.46,
+        "asr->llm": 6.72,
+        "llm->tts1": 0.2,
+        "tts1->audio": 0.0,
+        "total": 7.38
+      },
+      "eos_to_backchannel_s": null,
+      "first_reply_play_minus_eos_s": 7.384,
+      "plays": [
+        {
+          "at_eos_plus_s": 7.384,
+          "end_at_eos_plus_s": 11.387,
+          "audio_s": 4.0,
+          "backchannel": false
+        }
+      ],
+      "dead_air_gaps_s": [],
+      "first_pcm_chunk_s": 7.384,
+      "streams": [
+        {
+          "n_chunks": 8,
+          "audio_s": 4.0,
+          "chunk_gaps_s": [
+            0.171,
+            0.173,
+            0.243,
+            0.212,
+            0.176,
+            0.093,
+            0.0
+          ],
+          "underruns_s": [],
+          "play_start_at_eos_plus_s": 7.384,
+          "max_chunk_gap_s": 0.243
+        }
+      ],
+      "synth_texts": [
+        "First time turning Super Saiyan?"
+      ],
+      "chunk_word_counts": [
+        5
+      ],
+      "tts_results": [
+        {
+          "words": 5,
+          "audio_s": 4.0,
+          "cap_s": 8.0,
+          "truncated": false,
+          "completed": true,
+          "streamed": true
+        }
+      ],
+      "n_utterances_in_turn": 1,
+      "n_asr_calls_in_turn": 1,
+      "chunks_truncated_by_tts_cap": [],
+      "spark_first_delta_s": 6.724,
+      "used_local_model": true,
+      "provider_warnings": [
+        "notamusicbot.content.fallback: Spark chat failed (EmptyModelText: Spark stream ended with no content text); using the in-process local model (a cold load may be slow)"
+      ],
+      "emoji_or_markdown_in_tts": []
+    },
+    {
+      "turn": 14,
+      "question": "Goku, what is the hardest thing you have ever had to learn?",
+      "clip_s": 4.88,
+      "failure": null,
+      "endpoint_wait_s": 0.416,
+      "metrics_line": "listen turn guild=1 user=1 eos->asr=0.46 asr->llm=0.34 llm->tts1=0.20 tts1->audio=0.00 total=1.00",
+      "stages_s": {
+        "eos->asr": 0.46,
+        "asr->llm": 0.34,
+        "llm->tts1": 0.2,
+        "tts1->audio": 0.0,
+        "total": 1.0
+      },
+      "eos_to_backchannel_s": null,
+      "first_reply_play_minus_eos_s": 1.004,
+      "plays": [
+        {
+          "at_eos_plus_s": 1.004,
+          "end_at_eos_plus_s": 7.169,
+          "audio_s": 6.16,
+          "backchannel": false
+        }
+      ],
+      "dead_air_gaps_s": [],
+      "first_pcm_chunk_s": 1.004,
+      "streams": [
+        {
+          "n_chunks": 11,
+          "audio_s": 6.16,
+          "chunk_gaps_s": [
+            0.177,
+            0.179,
+            0.18,
+            0.177,
+            0.176,
+            0.175,
+            0.174,
+            0.174,
+            0.113,
+            0.0
+          ],
+          "underruns_s": [],
+          "play_start_at_eos_plus_s": 1.004,
+          "max_chunk_gap_s": 0.18
+        }
+      ],
+      "synth_texts": [
+        "The hardest thing I ever learned was controlling my power without blowing up the world."
+      ],
+      "chunk_word_counts": [
+        15
+      ],
+      "tts_results": [
+        {
+          "words": 15,
+          "audio_s": 6.16,
+          "cap_s": 24.0,
+          "truncated": false,
+          "completed": true,
+          "streamed": true
+        }
+      ],
+      "n_utterances_in_turn": 1,
+      "n_asr_calls_in_turn": 1,
+      "chunks_truncated_by_tts_cap": [],
+      "spark_first_delta_s": 0.344,
+      "used_local_model": true,
+      "provider_warnings": [],
+      "emoji_or_markdown_in_tts": []
+    },
+    {
+      "turn": 15,
+      "question": "Hey Goku, do you ever get nervous before a really big fight?",
+      "clip_s": 5.04,
+      "failure": null,
+      "endpoint_wait_s": 0.427,
+      "metrics_line": "listen turn guild=1 user=1 eos->asr=0.47 asr->llm=0.42 llm->tts1=0.19 tts1->audio=0.00 total=1.08",
+      "stages_s": {
+        "eos->asr": 0.47,
+        "asr->llm": 0.42,
+        "llm->tts1": 0.19,
+        "tts1->audio": 0.0,
+        "total": 1.08
+      },
+      "eos_to_backchannel_s": null,
+      "first_reply_play_minus_eos_s": 1.078,
+      "plays": [
+        {
+          "at_eos_plus_s": 1.078,
+          "end_at_eos_plus_s": 7.403,
+          "audio_s": 6.32,
+          "backchannel": false
+        }
+      ],
+      "dead_air_gaps_s": [],
+      "first_pcm_chunk_s": 1.078,
+      "streams": [
+        {
+          "n_chunks": 11,
+          "audio_s": 6.32,
+          "chunk_gaps_s": [
+            0.171,
+            0.181,
+            0.174,
+            0.192,
+            0.183,
+            0.181,
+            0.187,
+            0.179,
+            0.157,
+            0.0
+          ],
+          "underruns_s": [],
+          "play_start_at_eos_plus_s": 1.078,
+          "max_chunk_gap_s": 0.192
+        }
+      ],
+      "synth_texts": [
+        "Yeah, I get a little nervous, but I always remember my training and just go for it!"
+      ],
+      "chunk_word_counts": [
+        17
+      ],
+      "tts_results": [
+        {
+          "words": 17,
+          "audio_s": 6.32,
+          "cap_s": 27.200000000000003,
+          "truncated": false,
+          "completed": true,
+          "streamed": true
+        }
+      ],
+      "n_utterances_in_turn": 1,
+      "n_asr_calls_in_turn": 1,
+      "chunks_truncated_by_tts_cap": [],
+      "spark_first_delta_s": 0.416,
+      "used_local_model": true,
+      "provider_warnings": [],
+      "emoji_or_markdown_in_tts": []
+    },
+    {
+      "turn": 16,
+      "question": "Tell me, Goku, what was it like training with Master Roshi as a kid?",
+      "clip_s": 5.28,
+      "failure": null,
+      "endpoint_wait_s": 0.428,
+      "metrics_line": "listen turn guild=1 user=1 eos->asr=0.46 asr->llm=5.65 llm->tts1=0.20 tts1->audio=0.00 total=6.30",
+      "stages_s": {
+        "eos->asr": 0.46,
+        "asr->llm": 5.65,
+        "llm->tts1": 0.2,
+        "tts1->audio": 0.0,
+        "total": 6.3
+      },
+      "eos_to_backchannel_s": null,
+      "first_reply_play_minus_eos_s": 3.006,
+      "plays": [
+        {
+          "at_eos_plus_s": 3.006,
+          "end_at_eos_plus_s": 8.771,
+          "audio_s": 5.76,
+          "backchannel": false
+        },
+        {
+          "at_eos_plus_s": 10.429,
+          "end_at_eos_plus_s": 17.234,
+          "audio_s": 6.8,
+          "backchannel": false
+        }
+      ],
+      "dead_air_gaps_s": [
+        1.658
+      ],
+      "first_pcm_chunk_s": 3.006,
+      "streams": [
+        {
+          "n_chunks": 10,
+          "audio_s": 5.76,
+          "chunk_gaps_s": [
+            0.18,
+            0.178,
+            0.176,
+            0.176,
+            0.176,
+            0.182,
+            0.182,
+            0.18,
+            0.0
+          ],
+          "underruns_s": [],
+          "play_start_at_eos_plus_s": 3.006,
+          "max_chunk_gap_s": 0.182
+        },
+        {
+          "n_chunks": 12,
+          "audio_s": 6.8,
+          "chunk_gaps_s": [
+            0.185,
+            0.2,
+            0.191,
+            0.173,
+            0.175,
+            0.183,
+            0.175,
+            0.175,
+            0.178,
+            0.117,
+            0.0
+          ],
+          "underruns_s": [],
+          "play_start_at_eos_plus_s": 10.429,
+          "max_chunk_gap_s": 0.2
+        }
+      ],
+      "synth_texts": [
+        "I still get butterflies, but my friends and training always fire me up to fight!",
+        "Training with Master Roshi as a kid was tough and hilarious, but it made me way stronger!"
+      ],
+      "chunk_word_counts": [
+        15,
+        17
+      ],
+      "tts_results": [
+        {
+          "words": 15,
+          "audio_s": 5.76,
+          "cap_s": 24.0,
+          "truncated": false,
+          "completed": true,
+          "streamed": true
+        },
+        {
+          "words": 17,
+          "audio_s": 6.8,
+          "cap_s": 27.200000000000003,
+          "truncated": false,
+          "completed": true,
+          "streamed": true
+        }
+      ],
+      "n_utterances_in_turn": 2,
+      "n_asr_calls_in_turn": 2,
+      "chunks_truncated_by_tts_cap": [],
+      "spark_first_delta_s": 0.984,
+      "used_local_model": false,
+      "provider_warnings": [],
+      "emoji_or_markdown_in_tts": []
+    },
+    {
+      "turn": 17,
+      "question": "Hey Goku, what's your favorite food, and how much of it can you eat?",
+      "clip_s": 5.68,
+      "failure": null,
+      "endpoint_wait_s": 0.418,
+      "metrics_line": "listen turn guild=1 user=1 eos->asr=0.46 asr->llm=1.26 llm->tts1=0.20 tts1->audio=0.00 total=1.92",
+      "stages_s": {
+        "eos->asr": 0.46,
+        "asr->llm": 1.26,
+        "llm->tts1": 0.2,
+        "tts1->audio": 0.0,
+        "total": 1.92
+      },
+      "eos_to_backchannel_s": null,
+      "first_reply_play_minus_eos_s": 1.922,
+      "plays": [
+        {
+          "at_eos_plus_s": 1.922,
+          "end_at_eos_plus_s": 10.008,
+          "audio_s": 8.08,
+          "backchannel": false
+        }
+      ],
+      "dead_air_gaps_s": [],
+      "first_pcm_chunk_s": 1.922,
+      "streams": [
+        {
+          "n_chunks": 14,
+          "audio_s": 8.08,
+          "chunk_gaps_s": [
+            0.181,
+            0.184,
+            0.185,
+            0.184,
+            0.184,
+            0.183,
+            0.182,
+            0.187,
+            0.182,
+            0.18,
+            0.185,
+            0.119,
+            0.0
+          ],
+          "underruns_s": [],
+          "play_start_at_eos_plus_s": 1.922,
+          "max_chunk_gap_s": 0.187
+        }
+      ],
+      "synth_texts": [
+        "Honestly I'll eat just about anything, but I can put away a mountain of rice!"
+      ],
+      "chunk_word_counts": [
+        15
+      ],
+      "tts_results": [
+        {
+          "words": 15,
+          "audio_s": 8.08,
+          "cap_s": 24.0,
+          "truncated": false,
+          "completed": true,
+          "streamed": true
+        }
+      ],
+      "n_utterances_in_turn": 1,
+      "n_asr_calls_in_turn": 1,
+      "chunks_truncated_by_tts_cap": [],
+      "spark_first_delta_s": 0.765,
+      "used_local_model": false,
+      "provider_warnings": [],
+      "emoji_or_markdown_in_tts": []
+    },
+    {
+      "turn": 18,
+      "question": "Goku, who was the toughest opponent you have ever fought?",
+      "clip_s": 5.84,
+      "failure": null,
+      "endpoint_wait_s": 0.399,
+      "metrics_line": "listen turn guild=1 user=1 eos->asr=0.44 asr->llm=0.98 llm->tts1=0.20 tts1->audio=0.00 total=1.62",
+      "stages_s": {
+        "eos->asr": 0.44,
+        "asr->llm": 0.98,
+        "llm->tts1": 0.2,
+        "tts1->audio": 0.0,
+        "total": 1.62
+      },
+      "eos_to_backchannel_s": null,
+      "first_reply_play_minus_eos_s": 1.625,
+      "plays": [
+        {
+          "at_eos_plus_s": 1.625,
+          "end_at_eos_plus_s": 7.549,
+          "audio_s": 5.92,
+          "backchannel": false
+        }
+      ],
+      "dead_air_gaps_s": [],
+      "first_pcm_chunk_s": 1.625,
+      "streams": [
+        {
+          "n_chunks": 11,
+          "audio_s": 5.92,
+          "chunk_gaps_s": [
+            0.183,
+            0.182,
+            0.182,
+            0.183,
+            0.189,
+            0.186,
+            0.186,
+            0.185,
+            0.058,
+            0.0
+          ],
+          "underruns_s": [],
+          "play_start_at_eos_plus_s": 1.625,
+          "max_chunk_gap_s": 0.189
+        }
+      ],
+      "synth_texts": [
+        "Probably Vegeta the first time we fought, because he pushed me harder than anyone ever had."
+      ],
+      "chunk_word_counts": [
+        16
+      ],
+      "tts_results": [
+        {
+          "words": 16,
+          "audio_s": 5.92,
+          "cap_s": 25.6,
+          "truncated": false,
+          "completed": true,
+          "streamed": true
+        }
+      ],
+      "n_utterances_in_turn": 1,
+      "n_asr_calls_in_turn": 1,
+      "chunks_truncated_by_tts_cap": [],
+      "spark_first_delta_s": 0.537,
+      "used_local_model": false,
+      "provider_warnings": [],
+      "emoji_or_markdown_in_tts": []
+    },
+    {
+      "turn": 19,
+      "question": "Hey Goku, how do you stay so strong while training every single day?",
+      "clip_s": 5.36,
+      "failure": null,
+      "endpoint_wait_s": 0.419,
+      "metrics_line": "listen turn guild=1 user=1 eos->asr=0.46 asr->llm=1.26 llm->tts1=0.20 tts1->audio=0.00 total=1.93",
+      "stages_s": {
+        "eos->asr": 0.46,
+        "asr->llm": 1.26,
+        "llm->tts1": 0.2,
+        "tts1->audio": 0.0,
+        "total": 1.93
+      },
+      "eos_to_backchannel_s": null,
+      "first_reply_play_minus_eos_s": 1.927,
+      "plays": [
+        {
+          "at_eos_plus_s": 1.927,
+          "end_at_eos_plus_s": 8.412,
+          "audio_s": 6.48,
+          "backchannel": false
+        }
+      ],
+      "dead_air_gaps_s": [],
+      "first_pcm_chunk_s": 1.927,
+      "streams": [
+        {
+          "n_chunks": 12,
+          "audio_s": 6.48,
+          "chunk_gaps_s": [
+            0.184,
+            0.187,
+            0.188,
+            0.187,
+            0.186,
+            0.185,
+            0.186,
+            0.184,
+            0.182,
+            0.037,
+            0.0
+          ],
+          "underruns_s": [],
+          "play_start_at_eos_plus_s": 1.927,
+          "max_chunk_gap_s": 0.188
+        }
+      ],
+      "synth_texts": [
+        "I keep it simple: eat plenty, rest when my body needs it, and never skip a good fight."
+      ],
+      "chunk_word_counts": [
+        18
+      ],
+      "tts_results": [
+        {
+          "words": 18,
+          "audio_s": 6.48,
+          "cap_s": 28.8,
+          "truncated": false,
+          "completed": true,
+          "streamed": true
+        }
+      ],
+      "n_utterances_in_turn": 1,
+      "n_asr_calls_in_turn": 1,
+      "chunks_truncated_by_tts_cap": [],
+      "spark_first_delta_s": 0.637,
+      "used_local_model": false,
+      "provider_warnings": [],
+      "emoji_or_markdown_in_tts": []
+    },
+    {
+      "turn": 20,
+      "question": "What would you do if you had one whole day with nothing to fight?",
+      "clip_s": 7.52,
+      "failure": null,
+      "endpoint_wait_s": 0.422,
+      "metrics_line": "listen turn guild=1 user=1 eos->asr=0.44 asr->llm=4.31 llm->tts1=0.20 tts1->audio=0.00 total=4.95",
+      "stages_s": {
+        "eos->asr": 0.44,
+        "asr->llm": 4.31,
+        "llm->tts1": 0.2,
+        "tts1->audio": 0.0,
+        "total": 4.95
+      },
+      "eos_to_backchannel_s": null,
+      "first_reply_play_minus_eos_s": 4.954,
+      "plays": [
+        {
+          "at_eos_plus_s": 4.954,
+          "end_at_eos_plus_s": 10.236,
+          "audio_s": 5.28,
+          "backchannel": false
+        }
+      ],
+      "dead_air_gaps_s": [],
+      "first_pcm_chunk_s": 4.954,
+      "streams": [
+        {
+          "n_chunks": 10,
+          "audio_s": 5.28,
+          "chunk_gaps_s": [
+            0.18,
+            0.183,
+            0.185,
+            0.182,
+            0.184,
+            0.182,
+            0.182,
+            0.058,
+            0.0
+          ],
+          "underruns_s": [],
+          "play_start_at_eos_plus_s": 4.954,
+          "max_chunk_gap_s": 0.185
+        }
+      ],
+      "synth_texts": [
+        "I'd still train, eat a huge meal, and see if Piccolo wants to spar."
+      ],
+      "chunk_word_counts": [
+        14
+      ],
+      "tts_results": [
+        {
+          "words": 14,
+          "audio_s": 5.28,
+          "cap_s": 22.400000000000002,
+          "truncated": false,
+          "completed": true,
+          "streamed": true
+        }
+      ],
+      "n_utterances_in_turn": 1,
+      "n_asr_calls_in_turn": 1,
+      "chunks_truncated_by_tts_cap": [],
+      "spark_first_delta_s": 4.036,
+      "used_local_model": false,
+      "provider_warnings": [],
+      "emoji_or_markdown_in_tts": []
+    }
+  ],
+  "replies": [
+    {
+      "turn": 1,
+      "asr_text": "Hey Goku, what's your favorite food? And how much of it can you eat?",
+      "asr_s": 0.062,
+      "llm_gen_s": 3.231,
+      "llm_first_delta_s": 3.057,
+      "llm_raw": "I'll eat anything, but my favorite is rice, and I can put away a whole mountain of it!",
+      "raw_sentences": 1,
+      "raw_chars": 86,
+      "spoken_sentences": 1,
+      "chunks_synthesized": 1,
+      "chunks_played": 1,
+      "spoken_text": "I'll eat anything, but my favorite is rice, and I can put away a whole mountain of it!",
+      "within_max_sentences": true
+    },
+    {
+      "turn": 2,
+      "asr_text": "Oku, who was the toughest opponent you have ever fought.",
+      "asr_s": 0.042,
+      "llm_gen_s": 0.67,
+      "llm_first_delta_s": 0.467,
+      "llm_raw": "Probably Beerus, since I still haven't really beaten him yet.",
+      "raw_sentences": 1,
+      "raw_chars": 61,
+      "spoken_sentences": 1,
+      "chunks_synthesized": 1,
+      "chunks_played": 1,
+      "spoken_text": "Probably Beerus, since I still haven't really beaten him yet.",
+      "within_max_sentences": true
+    },
+    {
+      "turn": 3,
+      "asr_text": "Hey Goku, how do you stay so strong while training every single day?",
+      "asr_s": 0.042,
+      "llm_gen_s": 1.23,
+      "llm_first_delta_s": 0.705,
+      "llm_raw": "I just keep pushing past my limits and eat a ton of good food afterward.",
+      "raw_sentences": 1,
+      "raw_chars": 72,
+      "spoken_sentences": 1,
+      "chunks_synthesized": 1,
+      "chunks_played": 1,
+      "spoken_text": "I just keep pushing past my limits and eat a ton of good food afterward.",
+      "within_max_sentences": true
+    },
+    {
+      "turn": 4,
+      "asr_text": "What you would do if you had one whole day with nothing to fight.",
+      "asr_s": 0.018,
+      "llm_gen_s": 2.558,
+      "llm_first_delta_s": 2.417,
+      "llm_raw": "I'd train anyway, then eat a huge meal with friends and family and enjoy the peace.",
+      "raw_sentences": 1,
+      "raw_chars": 83,
+      "spoken_sentences": 1,
+      "chunks_synthesized": 1,
+      "chunks_played": 1,
+      "spoken_text": "I'd train anyway, then eat a huge meal with friends and family and enjoy the peace.",
+      "within_max_sentences": true
+    },
+    {
+      "turn": 5,
+      "asr_text": "Hey Goku, can you tell me about your first time turning Super Saiyan?",
+      "asr_s": 0.042,
+      "llm_gen_s": 2.033,
+      "llm_first_delta_s": 1.327,
+      "llm_raw": "Man, that first Super Saiyan moment hit when Frieza hurt Krillin, and my rage just exploded!",
+      "raw_sentences": 1,
+      "raw_chars": 92,
+      "spoken_sentences": 1,
+      "chunks_synthesized": 1,
+      "chunks_played": 1,
+      "spoken_text": "Man, that first Super Saiyan moment hit when Frieza hurt Krillin, and my rage just exploded!",
+      "within_max_sentences": true
+    },
+    {
+      "turn": 6,
+      "asr_text": "Goku, what is the hardest thing you have ever had to learn?",
+      "asr_s": 0.057,
+      "llm_gen_s": 1.472,
+      "llm_first_delta_s": 1.066,
+      "llm_raw": "Honestly, learning to hold back my power so I don't hurt the people I'm protecting.",
+      "raw_sentences": 1,
+      "raw_chars": 83,
+      "spoken_sentences": 1,
+      "chunks_synthesized": 1,
+      "chunks_played": 1,
+      "spoken_text": "Honestly, learning to hold back my power so I don't hurt the people I'm protecting.",
+      "within_max_sentences": true
+    },
+    {
+      "turn": 7,
+      "asr_text": "Hey Goku, do you ever get nervous before a really big fight?",
+      "asr_s": 0.043,
+      "llm_gen_s": 2.045,
+      "llm_first_delta_s": 1.872,
+      "llm_raw": "Yeah, sometimes, but that nervous energy just fires me up to push even harder!",
+      "raw_sentences": 1,
+      "raw_chars": 78,
+      "spoken_sentences": 1,
+      "chunks_synthesized": 1,
+      "chunks_played": 1,
+      "spoken_text": "Yeah, sometimes, but that nervous energy just fires me up to push even harder!",
+      "within_max_sentences": true
+    },
+    {
+      "turn": 8,
+      "asr_text": "What was it like training with Master Roshi as a kid?",
+      "asr_s": 0.22,
+      "llm_gen_s": 1.248,
+      "llm_first_delta_s": 0.57,
+      "llm_raw": "Man, Roshi worked us hard, but those milk deliveries and early mornings made me way stronger!",
+      "raw_sentences": 1,
+      "raw_chars": 93,
+      "spoken_sentences": 1,
+      "chunks_synthesized": 2,
+      "chunks_played": 2,
+      "spoken_text": "Man, Roshi worked us hard, but those milk deliveries and early mornings made me way stronger!",
+      "within_max_sentences": true
+    },
+    {
+      "turn": 9,
+      "asr_text": "Hey Goku, what's your favorite food? And how much of it can you eat?",
+      "asr_s": 0.044,
+      "llm_gen_s": 1.225,
+      "llm_first_delta_s": 0.565,
+      "llm_raw": "Oh, definitely Chi-Chi's cooking, and I can eat a whole mountain of it easily!",
+      "raw_sentences": 1,
+      "raw_chars": 78,
+      "spoken_sentences": 1,
+      "chunks_synthesized": 1,
+      "chunks_played": 1,
+      "spoken_text": "Oh, definitely Chi-Chi's cooking, and I can eat a whole mountain of it easily!",
+      "within_max_sentences": true
+    },
+    {
+      "turn": 10,
+      "asr_text": "Oku, who was the toughest opponent you have ever fought.",
+      "asr_s": 0.044,
+      "llm_gen_s": 1.573,
+      "llm_first_delta_s": 0.767,
+      "llm_raw": "Probably Beerus, because fighting a god of destruction really pushed me past every limit I had!",
+      "raw_sentences": 1,
+      "raw_chars": 95,
+      "spoken_sentences": 1,
+      "chunks_synthesized": 1,
+      "chunks_played": 1,
+      "spoken_text": "Probably Beerus, because fighting a god of destruction really pushed me past every limit I had!",
+      "within_max_sentences": true
+    },
+    {
+      "turn": 11,
+      "asr_text": "Hey Goku, how do you stay so strong while training every single day?",
+      "asr_s": 0.061,
+      "llm_gen_s": 1.007,
+      "llm_first_delta_s": 0.518,
+      "llm_raw": "Honestly, I just love the fight so much that training never feels like a chore to me!",
+      "raw_sentences": 1,
+      "raw_chars": 85,
+      "spoken_sentences": 1,
+      "chunks_synthesized": 1,
+      "chunks_played": 1,
+      "spoken_text": "Honestly, I just love the fight so much that training never feels like a chore to me!",
+      "within_max_sentences": true
+    },
+    {
+      "turn": 12,
+      "asr_text": "What you would do if you had one whole day with nothing to fight.",
+      "asr_s": 0.017,
+      "llm_gen_s": 2.197,
+      "llm_first_delta_s": 2.004,
+      "llm_raw": "I'd eat a huge meal, then train with my friends and family until sunset!",
+      "raw_sentences": 1,
+      "raw_chars": 72,
+      "spoken_sentences": 1,
+      "chunks_synthesized": 1,
+      "chunks_played": 1,
+      "spoken_text": "I'd eat a huge meal, then train with my friends and family until sunset!",
+      "within_max_sentences": true
+    },
+    {
+      "turn": 13,
+      "asr_text": "Hey Goku, can you tell me about your first time turning Super Saiyan?",
+      "asr_s": 0.043,
+      "llm_gen_s": 6.724,
+      "llm_first_delta_s": 6.724,
+      "llm_raw": "First time turning Super Saiyan? I was so excited, my hair turned gold and I felt unstoppable!",
+      "raw_sentences": 2,
+      "raw_chars": 94,
+      "spoken_sentences": 1,
+      "chunks_synthesized": 1,
+      "chunks_played": 1,
+      "spoken_text": "First time turning Super Saiyan?",
+      "within_max_sentences": true
+    },
+    {
+      "turn": 14,
+      "asr_text": "Goku, what is the hardest thing you have ever had to learn?",
+      "asr_s": 0.044,
+      "llm_gen_s": 0.344,
+      "llm_first_delta_s": 0.344,
+      "llm_raw": "The hardest thing I ever learned was controlling my power without blowing up the world.",
+      "raw_sentences": 1,
+      "raw_chars": 87,
+      "spoken_sentences": 1,
+      "chunks_synthesized": 1,
+      "chunks_played": 1,
+      "spoken_text": "The hardest thing I ever learned was controlling my power without blowing up the world.",
+      "within_max_sentences": true
+    },
+    {
+      "turn": 15,
+      "asr_text": "Hey Goku, do you ever get nervous before a really big fight?",
+      "asr_s": 0.043,
+      "llm_gen_s": 0.416,
+      "llm_first_delta_s": 0.416,
+      "llm_raw": "Yeah, I get a little nervous, but I always remember my training and just go for it!",
+      "raw_sentences": 1,
+      "raw_chars": 83,
+      "spoken_sentences": 1,
+      "chunks_synthesized": 1,
+      "chunks_played": 1,
+      "spoken_text": "Yeah, I get a little nervous, but I always remember my training and just go for it!",
+      "within_max_sentences": true
+    },
+    {
+      "turn": 16,
+      "asr_text": "What was it like training with Master Roshi as a kid?",
+      "asr_s": 0.041,
+      "llm_gen_s": 1.439,
+      "llm_first_delta_s": 0.984,
+      "llm_raw": "Training with Master Roshi as a kid was tough and hilarious, but it made me way stronger!",
+      "raw_sentences": 1,
+      "raw_chars": 89,
+      "spoken_sentences": 1,
+      "chunks_synthesized": 2,
+      "chunks_played": 2,
+      "spoken_text": "Training with Master Roshi as a kid was tough and hilarious, but it made me way stronger!",
+      "within_max_sentences": true
+    },
+    {
+      "turn": 17,
+      "asr_text": "Hey Goku, what's your favorite food? And how much of it can you eat?",
+      "asr_s": 0.044,
+      "llm_gen_s": 1.257,
+      "llm_first_delta_s": 0.765,
+      "llm_raw": "Honestly I'll eat just about anything, but I can put away a mountain of rice!",
+      "raw_sentences": 1,
+      "raw_chars": 77,
+      "spoken_sentences": 1,
+      "chunks_synthesized": 1,
+      "chunks_played": 1,
+      "spoken_text": "Honestly I'll eat just about anything, but I can put away a mountain of rice!",
+      "within_max_sentences": true
+    },
+    {
+      "turn": 18,
+      "asr_text": "Oku, who was the toughest opponent you have ever fought.",
+      "asr_s": 0.043,
+      "llm_gen_s": 0.977,
+      "llm_first_delta_s": 0.537,
+      "llm_raw": "Probably Vegeta the first time we fought, because he pushed me harder than anyone ever had.",
+      "raw_sentences": 1,
+      "raw_chars": 91,
+      "spoken_sentences": 1,
+      "chunks_synthesized": 1,
+      "chunks_played": 1,
+      "spoken_text": "Probably Vegeta the first time we fought, because he pushed me harder than anyone ever had.",
+      "within_max_sentences": true
+    },
+    {
+      "turn": 19,
+      "asr_text": "Hey Goku, how do you stay so strong while training every single day?",
+      "asr_s": 0.043,
+      "llm_gen_s": 1.26,
+      "llm_first_delta_s": 0.637,
+      "llm_raw": "I keep it simple: eat plenty, rest when my body needs it, and never skip a good fight.",
+      "raw_sentences": 1,
+      "raw_chars": 86,
+      "spoken_sentences": 1,
+      "chunks_synthesized": 1,
+      "chunks_played": 1,
+      "spoken_text": "I keep it simple: eat plenty, rest when my body needs it, and never skip a good fight.",
+      "within_max_sentences": true
+    },
+    {
+      "turn": 20,
+      "asr_text": "What you would do if you had one whole day with nothing to fight.",
+      "asr_s": 0.019,
+      "llm_gen_s": 4.309,
+      "llm_first_delta_s": 4.036,
+      "llm_raw": "I'd still train, eat a huge meal, and see if Piccolo wants to spar.",
+      "raw_sentences": 1,
+      "raw_chars": 67,
+      "spoken_sentences": 1,
+      "chunks_synthesized": 1,
+      "chunks_played": 1,
+      "spoken_text": "I'd still train, eat a huge meal, and see if Piccolo wants to spar.",
+      "within_max_sentences": true
+    }
+  ],
+  "summary": {
+    "eos->asr": {
+      "n": 20,
+      "p50_s": 0.46,
+      "p90_s": 0.47,
+      "min_s": 0.43,
+      "max_s": 0.49
+    },
+    "asr->llm": {
+      "n": 20,
+      "p50_s": 1.47,
+      "p90_s": 4.31,
+      "min_s": 0.34,
+      "max_s": 6.72
+    },
+    "llm->tts1": {
+      "n": 20,
+      "p50_s": 0.2,
+      "p90_s": 0.2,
+      "min_s": 0.19,
+      "max_s": 0.21
+    },
+    "tts1->audio": {
+      "n": 20,
+      "p50_s": 0.0,
+      "p90_s": 0.0,
+      "min_s": 0.0,
+      "max_s": 0.0
+    },
+    "total": {
+      "n": 20,
+      "p50_s": 2.14,
+      "p90_s": 4.95,
+      "min_s": 1.0,
+      "max_s": 7.38
+    },
+    "eos->backchannel": null,
+    "endpoint_wait (eos->utterance emitted)": {
+      "n": 20,
+      "p50_s": 0.419,
+      "p90_s": 0.427
+    },
+    "dead_air_gap_between_chunks": {
+      "n": 2,
+      "p50_s": 1.447,
+      "p90_s": 1.658,
+      "max_s": 1.658
+    },
+    "first_reply_audio (player, eos->first real chunk)": {
+      "n": 20,
+      "p50_s": 1.927,
+      "p90_s": 3.929,
+      "max_s": 7.384
+    },
+    "time_to_first_spark_delta": {
+      "n": 20,
+      "p50_s": 0.765,
+      "p90_s": 3.057,
+      "max_s": 6.724
+    },
+    "chunk_gaps_within_stream": {
+      "n": 264,
+      "p50_s": 0.175,
+      "p90_s": 0.185,
+      "max_s": 0.343
+    },
+    "underruns": {
+      "count": 0,
+      "turns": [],
+      "total_s": 0,
+      "max_s": 0.0,
+      "streams_played": 22,
+      "turns_played_non_streaming": []
+    },
+    "chunks_truncated_by_tts_cap": {
+      "count": 0,
+      "of_chunks": 22,
+      "which": []
+    },
+    "turns_with_more_than_one_utterance": [
+      8,
+      16
+    ],
+    "max_chunk_words": 18,
+    "turns_fell_back_to_local": 3,
+    "backchannel_fraction_over_0.8s": null,
+    "backchannel_n_over_0.8s": 0,
+    "emoji_or_markdown_turns": []
+  },
+  "verdict": {
+    "turns_requested": 20,
+    "turns_with_metrics": 20,
+    "total_p50_within_6s": true,
+    "total_p90_within_9s": true,
+    "backchannel_p50_within_0.8s": false,
+    "backchannel_max_within_0.8s": false,
+    "all_replies_within_max_sentences": true,
+    "max_sentences": 1
+  },
+  "vram": {
+    "period_s": 0.25,
+    "n_samples": 1461,
+    "peak_overall_mib": 15937,
+    "per_phase": {
+      "load": {
+        "n": 35,
+        "peak_mib": 8169,
+        "min_mib": 2030
+      },
+      "load_done_idle": {
+        "n": 4,
+        "peak_mib": 8215,
+        "min_mib": 8193
+      },
+      "prepare_clips": {
+        "n": 48,
+        "peak_mib": 8476,
+        "min_mib": 8189
+      },
+      "warmup": {
+        "n": 21,
+        "peak_mib": 8516,
+        "min_mib": 8442
+      },
+      "idle_before_turns": {
+        "n": 4,
+        "peak_mib": 8515,
+        "min_mib": 8493
+      },
+      "turns": {
+        "n": 1349,
+        "peak_mib": 15937,
+        "min_mib": 8434
+      }
+    }
+  },
+  "peak_vram_used_mib": 15937,
+  "peak_vram_including_drill_mib": 15937,
+  "peak_vram_during_turns_mib": 15937
+}

@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import base64
+import contextlib
 import json
 import logging
 import os
@@ -26,12 +28,20 @@ import signal
 import subprocess
 import threading
 import time
+import uuid
+from collections.abc import AsyncGenerator, AsyncIterator
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import soundfile as sf
 
 from notamusicbot.domain.speech import AudioArtifact, VoiceConversionProfile
+from notamusicbot.speech.voice_conversion.base import (
+    STREAM_INPUT_RATE_HZ,
+    STREAM_OUTPUT_RATE_HZ,
+    VoiceStreamParams,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +74,21 @@ class WorkerRequestError(WorkerError):
 
 class WorkerDiedError(WorkerError):
     """The worker process exited while a request was in flight."""
+
+
+class RvcStreamError(WorkerError):
+    """A streaming conversion failed (worker error reply or protocol violation)."""
+
+
+# Wire limit of one ``stream_push`` (2 s of 24 kHz mono).
+_MAX_PUSH_SAMPLES = 2 * STREAM_INPUT_RATE_HZ
+# How long a second stream waits for the active one before failing.
+_STREAM_LOCK_TIMEOUT_S = 5.0
+# Budget for the shielded abort (``stream_close`` flush=false) on cancel.
+_STREAM_ABORT_TIMEOUT_S = 2.0
+# Bounded prefetch between the TTS chunk producer and the push loop.
+_STREAM_QUEUE_MAXSIZE = 8
+_STREAM_END = object()
 
 
 def encode_request(request_id: int, action: str, **fields: Any) -> str:
@@ -123,6 +148,9 @@ class RvcVoiceConverter:
         start_timeout_s: float | None = None,
         load_timeout_s: float | None = None,
         convert_timeout_s: float | None = None,
+        stream_params: VoiceStreamParams | None = None,
+        stream_timeout_s: float | None = None,
+        stream_open_timeout_s: float | None = None,
     ) -> None:
         self._worker_python = Path(
             worker_python or os.environ.get("RVC_WORKER_PYTHON") or DEFAULT_WORKER_PYTHON
@@ -139,6 +167,17 @@ class RvcVoiceConverter:
         self._convert_timeout = float(
             convert_timeout_s or os.environ.get("RVC_WORKER_CONVERT_TIMEOUT", "120")
         )
+        self._stream_params = stream_params
+        self._stream_timeout = float(
+            stream_timeout_s or os.environ.get("RVC_WORKER_STREAM_TIMEOUT", "10")
+        )
+        self._stream_open_timeout = float(
+            stream_open_timeout_s or os.environ.get("RVC_WORKER_STREAM_OPEN_TIMEOUT", "30")
+        )
+        # One stream per worker: concurrent streams queue here (see
+        # ``convert_stream``). Distinct from ``_transaction_lock``, which is
+        # held per request, so ``convert``/``health`` stay legal mid-stream.
+        self._stream_lock = asyncio.Lock()
         self._process: subprocess.Popen[str] | None = None
         # Live-shutdown hardening (user report: a second Ctrl+C bypasses the
         # async close path and would orphan the worker subprocess, which keeps
@@ -343,6 +382,196 @@ class RvcVoiceConverter:
             msg = f"worker reported success but output is missing: {output_path}"
             raise WorkerError(msg)
         return await asyncio.to_thread(self._probe_output, output_path)
+
+    # -------------------------------------------------------------- streaming
+
+    def supports_streaming(self, profile: VoiceConversionProfile) -> bool:
+        """True when streaming is enabled and ``profile`` is an RVC profile."""
+        params = self._stream_params
+        return bool(params and params.enabled and profile.backend == "rvc" and profile.model)
+
+    async def warm_stream(self, profile: VoiceConversionProfile) -> bool:
+        """Run a short synthetic stream so CUDA kernels are hot; never raises."""
+        if not self.supports_streaming(profile):
+            return False
+        piece = STREAM_INPUT_RATE_HZ // 4
+        t = np.arange(2 * piece, dtype=np.float32) / STREAM_INPUT_RATE_HZ
+        tone = (0.3 * np.sin(2 * np.pi * 220.0 * t)).astype(np.float32)
+
+        async def chunks() -> AsyncIterator[np.ndarray]:
+            for start in range(0, tone.size, piece):
+                yield tone[start : start + piece]
+
+        try:
+            async with contextlib.aclosing(self.convert_stream(chunks(), profile)) as outputs:
+                async for _ in outputs:
+                    pass
+        except Exception:
+            logger.warning("RVC stream warm-up failed", exc_info=True)
+            return False
+        return True
+
+    async def convert_stream(
+        self,
+        chunks: AsyncIterator[np.ndarray],
+        profile: VoiceConversionProfile,
+    ) -> AsyncGenerator[np.ndarray, None]:
+        """Convert a mono f32 24 kHz chunk stream to mono f32 48 kHz arrays.
+
+        Total output samples equal 2 x total input samples. No mid-stream
+        retry: worker death/timeouts propagate; worker error replies become
+        :class:`RvcStreamError`. Leaving the generator early (``aclose``,
+        cancellation, error) aborts the worker-side stream.
+        """
+        params = self._stream_params
+        if params is None or not self.supports_streaming(profile):
+            msg = "streaming voice conversion is not enabled for this profile"
+            raise RvcStreamError(msg)
+        try:
+            await asyncio.wait_for(self._stream_lock.acquire(), _STREAM_LOCK_TIMEOUT_S)
+        except TimeoutError as exc:
+            msg = "another stream is active"
+            raise RvcStreamError(msg) from exc
+        producer: asyncio.Task[None] | None = None
+        stream_id: str | None = None
+        try:
+            if not self.is_running:
+                await self.start()
+            try:
+                await self._ensure_model(profile.model, variant=profile.variant)
+            except WorkerDiedError:
+                await self._restart()
+                await self._ensure_model(profile.model, variant=profile.variant)
+            if profile.f0_method not in (None, "pm"):
+                logger.info("RVC streams force f0 method pm (profile asked %s)", profile.f0_method)
+            sid = uuid.uuid4().hex
+            # Set before the request: a cancel while the open is in flight must
+            # still abort the worker-side stream (close of an unknown id is a no-op).
+            stream_id = sid
+            await self._request(
+                "stream_open",
+                timeout=self._stream_open_timeout,
+                stream_id=sid,
+                pitch_shift=int(profile.pitch_shift),
+                f0_method="pm",
+                first_block_ms=params.first_block_ms,
+                block_ms=params.block_ms,
+                context_ms=params.context_ms,
+                lookahead_ms=params.lookahead_ms,
+                crossfade_ms=params.crossfade_ms,
+                search_ms=params.search_ms,
+            )
+            queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=_STREAM_QUEUE_MAXSIZE)
+            producer = asyncio.create_task(self._pump_chunks(chunks, queue))
+            input_samples = 0
+            while True:
+                item = await queue.get()
+                if item is _STREAM_END:
+                    break
+                if isinstance(item, BaseException):
+                    raise item
+                pcm = np.ascontiguousarray(item, dtype="<f4").reshape(-1)
+                for start in range(0, pcm.size, _MAX_PUSH_SAMPLES):
+                    piece = pcm[start : start + _MAX_PUSH_SAMPLES]
+                    input_samples += piece.size
+                    out = await self._stream_call(
+                        "stream_push",
+                        stream_id,
+                        pcm_b64=base64.b64encode(piece.tobytes()).decode("ascii"),
+                        samples=int(piece.size),
+                    )
+                    if out.size:
+                        yield out
+            tail, close_reply = await self._stream_close_flush(stream_id)
+            stream_id = None
+            if tail.size:
+                yield tail
+            in_total = int(close_reply.get("input_total", input_samples))
+            out_total = int(close_reply.get("output_total", -1))
+            if out_total != 2 * in_total or in_total != input_samples:
+                logger.warning(
+                    "RVC stream totals off: in=%d (sent %d) out=%d (expected %d)",
+                    in_total,
+                    input_samples,
+                    out_total,
+                    2 * input_samples,
+                )
+            logger.info(
+                "RVC stream done: audio=%.2fs compute=%.0fms steps=%s",
+                out_total / STREAM_OUTPUT_RATE_HZ,
+                float(close_reply.get("compute_ms_total", 0.0)),
+                close_reply.get("steps"),
+            )
+        finally:
+            try:
+                if producer is not None:
+                    producer.cancel()
+                    with contextlib.suppress(asyncio.CancelledError, Exception):
+                        await producer
+                if stream_id is not None:
+                    await self._abort_stream(stream_id)
+            finally:
+                self._stream_lock.release()
+
+    @staticmethod
+    async def _pump_chunks(chunks: AsyncIterator[np.ndarray], queue: asyncio.Queue[Any]) -> None:
+        """Pull TTS chunks into ``queue`` so TTS keeps generating during pushes."""
+        try:
+            async for chunk in chunks:
+                await queue.put(chunk)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            await queue.put(exc)
+            return
+        await queue.put(_STREAM_END)
+
+    @staticmethod
+    def _decode_pcm(reply: dict[str, Any]) -> np.ndarray:
+        raw = base64.b64decode(reply.get("pcm_b64") or "")
+        out = np.frombuffer(raw, dtype="<f4").copy()
+        if out.size != int(reply.get("samples", out.size)):
+            msg = f"stream reply samples {reply.get('samples')} != decoded {out.size}"
+            raise RvcStreamError(msg)
+        return out
+
+    async def _stream_call(self, action: str, stream_id: str, **fields: Any) -> np.ndarray:
+        """One push; returns the decoded audio. Died/timeout errors propagate."""
+        try:
+            reply = await self._request(
+                action, timeout=self._stream_timeout, stream_id=stream_id, **fields
+            )
+        except WorkerRequestError as exc:
+            raise RvcStreamError(str(exc)) from exc
+        return self._decode_pcm(reply)
+
+    async def _stream_close_flush(self, stream_id: str) -> tuple[np.ndarray, dict[str, Any]]:
+        try:
+            reply = await self._request(
+                "stream_close", timeout=self._stream_timeout, stream_id=stream_id, flush=True
+            )
+        except WorkerRequestError as exc:
+            raise RvcStreamError(str(exc)) from exc
+        return self._decode_pcm(reply), reply
+
+    async def _abort_stream(self, stream_id: str) -> None:
+        """Shielded ``stream_close`` flush=false inside a 2 s budget; best effort."""
+        if not self.is_running:
+            return
+        try:
+            await asyncio.wait_for(
+                asyncio.shield(
+                    self._request(
+                        "stream_close",
+                        timeout=_STREAM_ABORT_TIMEOUT_S,
+                        stream_id=stream_id,
+                        flush=False,
+                    )
+                ),
+                _STREAM_ABORT_TIMEOUT_S,
+            )
+        except Exception:
+            logger.warning("RVC stream abort failed", exc_info=True)
 
     # ------------------------------------------------------------ worker mgmt
 

@@ -18,6 +18,18 @@ RADIO_SYSTEM_PROMPT = (
     "2-3 sentences, plain spoken prose, no lists, no markdown, no emojis."
 )
 
+# Listen-mode voice chat (plan section 5): Goku is a conversation participant,
+# not a radio host. Local-only; used as the system message for CHAT requests.
+CHAT_SYSTEM_PROMPT = (
+    "You are Goku, a friendly participant in a live voice chat. "
+    "Your reply is spoken aloud, so keep it short: one or two short spoken "
+    "sentences of plain prose. No lists, no markdown, no emojis, no stage "
+    "directions, and no show-host patter. Speak in first person and answer "
+    "what was just said. Never mention being an AI model unless you are asked."
+    " Think briefly: reason in at most a couple of short lines, then answer in "
+    "ONE conversational sentence of at most 18 words."
+)
+
 
 def _persona_clause(persona_description: str) -> str:
     persona = persona_description.strip() or "a friendly radio host"
@@ -71,12 +83,35 @@ def build_reddit_comment_prompt(request: ContentRequest) -> str:
     )
 
 
+def build_chat_prompt(request: ContentRequest) -> str:
+    """Prompt for a spoken reply in listen mode (plan section 5).
+
+    ``request.chat_history`` already holds only the turns to include; the
+    speaker's name comes from ``requester_name``.
+    """
+    speaker = request.requester_name.strip() or "a listener"
+    lines = [
+        _persona_clause(request.persona_description),
+        (
+            "You are in a live voice chat. Answer in one conversational sentence "
+            "of at most 18 words, no lists, no markdown, no emojis, no stage directions."
+        ),
+    ]
+    if request.chat_history:
+        lines.append("Recent conversation:")
+        lines.extend(request.chat_history)
+    lines.append(f"{speaker} just said: {request.transcript_text.strip()}")
+    lines.append("Your reply:")
+    return "\n".join(lines)
+
+
 def build_prompt(request: ContentRequest) -> str:
     """Dispatch to the prompt builder matching ``request.kind``."""
     builders = {
         ContentKind.SONG: build_song_comment_prompt,
         ContentKind.NEWS: build_news_comment_prompt,
         ContentKind.REDDIT: build_reddit_comment_prompt,
+        ContentKind.CHAT: build_chat_prompt,
     }
     return builders[request.kind](request)
 

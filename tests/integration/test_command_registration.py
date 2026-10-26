@@ -56,3 +56,11 @@ def test_podcast_command_is_named_podcast_not_gpodcast() -> None:
     assert bot.get_command("gpodcast") is None
     # With the configured prefix the user types '!gpodcast'.
     assert f"{PREFIX}podcast" == "!gpodcast"
+
+
+def test_listen_group_is_registered_with_its_subcommands() -> None:
+    bot = build_registered_bot()
+    group = bot.get_command("listen")
+    assert isinstance(group, commands.Group)
+    assert bot.get_command("glisten") is None  # no double prefix
+    assert {c.name for c in group.commands} == {"start", "on", "off", "stop", "status"}

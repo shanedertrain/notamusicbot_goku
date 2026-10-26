@@ -1,0 +1,853 @@
+{
+  "note": "ASR clips are synthetic clean TTS speech (goku profile, no voice conversion); word error rates are optimistic compared with real microphones. No real recordings were used.",
+  "cpu_model": "AMD Ryzen 9 7900X3D 12-Core Processor",
+  "logical_cpus": 24,
+  "clips": [
+    {
+      "file": "clip0.wav",
+      "text": "The quick brown fox jumps over the lazy dog near the river.",
+      "duration_s": 4.08
+    },
+    {
+      "file": "clip1.wav",
+      "text": "Please play some music and turn the volume up a little.",
+      "duration_s": 4.24
+    },
+    {
+      "file": "clip2.wav",
+      "text": "What time does the next train leave for the city tomorrow morning?",
+      "duration_s": 5.04
+    },
+    {
+      "file": "clip3.wav",
+      "text": "Yesterday I walked down to the old market with my brother, and we bought fresh bread, two jars of honey, and a small basket of strawberries before the afternoon rain started to fall over the whole town.",
+      "duration_s": 14.56
+    }
+  ],
+  "silence_tests": [
+    "5 s digital silence",
+    "5 s white noise at -50 dBFS (rms, seeded)"
+  ],
+  "method": "one untimed warm-up on clip 0, then 3 timed runs per clip (median reported); silence tests run once after the clips",
+  "candidates": {
+    "parakeet_v2_cpu": {
+      "candidate": "parakeet_v2_cpu",
+      "baseline_note": "ASR clips are synthetic clean TTS speech (goku profile, no voice conversion); word error rates are optimistic compared with real microphones. No real recordings were used.",
+      "model": "istupakov/parakeet-tdt-0.6b-v2-onnx",
+      "device": "cpu",
+      "quantization": "fp32",
+      "runtime": "onnx-asr 0.12.0 + onnxruntime 1.31.0",
+      "available_providers": [
+        "AzureExecutionProvider",
+        "CPUExecutionProvider"
+      ],
+      "session_providers": [
+        [
+          "CPUExecutionProvider"
+        ]
+      ],
+      "load_s": 1.54,
+      "vram_before_mib": 1734,
+      "vram_after_load_mib": 1756,
+      "vram_after_mib": 1758,
+      "vram_delta_mib": 24,
+      "intra_op_threads": "ort default (physical cores)",
+      "logical_cpus": 24,
+      "cpu_model": "AMD Ryzen 9 7900X3D 12-Core Processor",
+      "per_clip": [
+        {
+          "reference": "The quick brown fox jumps over the lazy dog near the river.",
+          "hypothesis": "The quick brown fox jumps over the lazy dog near the river.",
+          "clip_s": 4.08,
+          "latency_s": 0.338,
+          "latency_all_s": [
+            0.338,
+            0.362,
+            0.322
+          ],
+          "rtf": 0.0829,
+          "wer": 0.0,
+          "cpu_time_s": 7.642,
+          "effective_cores": 22.6
+        },
+        {
+          "reference": "Please play some music and turn the volume up a little.",
+          "hypothesis": "Please play some music and turn the volume up a little.",
+          "clip_s": 4.24,
+          "latency_s": 0.333,
+          "latency_all_s": [
+            0.335,
+            0.333,
+            0.298
+          ],
+          "rtf": 0.0785,
+          "wer": 0.0,
+          "cpu_time_s": 7.511,
+          "effective_cores": 22.57
+        },
+        {
+          "reference": "What time does the next train leave for the city tomorrow morning?",
+          "hypothesis": "What time does the next train leave for the city to morrow morning?",
+          "clip_s": 5.04,
+          "latency_s": 0.396,
+          "latency_all_s": [
+            0.416,
+            0.396,
+            0.368
+          ],
+          "rtf": 0.0786,
+          "wer": 0.1667,
+          "cpu_time_s": 8.756,
+          "effective_cores": 22.1
+        },
+        {
+          "reference": "Yesterday I walked down to the old market with my brother, and we bought fresh bread, two jars of honey, and a small basket of strawberries before the afternoon rain started to fall over the whole town.",
+          "hypothesis": "Yesterday I walked down to the old market with my brother, and we bought fresh bread, two jars of honey, and a small basket of strawberries before the afternoon rain started to fall over the whole town.",
+          "clip_s": 14.56,
+          "latency_s": 0.649,
+          "latency_all_s": [
+            0.649,
+            0.621,
+            0.718
+          ],
+          "rtf": 0.0446,
+          "wer": 0.0,
+          "cpu_time_s": 14.58,
+          "effective_cores": 22.45
+        }
+      ],
+      "mean_latency_s": 0.429,
+      "mean_wer": 0.0417,
+      "long_clip": {
+        "clip_s": 14.56,
+        "latency_s": 0.649,
+        "rtf": 0.0446,
+        "wer": 0.0
+      },
+      "silence": [
+        {
+          "clip": "silence_5s",
+          "text": "",
+          "emitted_text": false,
+          "latency_s": 0.339
+        },
+        {
+          "clip": "white_noise_-50dbfs_5s",
+          "text": "",
+          "emitted_text": false,
+          "latency_s": 0.34
+        }
+      ]
+    },
+    "parakeet_v2_cpu_int8": {
+      "candidate": "parakeet_v2_cpu_int8",
+      "baseline_note": "ASR clips are synthetic clean TTS speech (goku profile, no voice conversion); word error rates are optimistic compared with real microphones. No real recordings were used.",
+      "model": "istupakov/parakeet-tdt-0.6b-v2-onnx",
+      "device": "cpu",
+      "quantization": "int8",
+      "runtime": "onnx-asr 0.12.0 + onnxruntime 1.31.0",
+      "available_providers": [
+        "AzureExecutionProvider",
+        "CPUExecutionProvider"
+      ],
+      "session_providers": [
+        [
+          "CPUExecutionProvider"
+        ]
+      ],
+      "load_s": 1.37,
+      "vram_before_mib": 1758,
+      "vram_after_load_mib": 1739,
+      "vram_after_mib": 1739,
+      "vram_delta_mib": -19,
+      "intra_op_threads": "ort default (physical cores)",
+      "logical_cpus": 24,
+      "cpu_model": "AMD Ryzen 9 7900X3D 12-Core Processor",
+      "per_clip": [
+        {
+          "reference": "The quick brown fox jumps over the lazy dog near the river.",
+          "hypothesis": "The quick brown fox jumps over the lazy dog near the river.",
+          "clip_s": 4.08,
+          "latency_s": 0.26,
+          "latency_all_s": [
+            0.26,
+            0.267,
+            0.235
+          ],
+          "rtf": 0.0636,
+          "wer": 0.0,
+          "cpu_time_s": 5.813,
+          "effective_cores": 22.39
+        },
+        {
+          "reference": "Please play some music and turn the volume up a little.",
+          "hypothesis": "Please play some music and turn the volume up a little.",
+          "clip_s": 4.24,
+          "latency_s": 0.268,
+          "latency_all_s": [
+            0.271,
+            0.268,
+            0.253
+          ],
+          "rtf": 0.0631,
+          "wer": 0.0,
+          "cpu_time_s": 6.056,
+          "effective_cores": 22.64
+        },
+        {
+          "reference": "What time does the next train leave for the city tomorrow morning?",
+          "hypothesis": "What time does the next train leave for the city tomorrow morning?",
+          "clip_s": 5.04,
+          "latency_s": 0.291,
+          "latency_all_s": [
+            0.267,
+            0.291,
+            0.35
+          ],
+          "rtf": 0.0578,
+          "wer": 0.0,
+          "cpu_time_s": 6.45,
+          "effective_cores": 22.14
+        },
+        {
+          "reference": "Yesterday I walked down to the old market with my brother, and we bought fresh bread, two jars of honey, and a small basket of strawberries before the afternoon rain started to fall over the whole town.",
+          "hypothesis": "Yesterday I walked down to the old market with my brother, and we bought fresh bread, two jars of honey, and a small basket of strawberries, before the afternoon rain started to fall over the whole town.",
+          "clip_s": 14.56,
+          "latency_s": 0.616,
+          "latency_all_s": [
+            0.684,
+            0.546,
+            0.616
+          ],
+          "rtf": 0.0423,
+          "wer": 0.0,
+          "cpu_time_s": 13.759,
+          "effective_cores": 22.33
+        }
+      ],
+      "mean_latency_s": 0.359,
+      "mean_wer": 0.0,
+      "long_clip": {
+        "clip_s": 14.56,
+        "latency_s": 0.616,
+        "rtf": 0.0423,
+        "wer": 0.0
+      },
+      "silence": [
+        {
+          "clip": "silence_5s",
+          "text": "",
+          "emitted_text": false,
+          "latency_s": 0.285
+        },
+        {
+          "clip": "white_noise_-50dbfs_5s",
+          "text": "",
+          "emitted_text": false,
+          "latency_s": 0.316
+        }
+      ]
+    },
+    "parakeet_v2_cpu_t4": {
+      "candidate": "parakeet_v2_cpu_t4",
+      "baseline_note": "ASR clips are synthetic clean TTS speech (goku profile, no voice conversion); word error rates are optimistic compared with real microphones. No real recordings were used.",
+      "model": "istupakov/parakeet-tdt-0.6b-v2-onnx",
+      "device": "cpu",
+      "quantization": "fp32",
+      "runtime": "onnx-asr 0.12.0 + onnxruntime 1.31.0",
+      "available_providers": [
+        "AzureExecutionProvider",
+        "CPUExecutionProvider"
+      ],
+      "session_providers": [
+        [
+          "CPUExecutionProvider"
+        ]
+      ],
+      "load_s": 1.48,
+      "vram_before_mib": 1739,
+      "vram_after_load_mib": 1737,
+      "vram_after_mib": 1784,
+      "vram_delta_mib": 45,
+      "intra_op_threads": 4,
+      "logical_cpus": 24,
+      "cpu_model": "AMD Ryzen 9 7900X3D 12-Core Processor",
+      "per_clip": [
+        {
+          "reference": "The quick brown fox jumps over the lazy dog near the river.",
+          "hypothesis": "The quick brown fox jumps over the lazy dog near the river.",
+          "clip_s": 4.08,
+          "latency_s": 0.226,
+          "latency_all_s": [
+            0.22,
+            0.226,
+            0.231
+          ],
+          "rtf": 0.0553,
+          "wer": 0.0,
+          "cpu_time_s": 1.956,
+          "effective_cores": 8.67
+        },
+        {
+          "reference": "Please play some music and turn the volume up a little.",
+          "hypothesis": "Please play some music and turn the volume up a little.",
+          "clip_s": 4.24,
+          "latency_s": 0.233,
+          "latency_all_s": [
+            0.233,
+            0.233,
+            0.242
+          ],
+          "rtf": 0.0549,
+          "wer": 0.0,
+          "cpu_time_s": 2.022,
+          "effective_cores": 8.69
+        },
+        {
+          "reference": "What time does the next train leave for the city tomorrow morning?",
+          "hypothesis": "What time does the next train leave for the city to morrow morning?",
+          "clip_s": 5.04,
+          "latency_s": 0.261,
+          "latency_all_s": [
+            0.227,
+            0.271,
+            0.261
+          ],
+          "rtf": 0.0517,
+          "wer": 0.1667,
+          "cpu_time_s": 2.151,
+          "effective_cores": 8.25
+        },
+        {
+          "reference": "Yesterday I walked down to the old market with my brother, and we bought fresh bread, two jars of honey, and a small basket of strawberries before the afternoon rain started to fall over the whole town.",
+          "hypothesis": "Yesterday I walked down to the old market with my brother, and we bought fresh bread, two jars of honey, and a small basket of strawberries before the afternoon rain started to fall over the whole town.",
+          "clip_s": 14.56,
+          "latency_s": 0.597,
+          "latency_all_s": [
+            0.597,
+            0.589,
+            0.629
+          ],
+          "rtf": 0.041,
+          "wer": 0.0,
+          "cpu_time_s": 3.477,
+          "effective_cores": 5.83
+        }
+      ],
+      "mean_latency_s": 0.329,
+      "mean_wer": 0.0417,
+      "long_clip": {
+        "clip_s": 14.56,
+        "latency_s": 0.597,
+        "rtf": 0.041,
+        "wer": 0.0
+      },
+      "silence": [
+        {
+          "clip": "silence_5s",
+          "text": "",
+          "emitted_text": false,
+          "latency_s": 0.242
+        },
+        {
+          "clip": "white_noise_-50dbfs_5s",
+          "text": "",
+          "emitted_text": false,
+          "latency_s": 0.254
+        }
+      ]
+    },
+    "parakeet_v2_cuda": {
+      "candidate": "parakeet_v2_cuda",
+      "baseline_note": "ASR clips are synthetic clean TTS speech (goku profile, no voice conversion); word error rates are optimistic compared with real microphones. No real recordings were used.",
+      "model": "istupakov/parakeet-tdt-0.6b-v2-onnx",
+      "device": "cuda",
+      "quantization": "fp32",
+      "runtime": "onnx-asr 0.12.0 + onnxruntime 1.31.0",
+      "available_providers": [
+        "TensorrtExecutionProvider",
+        "CUDAExecutionProvider",
+        "CPUExecutionProvider"
+      ],
+      "session_providers": [
+        [
+          "CUDAExecutionProvider",
+          "CPUExecutionProvider"
+        ]
+      ],
+      "load_s": 2.46,
+      "vram_before_mib": 1749,
+      "vram_after_load_mib": 5267,
+      "vram_after_mib": 5311,
+      "vram_delta_mib": 3562,
+      "intra_op_threads": "ort default (physical cores)",
+      "logical_cpus": 24,
+      "cpu_model": "AMD Ryzen 9 7900X3D 12-Core Processor",
+      "per_clip": [
+        {
+          "reference": "The quick brown fox jumps over the lazy dog near the river.",
+          "hypothesis": "The quick brown fox jumps over the lazy dog near the river.",
+          "clip_s": 4.08,
+          "latency_s": 0.025,
+          "latency_all_s": [
+            0.02,
+            0.042,
+            0.025
+          ],
+          "rtf": 0.0061,
+          "wer": 0.0
+        },
+        {
+          "reference": "Please play some music and turn the volume up a little.",
+          "hypothesis": "Please play some music and turn the volume up a little.",
+          "clip_s": 4.24,
+          "latency_s": 0.02,
+          "latency_all_s": [
+            0.095,
+            0.02,
+            0.02
+          ],
+          "rtf": 0.0048,
+          "wer": 0.0
+        },
+        {
+          "reference": "What time does the next train leave for the city tomorrow morning?",
+          "hypothesis": "What time does the next train leave for the city to morrow morning?",
+          "clip_s": 5.04,
+          "latency_s": 0.027,
+          "latency_all_s": [
+            0.074,
+            0.027,
+            0.02
+          ],
+          "rtf": 0.0054,
+          "wer": 0.1667
+        },
+        {
+          "reference": "Yesterday I walked down to the old market with my brother, and we bought fresh bread, two jars of honey, and a small basket of strawberries before the afternoon rain started to fall over the whole town.",
+          "hypothesis": "Yesterday I walked down to the old market with my brother, and we bought fresh bread, two jars of honey, and a small basket of strawberries before the afternoon rain started to fall over the whole town.",
+          "clip_s": 14.56,
+          "latency_s": 0.066,
+          "latency_all_s": [
+            0.091,
+            0.066,
+            0.065
+          ],
+          "rtf": 0.0046,
+          "wer": 0.0
+        }
+      ],
+      "mean_latency_s": 0.035,
+      "mean_wer": 0.0417,
+      "long_clip": {
+        "clip_s": 14.56,
+        "latency_s": 0.066,
+        "rtf": 0.0046,
+        "wer": 0.0
+      },
+      "silence": [
+        {
+          "clip": "silence_5s",
+          "text": "",
+          "emitted_text": false,
+          "latency_s": 0.088
+        },
+        {
+          "clip": "white_noise_-50dbfs_5s",
+          "text": "",
+          "emitted_text": false,
+          "latency_s": 0.025
+        }
+      ]
+    },
+    "parakeet_v3_cpu": {
+      "candidate": "parakeet_v3_cpu",
+      "baseline_note": "ASR clips are synthetic clean TTS speech (goku profile, no voice conversion); word error rates are optimistic compared with real microphones. No real recordings were used.",
+      "model": "istupakov/parakeet-tdt-0.6b-v3-onnx",
+      "device": "cpu",
+      "quantization": "fp32",
+      "runtime": "onnx-asr 0.12.0 + onnxruntime 1.31.0",
+      "available_providers": [
+        "AzureExecutionProvider",
+        "CPUExecutionProvider"
+      ],
+      "session_providers": [
+        [
+          "CPUExecutionProvider"
+        ]
+      ],
+      "load_s": 1.55,
+      "vram_before_mib": 1784,
+      "vram_after_load_mib": 1786,
+      "vram_after_mib": 1750,
+      "vram_delta_mib": -34,
+      "intra_op_threads": "ort default (physical cores)",
+      "logical_cpus": 24,
+      "cpu_model": "AMD Ryzen 9 7900X3D 12-Core Processor",
+      "per_clip": [
+        {
+          "reference": "The quick brown fox jumps over the lazy dog near the river.",
+          "hypothesis": "The quick brown fox jumps over the lazy dog near the river.",
+          "clip_s": 4.08,
+          "latency_s": 0.292,
+          "latency_all_s": [
+            0.341,
+            0.292,
+            0.286
+          ],
+          "rtf": 0.0715,
+          "wer": 0.0,
+          "cpu_time_s": 6.481,
+          "effective_cores": 22.23
+        },
+        {
+          "reference": "Please play some music and turn the volume up a little.",
+          "hypothesis": "Please play some music and turn the volume up a little",
+          "clip_s": 4.24,
+          "latency_s": 0.309,
+          "latency_all_s": [
+            0.306,
+            0.326,
+            0.309
+          ],
+          "rtf": 0.0728,
+          "wer": 0.0,
+          "cpu_time_s": 6.916,
+          "effective_cores": 22.4
+        },
+        {
+          "reference": "What time does the next train leave for the city tomorrow morning?",
+          "hypothesis": "What time does the next train leave for the city tomorrow morning",
+          "clip_s": 5.04,
+          "latency_s": 0.462,
+          "latency_all_s": [
+            0.503,
+            0.404,
+            0.462
+          ],
+          "rtf": 0.0916,
+          "wer": 0.0,
+          "cpu_time_s": 9.842,
+          "effective_cores": 21.31
+        },
+        {
+          "reference": "Yesterday I walked down to the old market with my brother, and we bought fresh bread, two jars of honey, and a small basket of strawberries before the afternoon rain started to fall over the whole town.",
+          "hypothesis": "Yesterday I walked down to the old market with my brother, and we bought fresh bread, two jars of honey, and a small basket of strawberries before the afternoon rain started to fall over the whole town.",
+          "clip_s": 14.56,
+          "latency_s": 0.882,
+          "latency_all_s": [
+            0.921,
+            0.882,
+            0.797
+          ],
+          "rtf": 0.0606,
+          "wer": 0.0,
+          "cpu_time_s": 18.886,
+          "effective_cores": 21.42
+        }
+      ],
+      "mean_latency_s": 0.486,
+      "mean_wer": 0.0,
+      "long_clip": {
+        "clip_s": 14.56,
+        "latency_s": 0.882,
+        "rtf": 0.0606,
+        "wer": 0.0
+      },
+      "silence": [
+        {
+          "clip": "silence_5s",
+          "text": "",
+          "emitted_text": false,
+          "latency_s": 0.446
+        },
+        {
+          "clip": "white_noise_-50dbfs_5s",
+          "text": "",
+          "emitted_text": false,
+          "latency_s": 0.419
+        }
+      ]
+    },
+    "qwen3_asr_1_7b": {
+      "candidate": "qwen3_asr_1_7b",
+      "baseline_note": "ASR clips are synthetic clean TTS speech (goku profile, no voice conversion); word error rates are optimistic compared with real microphones. No real recordings were used.",
+      "model": "Qwen/Qwen3-ASR-1.7B",
+      "device": "cuda",
+      "dtype": "bf16",
+      "runtime": "qwen-asr 0.0.6 (voiceover/.venv-asr)",
+      "load_s": 3.12,
+      "vram_before_mib": 1730,
+      "vram_after_load_mib": 6432,
+      "vram_after_mib": 6540,
+      "vram_delta_mib": 4810,
+      "per_clip": [
+        {
+          "reference": "The quick brown fox jumps over the lazy dog near the river.",
+          "hypothesis": "The quick brown fox jumps over the lazy dog near the river.",
+          "clip_s": 4.08,
+          "latency_s": 0.211,
+          "latency_all_s": [
+            0.208,
+            0.211,
+            0.229
+          ],
+          "rtf": 0.0517,
+          "wer": 0.0
+        },
+        {
+          "reference": "Please play some music and turn the volume up a little.",
+          "hypothesis": "Please play some music and turn the volume up a little.",
+          "clip_s": 4.24,
+          "latency_s": 0.218,
+          "latency_all_s": [
+            0.203,
+            0.287,
+            0.218
+          ],
+          "rtf": 0.0515,
+          "wer": 0.0
+        },
+        {
+          "reference": "What time does the next train leave for the city tomorrow morning?",
+          "hypothesis": "What time does the next train leave for the city tomorrow morning?",
+          "clip_s": 5.04,
+          "latency_s": 0.238,
+          "latency_all_s": [
+            0.26,
+            0.238,
+            0.213
+          ],
+          "rtf": 0.0472,
+          "wer": 0.0
+        },
+        {
+          "reference": "Yesterday I walked down to the old market with my brother, and we bought fresh bread, two jars of honey, and a small basket of strawberries before the afternoon rain started to fall over the whole town.",
+          "hypothesis": "Yesterday, I walked down to the old market with my brother, and we bought fresh bread, two jars of honey, and a small basket of strawberries before the afternoon rain started to fall over the whole town.",
+          "clip_s": 14.56,
+          "latency_s": 0.66,
+          "latency_all_s": [
+            0.756,
+            0.632,
+            0.66
+          ],
+          "rtf": 0.0454,
+          "wer": 0.0
+        }
+      ],
+      "mean_latency_s": 0.332,
+      "mean_wer": 0.0,
+      "long_clip": {
+        "clip_s": 14.56,
+        "latency_s": 0.66,
+        "rtf": 0.0454,
+        "wer": 0.0
+      },
+      "silence": [
+        {
+          "clip": "silence_5s",
+          "text": "Okay.",
+          "emitted_text": true,
+          "latency_s": 0.054
+        },
+        {
+          "clip": "white_noise_-50dbfs_5s",
+          "text": "Okay.",
+          "emitted_text": true,
+          "latency_s": 0.056
+        }
+      ]
+    },
+    "whisper_base_en": {
+      "candidate": "whisper_base_en",
+      "baseline_note": "ASR clips are synthetic clean TTS speech (goku profile, no voice conversion); word error rates are optimistic compared with real microphones. No real recordings were used.",
+      "model": "openai/whisper-base.en",
+      "device": "cuda",
+      "dtype": "fp16",
+      "runtime": "transformers",
+      "load_s": 1.1,
+      "vram_before_mib": 2504,
+      "vram_after_mib": 2677,
+      "vram_delta_mib": 173,
+      "install": "none (already in .venv-main and the HF cache)",
+      "per_clip": [
+        {
+          "reference": "The quick brown fox jumps over the lazy dog near the river.",
+          "hypothesis": "The quick brown fox jumps over the lazy dog near the river.",
+          "clip_s": 4.08,
+          "latency_s": 0.037,
+          "latency_all_s": [
+            0.036,
+            0.037,
+            0.037
+          ],
+          "rtf": 0.009,
+          "wer": 0.0
+        },
+        {
+          "reference": "Please play some music and turn the volume up a little.",
+          "hypothesis": "Please play some music and turn the volume up a little.",
+          "clip_s": 4.24,
+          "latency_s": 0.035,
+          "latency_all_s": [
+            0.035,
+            0.035,
+            0.036
+          ],
+          "rtf": 0.0082,
+          "wer": 0.0
+        },
+        {
+          "reference": "What time does the next train leave for the city tomorrow morning?",
+          "hypothesis": "What time does the next train leave for the city tomorrow morning?",
+          "clip_s": 5.04,
+          "latency_s": 0.037,
+          "latency_all_s": [
+            0.037,
+            0.036,
+            0.04
+          ],
+          "rtf": 0.0073,
+          "wer": 0.0
+        },
+        {
+          "reference": "Yesterday I walked down to the old market with my brother, and we bought fresh bread, two jars of honey, and a small basket of strawberries before the afternoon rain started to fall over the whole town.",
+          "hypothesis": "Yesterday, I walked down to the old market with my brother. And we bought fresh bread, two jars of honey, and a small basket of strawberries before the afternoon rain started to fall over the whole town.",
+          "clip_s": 14.56,
+          "latency_s": 0.095,
+          "latency_all_s": [
+            0.096,
+            0.095,
+            0.095
+          ],
+          "rtf": 0.0065,
+          "wer": 0.0
+        }
+      ],
+      "mean_latency_s": 0.051,
+      "mean_wer": 0.0,
+      "long_clip": {
+        "clip_s": 14.56,
+        "latency_s": 0.095,
+        "rtf": 0.0065,
+        "wer": 0.0
+      },
+      "silence": [
+        {
+          "clip": "silence_5s",
+          "text": "you",
+          "emitted_text": true,
+          "latency_s": 0.012
+        },
+        {
+          "clip": "white_noise_-50dbfs_5s",
+          "text": "you",
+          "emitted_text": true,
+          "latency_s": 0.011
+        }
+      ]
+    },
+    "whisper_small_en": {
+      "candidate": "whisper_small_en",
+      "baseline_note": "ASR clips are synthetic clean TTS speech (goku profile, no voice conversion); word error rates are optimistic compared with real microphones. No real recordings were used.",
+      "model": "openai/whisper-small.en",
+      "device": "cuda",
+      "dtype": "fp16",
+      "runtime": "transformers",
+      "load_s": 1.39,
+      "vram_before_mib": 1755,
+      "vram_after_mib": 2572,
+      "vram_delta_mib": 817,
+      "install": "none (already in .venv-main and the HF cache)",
+      "per_clip": [
+        {
+          "reference": "The quick brown fox jumps over the lazy dog near the river.",
+          "hypothesis": "The quick brown fox jumps over the lazy dog near the river.",
+          "clip_s": 4.08,
+          "latency_s": 0.062,
+          "latency_all_s": [
+            0.063,
+            0.06,
+            0.062
+          ],
+          "rtf": 0.0153,
+          "wer": 0.0
+        },
+        {
+          "reference": "Please play some music and turn the volume up a little.",
+          "hypothesis": "Please play some music and turn the volume up a little.",
+          "clip_s": 4.24,
+          "latency_s": 0.057,
+          "latency_all_s": [
+            0.057,
+            0.057,
+            0.057
+          ],
+          "rtf": 0.0134,
+          "wer": 0.0
+        },
+        {
+          "reference": "What time does the next train leave for the city tomorrow morning?",
+          "hypothesis": "What time does the next train leave for the city tomorrow morning?",
+          "clip_s": 5.04,
+          "latency_s": 0.061,
+          "latency_all_s": [
+            0.061,
+            0.06,
+            0.061
+          ],
+          "rtf": 0.012,
+          "wer": 0.0
+        },
+        {
+          "reference": "Yesterday I walked down to the old market with my brother, and we bought fresh bread, two jars of honey, and a small basket of strawberries before the afternoon rain started to fall over the whole town.",
+          "hypothesis": "Yesterday, I walked down to the old market with my brother, and we bought fresh bread, two jars of honey, and a small basket of strawberries before the afternoon rain started to fall over the whole town.",
+          "clip_s": 14.56,
+          "latency_s": 0.159,
+          "latency_all_s": [
+            0.159,
+            0.159,
+            0.161
+          ],
+          "rtf": 0.0109,
+          "wer": 0.0
+        }
+      ],
+      "mean_latency_s": 0.085,
+      "mean_wer": 0.0,
+      "long_clip": {
+        "clip_s": 14.56,
+        "latency_s": 0.159,
+        "rtf": 0.0109,
+        "wer": 0.0
+      },
+      "silence": [
+        {
+          "clip": "silence_5s",
+          "text": "you",
+          "emitted_text": true,
+          "latency_s": 0.02
+        },
+        {
+          "clip": "white_noise_-50dbfs_5s",
+          "text": "you",
+          "emitted_text": true,
+          "latency_s": 0.02
+        }
+      ]
+    }
+  },
+  "baseline_vram_used_mib": 1733,
+  "gpu": "NVIDIA GeForce RTX 4070 Ti SUPER (16376 MiB)",
+  "cpu_threads_note": "effective_cores = process CPU time / wall time; onnxruntime intra-op threads spin-wait, so this overstates useful work. Default session used ORT defaults on 24 logical CPUs (12 physical); the _t4 variant sets intra_op_num_threads=4.",
+  "friction": {
+    "parakeet_cpu": "uv venv + uv pip install 'onnx-asr[hub]' onnxruntime; fp32 export fails to load straight from the HF cache (onnxruntime 1.31 rejects external-data symlinks escaping the model dir: 'External data path escapes model directory'), worked around by hard-linking the snapshot into a plain directory; int8 export loads from the cache directly.",
+    "parakeet_gpu": "separate venv with onnx-asr[hub] + onnxruntime-gpu 1.31.0 (CUDA 13.0 build, finds /opt/cuda cublas/cudart/curand) but attempt 1 failed: 'cuDNN is unavailable or disabled for CUDA Execution Provider: dlopen failed for libcudnn.so' (no cuDNN under /opt/cuda); attempt 2 = uv pip install nvidia-cudnn-cu13 into the scratch venv and LD_LIBRARY_PATH to its nvidia/*/lib dirs, worked (2 attempts).",
+    "qwen3_asr": "no install (voiceover/.venv-asr as is, run with python -I); weights were not cached, downloaded Qwen/Qwen3-ASR-1.7B 4.4 GB."
+  },
+  "downloads": {
+    "istupakov/parakeet-tdt-0.6b-v2-onnx": "fp32 encoder 2.3 GiB + int8 encoder 621 MiB; ~3.0 GiB total snapshot",
+    "istupakov/parakeet-tdt-0.6b-v3-onnx": "fp32 encoder 2.3 GiB + int8 encoder 621 MiB; ~3.0 GiB total snapshot",
+    "Qwen/Qwen3-ASR-1.7B": "4.4 GiB"
+  }
+}

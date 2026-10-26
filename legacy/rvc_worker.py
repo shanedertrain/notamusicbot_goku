@@ -21,14 +21,16 @@ from __future__ import annotations
 
 import json
 import math
+import base64
 import os
+import re
 import shutil
 import sys
 import tempfile
 import time
 import traceback
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RVC_CLI_DIR = REPO_ROOT / "rvc_cli"
@@ -41,6 +43,61 @@ os.chdir(REPO_ROOT)  # voice_converter resolves "hubert_base.state_dict.pt" rela
 
 CONVERT_TIMEOUT_SECONDS = float(os.environ.get("RVC_WORKER_CONVERT_TIMEOUT", "120"))
 LOAD_TIMEOUT_SECONDS = float(os.environ.get("RVC_WORKER_LOAD_TIMEOUT", "300"))
+
+STREAM_OPEN_TIMEOUT_SECONDS = float(os.environ.get("RVC_WORKER_STREAM_OPEN_TIMEOUT", "30"))
+STREAM_TIMEOUT_SECONDS = float(os.environ.get("RVC_WORKER_STREAM_TIMEOUT", "10"))
+
+# Streaming wire constants (see legacy/README.md, docs/RVC_STREAMING_DESIGN.md section 5).
+STREAM_INPUT_SAMPLE_RATE = 24000
+STREAM_OUTPUT_SAMPLE_RATE = 48000
+STREAM_MAX_PUSH_SAMPLES = 48000  # 2.0 s at 24 kHz
+STREAM_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+STREAM_MS_FIELDS = (
+    "first_block_ms",
+    "block_ms",
+    "context_ms",
+    "lookahead_ms",
+    "crossfade_ms",
+    "search_ms",
+)
+
+
+def _fake_mode() -> bool:
+    """RVC_WORKER_FAKE=1: no torch / rvc_cli; canned model info and a fake stream engine."""
+    return os.environ.get("RVC_WORKER_FAKE") == "1"
+
+
+class _FakeEngine:
+    """Stand-in stream engine for fake mode: 2x sample repeat, no model."""
+
+    min_input_samples_for_first_output = 5760
+
+    def __init__(self) -> None:
+        self.input_total = 0
+        self.output_total = 0
+        self.steps = 0
+        self.compute_s = 0.0
+
+    def push(self, pcm24):  # noqa: ANN001
+        import numpy as np
+
+        pcm24 = np.asarray(pcm24, dtype=np.float32)
+        if pcm24.size and pcm24[0] == np.float32(1234.5):
+            raise RuntimeError("fake boom")
+        out = np.repeat(pcm24, 2)
+        self.input_total += int(pcm24.size)
+        self.output_total += int(out.size)
+        self.steps += 1
+        return out
+
+    def flush(self):
+        import numpy as np
+
+        return np.zeros(0, dtype=np.float32)
+
+    def abort(self) -> None:
+        return None
+
 
 # f0 extraction methods rvc_cli's vc_infer_pipeline supports. Requests may
 # override the model yaml's f0_method with one of these (config-selectable).
@@ -118,6 +175,14 @@ class ConvertTimeout(RuntimeError):
     pass
 
 
+class StreamError(RuntimeError):
+    """Stream failure; ``closed`` says whether the stream was dropped."""
+
+    def __init__(self, message: str, closed: bool) -> None:
+        super().__init__(message)
+        self.closed = closed
+
+
 class _timeout:
     """SIGALRM-based hard timeout (Linux). Raises ConvertTimeout on expiry."""
 
@@ -166,10 +231,32 @@ class Worker:
         self._vc = None
         self._model = None
         self._vc_args = None
+        # Open stream: (stream_id, engine, params) or None. One per worker.
+        self._stream: Optional[tuple] = None
+        # Tests / fake mode may inject a factory (worker, fields) -> engine.
+        self._engine_factory: Optional[Callable[["Worker", dict], Any]] = None
 
     # -- model loading ----------------------------------------------------
 
     def load_model(self, name: str, variant: Optional[str] = None) -> Dict[str, Any]:
+        self._drop_stream(abort=True)
+        if _fake_mode():
+            self._vc = object()
+            self._vc_args = object()
+            self._model = type("_FakeModel", (), {"model_name": name})()
+            return {
+                "model": name,
+                "variant": variant or name.lower(),
+                "config_yaml": (variant or name.lower()) + ".yaml",
+                "config_switched": False,
+                "device": "fake",
+                "target_sample_rate": 40000,
+                "version": "v1",
+                "tts_type": "fake",
+                "index_rate": 0.0,
+                "f0_method": "harvest",
+                "default_f0_pitch": 0,
+            }
         _ensure_ffmpeg_python_shim()
 
         # torch 2.5.0+cu121 on this GPU raises "cuDNN Frontend error: No
@@ -277,6 +364,18 @@ class Worker:
         )
 
     def health(self) -> Dict[str, Any]:
+        stream_info = {
+            "open": self._stream is not None,
+            "stream_id": self._stream[0] if self._stream else None,
+        }
+        if _fake_mode():
+            return {
+                "loaded_model": self._model.model_name if self._model else None,
+                "torch": None,
+                "cuda_available": False,
+                "device": "fake" if self._vc else None,
+                "stream": stream_info,
+            }
         import torch
 
         info: Dict[str, Any] = {
@@ -287,7 +386,137 @@ class Worker:
         }
         if torch.cuda.is_available():
             info["gpu_name"] = torch.cuda.get_device_name(0)
+        info["stream"] = stream_info
         return info
+
+    # -- streaming ------------------------------------------------------------
+
+    def _drop_stream(self, abort: bool = True) -> bool:
+        """Forget the open stream (aborting its engine). True if one was open."""
+        stream, self._stream = self._stream, None
+        if stream is None:
+            return False
+        if abort:
+            try:
+                stream[1].abort()
+            except Exception:  # noqa: BLE001 - best effort
+                pass
+        return True
+
+    def _make_engine(self, fields: dict) -> Any:
+        if self._engine_factory is not None:
+            return self._engine_factory(self, fields)
+        if _fake_mode():
+            return _FakeEngine()
+        import rvc_stream  # legacy/rvc_stream.py; script dir is on sys.path
+
+        params = rvc_stream.StreamParams.from_fields(fields)
+        return rvc_stream.open_engine(self._vc, self._vc_args, params)
+
+    def stream_open(self, stream_id: str, fields: dict) -> Dict[str, Any]:
+        if self._vc is None:
+            raise RuntimeError("no model loaded; send load-model first")
+        replaced = self._drop_stream(abort=True)
+        with _timeout(STREAM_OPEN_TIMEOUT_SECONDS):
+            engine = self._make_engine(fields)
+        self._stream = (stream_id, engine, fields)
+        return {
+            "stream_id": stream_id,
+            "input_sample_rate": STREAM_INPUT_SAMPLE_RATE,
+            "output_sample_rate": STREAM_OUTPUT_SAMPLE_RATE,
+            "sample_format": "f32le",
+            "channels": 1,
+            "min_input_samples_for_first_output": int(engine.min_input_samples_for_first_output),
+            "replaced_stream": replaced,
+            "model": self._model.model_name,
+            "f0_method": "pm",
+        }
+
+    @staticmethod
+    def _encode_pcm(arr: Any) -> tuple:
+        import numpy as np
+
+        arr = np.asarray(arr, dtype=np.float32).reshape(-1)
+        if arr.size and not bool(np.isfinite(arr).all()):
+            raise RuntimeError("stream output contains NaN/Inf samples")
+        data = np.ascontiguousarray(arr, dtype="<f4").tobytes()
+        return base64.b64encode(data).decode("ascii"), int(arr.size)
+
+    def stream_push(self, stream_id: str, pcm_b64: Any, samples: Any) -> Dict[str, Any]:
+        """Raises StreamError(closed=...) on failure."""
+        import numpy as np
+
+        if self._stream is None:
+            raise StreamError("no open stream", closed=False)
+        if self._stream[0] != stream_id:
+            raise StreamError("stream id mismatch", closed=False)
+        engine = self._stream[1]
+        try:
+            if not isinstance(samples, int) or isinstance(samples, bool):
+                raise ValueError("samples must be an integer")
+            if not 0 <= samples <= STREAM_MAX_PUSH_SAMPLES:
+                raise ValueError(f"samples must be within 0..{STREAM_MAX_PUSH_SAMPLES}")
+            if not isinstance(pcm_b64, str):
+                raise ValueError("pcm_b64 must be a base64 string")
+            raw = base64.b64decode(pcm_b64, validate=True)
+            if len(raw) % 4:
+                raise ValueError("pcm byte length is not a multiple of 4")
+            if len(raw) // 4 != samples:
+                raise ValueError(f"samples={samples} does not match decoded length {len(raw) // 4}")
+            pcm = np.frombuffer(raw, dtype="<f4").astype(np.float32)
+            if pcm.size and not bool(np.isfinite(pcm).all()):
+                raise ValueError("input contains NaN/Inf samples")
+            start = time.monotonic()
+            with _timeout(STREAM_TIMEOUT_SECONDS):
+                out = engine.push(pcm)
+            compute_ms = (time.monotonic() - start) * 1000.0
+            out_b64, out_n = self._encode_pcm(out)
+        except Exception as exc:
+            self._drop_stream(abort=True)
+            raise StreamError(f"stream_push failed: {exc}", closed=True) from exc
+        return {
+            "stream_id": stream_id,
+            "pcm_b64": out_b64,
+            "samples": out_n,
+            "input_total": int(engine.input_total),
+            "output_total": int(engine.output_total),
+            "compute_ms": round(compute_ms, 3),
+        }
+
+    def stream_close(self, stream_id: str, flush: bool) -> Dict[str, Any]:
+        if self._stream is None or self._stream[0] != stream_id:
+            return {
+                "stream_id": stream_id,
+                "closed": False,
+                "pcm_b64": "",
+                "samples": 0,
+                "input_total": 0,
+                "output_total": 0,
+                "compute_ms_total": 0.0,
+                "steps": 0,
+            }
+        engine = self._stream[1]
+        out_b64, out_n = "", 0
+        if flush:
+            try:
+                with _timeout(STREAM_TIMEOUT_SECONDS):
+                    out = engine.flush()
+                out_b64, out_n = self._encode_pcm(out)
+            except Exception as exc:
+                self._drop_stream(abort=True)
+                raise StreamError(f"stream_close failed: {exc}", closed=True) from exc
+        result = {
+            "stream_id": stream_id,
+            "closed": True,
+            "pcm_b64": out_b64,
+            "samples": out_n,
+            "input_total": int(engine.input_total),
+            "output_total": int(engine.output_total),
+            "compute_ms_total": round(float(engine.compute_s) * 1000.0, 3),
+            "steps": int(engine.steps),
+        }
+        self._drop_stream(abort=not flush)
+        return result
 
     # -- conversion ---------------------------------------------------------
 
@@ -439,6 +668,77 @@ def _handle(worker: Worker, request: Dict[str, Any]) -> None:
             info = worker.health()
         except Exception as exc:  # noqa: BLE001
             _fail(request_id, f"health failed: {exc}")
+            return
+        _reply(request_id, "ok", **info)
+        return
+
+    if action == "stream_open":
+        stream_id = request.get("stream_id")
+        if not isinstance(stream_id, str) or not STREAM_ID_RE.match(stream_id):
+            _fail(request_id, f"invalid stream_id: {stream_id!r}", stream_closed=False)
+            return
+        fields: Dict[str, Any] = {}
+        pitch = request.get("pitch_shift")
+        if pitch is not None:
+            if not isinstance(pitch, int) or isinstance(pitch, bool):
+                _fail(request_id, "pitch_shift must be an integer (semitones)", stream_closed=False)
+                return
+            fields["pitch_shift"] = pitch
+        f0_method = request.get("f0_method")
+        if f0_method is not None and f0_method != "pm":
+            _fail(
+                request_id,
+                f"invalid f0_method: {f0_method!r}; streaming supports only 'pm'",
+                stream_closed=False,
+            )
+            return
+        fields["f0_method"] = "pm"
+        for key in STREAM_MS_FIELDS:
+            value = request.get(key)
+            if value is None:
+                continue
+            if not isinstance(value, int) or isinstance(value, bool):
+                _fail(request_id, f"{key} must be an integer (ms)", stream_closed=False)
+                return
+            fields[key] = value
+        try:
+            info = worker.stream_open(stream_id, fields)
+        except Exception as exc:  # noqa: BLE001 - report across IPC
+            _fail(
+                request_id,
+                f"stream_open failed: {exc}",
+                traceback=traceback.format_exc(limit=8),
+                stream_closed=worker._vc is not None,  # any other failure leaves no open stream
+            )
+            return
+        _reply(request_id, "ok", **info)
+        return
+
+    if action == "stream_push":
+        try:
+            info = worker.stream_push(
+                request.get("stream_id"), request.get("pcm_b64"), request.get("samples")
+            )
+        except StreamError as exc:
+            _fail(request_id, str(exc), stream_closed=exc.closed)
+            return
+        _reply(request_id, "ok", **info)
+        return
+
+    if action == "stream_close":
+        stream_id = request.get("stream_id")
+        flush = request.get("flush")
+        if not isinstance(stream_id, str) or not isinstance(flush, bool):
+            _fail(
+                request_id,
+                "stream_close requires stream_id string and flush boolean",
+                stream_closed=False,
+            )
+            return
+        try:
+            info = worker.stream_close(stream_id, flush)
+        except StreamError as exc:
+            _fail(request_id, str(exc), stream_closed=exc.closed)
             return
         _reply(request_id, "ok", **info)
         return

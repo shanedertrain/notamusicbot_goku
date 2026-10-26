@@ -10,6 +10,8 @@ speech:
   tts_device: cuda
   tts_dtype: bfloat16
   tts_attn_implementation: sdpa  # sdpa everywhere; flash_attention_2 where supported
+  tts_fast: true                 # faster-qwen3-tts (CUDA graphs); falls back to stock Qwen3-TTS on failure
+  tts_stream_chunk_size: 8       # codec frames per streamed chunk (12.5 frames/s)
   max_concurrent_inference: 1
   queue_size: 8
   warmup_on_start: false
@@ -46,6 +48,16 @@ speech:
   # the profile yaml value (no silent quality change).
   voice_conversion:
     f0_method_override: null          # null | pm | harvest | dio | crepe | crepe-tiny
+    # Opt-in streaming RVC: convert the TTS stream block by block (first audio
+    # in ~250 ms) instead of whole sentences. Needs the rvc backend; f0 is
+    # forced to pm for streams. All *_ms values are multiples of 20.
+    # streaming: false
+    # stream_first_block_ms: 100
+    # stream_block_ms: 320
+    # stream_context_ms: 1000
+    # stream_lookahead_ms: 100
+    # stream_crossfade_ms: 40
+    # stream_search_ms: 20
 
 # Local content generation (Phase F). Fully offline: no LLM API key needed.
 # persona/style come from config/voices/*.yaml (persona.description).
@@ -81,6 +93,63 @@ podcast:
   enabled: false
   host_profile: obama                  # voice profile id of the host persona
   reply_turns: 2                       # guest/host replies after the host opening (total lines = reply_turns + 1)
+
+# Voice listen mode (!glisten start|on|off|stop|status). Off by default, and an
+# empty allowed_channel_ids refuses to start even when enabled. Only users who
+# type `!glisten on` are decoded or transcribed; user audio never touches disk.
+listen:
+  enabled: false
+  allowed_channel_ids: []              # empty => listen refuses to start
+  operator_user_ids: []                # empty => guild administrators only
+  voice_profile: goku
+  announce_on_join: true
+  announcement_text: "Heads up, I'm listening now. Only people who type listen on get transcribed, and nothing is saved."
+  respond_to: all                      # all | wake_word
+  wake_word: goku
+  follow_up_window_s: 8.0              # wake_word mode: reply without it this soon after the bot spoke
+  vad:
+    backend: silero                    # silero | energy
+    threshold: 0.5
+    min_speech_ms: 250
+    end_silence_ms: 600                # must be >= min_speech_ms
+    max_utterance_s: 15.0
+    pre_roll_ms: 300
+    ring_buffer_s: 30.0
+  asr:
+    backend: parakeet_onnx             # parakeet_onnx (CPU) | whisper_hf (GPU fallback)
+    model_id: istupakov/parakeet-tdt-0.6b-v2-onnx   # parakeet_onnx, local HF cache only
+    whisper_model_id: openai/whisper-small.en       # whisper_hf, local HF cache only
+    device: cpu                        # cpu | cuda
+    threads: 4                         # onnxruntime intra-op threads (>= 1)
+    quantization: int8                 # int8 | fp32
+    language: en
+    timeout_s: 10.0
+  reply:
+    max_sentences: 2
+    max_new_tokens: 60
+    backchannel_enabled: true
+    backchannel_texts: ["Hm?", "Oh yeah?", "Let me think."]
+    barge_in_min_speech_ms: 400
+    per_user_cooldown_s: 2.0
+    max_replies_per_minute: 12
+    history_turns: 8                   # in memory only, cleared on stop
+    llm_timeout_s: 20.0
+    first_chunk_max_words: 8           # >= 3; short first chunk so TTS starts early
+    later_chunk_max_words: 12          # >= 3
+    tts_max_seconds_per_word: 1.0      # TTS length cap = max(floor, words * this)
+    tts_cap_floor_seconds: 2.0
+  llm:
+    provider: spark                    # spark (owner's Spark via loopback tunnel) | local (in-process Qwen3-4B)
+    base_url: http://127.0.0.1:8000/v1 # loopback only (127.0.0.1, ::1, localhost); anything else is rejected
+    model: auto                        # auto = first id from GET /models; never hardcode an id
+    timeout_s: 20.0
+    first_token_timeout_s: 8.0
+    fallback: local                    # local = lazy-load in-process Qwen3-4B if the Spark is down | none
+    health_interval_s: 30.0
+    hedge_after_s: null                # thinking low only: after N s with no content, race a thinking-off request (null/0 = off)
+  privacy:
+    log_transcripts: false             # DEBUG transcript lines only when true
+    persist_opt_ins: false             # opt-ins last one session
 
 discord:
   command_prefix: "!g"

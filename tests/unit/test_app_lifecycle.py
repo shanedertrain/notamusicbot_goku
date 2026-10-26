@@ -167,6 +167,15 @@ def test_no_llm_or_tts_construction_when_all_disabled(monkeypatch) -> None:
     assert app.speech_features_enabled is False
 
 
+def test_listen_alone_enables_speech_features() -> None:
+    from notamusicbot.config import ListenSettings
+
+    settings = _disabled_both()
+    assert Application(settings).speech_features_enabled is False
+    settings.listen = ListenSettings(enabled=True)
+    assert Application(settings).speech_features_enabled is True
+
+
 def test_no_warmup_scheduled_when_all_disabled() -> None:
     async def main() -> None:
         app = Application(_disabled_both(warmup_on_start=True))
@@ -294,3 +303,115 @@ def test_warmup_scheduled_only_once_across_double_startup() -> None:
         assert FastSynth.calls == 1
 
     asyncio.run(main())
+
+
+# ------------------------------------------------- listen mode: Spark chat provider
+
+
+def _listen_settings(*, content_enabled: bool, **llm) -> AppSettings:
+    from notamusicbot.config import ListenLlmSettings, ListenSettings
+
+    settings = _disabled_both()
+    settings.content = ContentSettings(enabled=content_enabled)
+    settings.listen = ListenSettings(enabled=True, llm=ListenLlmSettings(**llm))
+    return settings
+
+
+def test_listen_spark_builds_fallback_provider_without_loading_llm(monkeypatch) -> None:
+    from notamusicbot.content.fallback import FallbackChatProvider, LazyLocalProvider
+    from notamusicbot.content.spark_chat import SparkChatProvider
+
+    monkeypatch.setattr("notamusicbot.content.llm.LocalQwenLlmProvider", _ExplodingLlm)
+    _ExplodingLlm.instances = 0
+    _ExplodingLlm.loads = 0
+    app = Application(_listen_settings(content_enabled=True))
+    app.load_content_model()  # content.enabled, but listen takes its text from the Spark
+    provider = app.listen_content_provider
+    assert isinstance(provider, FallbackChatProvider)
+    assert isinstance(provider.primary, SparkChatProvider)
+    assert isinstance(provider.fallback, LazyLocalProvider)
+    assert app.listen_content_provider is provider  # cached
+    assert (_ExplodingLlm.instances, _ExplodingLlm.loads) == (0, 0)
+    assert provider.fallback.loaded is False
+
+
+def test_listen_spark_with_content_disabled_still_has_an_llm() -> None:
+    from notamusicbot.content.fallback import FallbackChatProvider
+
+    app = Application(_listen_settings(content_enabled=False))
+    assert app.build_content_provider() is None  # music commentary stays static
+    assert isinstance(app.listen_content_provider, FallbackChatProvider)
+
+
+def test_listen_fallback_none_has_no_local_provider() -> None:
+    app = Application(_listen_settings(content_enabled=False, fallback="none"))
+    assert app.listen_content_provider.fallback is None
+
+
+def test_listen_provider_is_none_when_listen_disabled() -> None:
+    app = Application(_disabled_both())
+    assert app.listen_content_provider is None
+    assert app.listen_uses_spark is False
+
+
+def test_listen_local_provider_uses_the_in_process_llm(monkeypatch) -> None:
+    monkeypatch.setattr("notamusicbot.content.llm.LocalQwenLlmProvider", _OkLlm)
+    _OkLlm.loads = 0
+    app = Application(_listen_settings(content_enabled=False, provider="local"))
+    provider = app.listen_content_provider
+    assert isinstance(provider, _OkLlm)
+    assert app.listen_uses_spark is False
+
+
+def test_listen_spark_fallback_factory_shares_the_music_llm(monkeypatch) -> None:
+    monkeypatch.setattr("notamusicbot.content.llm.LocalQwenLlmProvider", _OkLlm)
+    app = Application(_listen_settings(content_enabled=True))
+    music = app.build_content_provider()
+    assert isinstance(music, _OkLlm)
+    assert app._build_local_chat_provider() is music  # one model, not two
+
+
+def test_content_load_unchanged_when_listen_disabled(monkeypatch) -> None:
+    monkeypatch.setattr("notamusicbot.content.llm.LocalQwenLlmProvider", _OkLlm)
+    _OkLlm.loads = 0
+    settings = _listen_settings(content_enabled=True)
+    settings.listen.enabled = False
+    settings.speech.commentary_enabled = True
+    Application(settings).load_content_model()
+    assert _OkLlm.loads == 1
+
+
+def test_listen_fallback_local_model_uses_the_listen_token_cap(monkeypatch) -> None:
+    monkeypatch.setattr("notamusicbot.content.llm.LocalQwenLlmProvider", _CapRecordingLlm)
+    app = Application(_listen_settings(content_enabled=True))
+    assert app.settings.content.max_new_tokens == 120
+    provider = app._build_listen_fallback_provider()
+    assert provider.max_new_tokens == app.settings.listen.reply.max_new_tokens == 60
+    assert app.settings.content.max_new_tokens == 120  # music's own cap untouched
+
+
+def test_build_reply_synthesizer_passes_the_tts_caps(tmp_path) -> None:
+    from notamusicbot.config import ListenReplySettings, ListenSettings
+
+    settings = _disabled_both()
+    settings.listen = ListenSettings(
+        enabled=True,
+        reply=ListenReplySettings(tts_max_seconds_per_word=0.7, tts_cap_floor_seconds=1.5),
+    )
+    app = Application(settings)
+    profile = next(iter(app.voice_profiles.values()))
+    with pytest.raises(RuntimeError):
+        app.build_reply_synthesizer(profile)  # pipeline not built yet
+    app.pipeline = object()
+    synth = app.build_reply_synthesizer(profile)
+    assert synth._tts_seconds_per_word == 0.7
+    assert synth._tts_cap_floor_s == 1.5
+    assert synth._artifact_root == Path(settings.speech.output_dir)
+
+
+class _CapRecordingLlm:
+    @classmethod
+    def from_settings(cls, settings, gpu_coordinator=None):
+        self = cls()
+        self.max_new_tokens = settings.max_new_tokens
+        return self

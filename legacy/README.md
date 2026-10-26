@@ -17,6 +17,7 @@ legacy dependency graph must never leak into it.
 | File | Purpose |
 |---|---|
 | `rvc_worker.py` | Long-running voice-conversion worker (line-based JSON IPC on stdin/stdout) |
+| `rvc_stream.py` | Streaming engine (`StreamEngine`, `StreamParams`, `open_engine`); lazy-imported by the worker on `stream_open` only |
 | `README.md` | This document |
 
 ## Runtime facts (verified)
@@ -74,7 +75,8 @@ Errors carry `"error"` (message) and usually `"traceback"` (trimmed).
 ```json
 → {"id":1,"action":"health"}
 ← {"id":1,"status":"ok","loaded_model":"Goku","torch":"2.5.0+cu121",
-   "cuda_available":true,"device":"cuda:0","gpu_name":"NVIDIA GeForce RTX 4070 Ti SUPER"}
+   "cuda_available":true,"device":"cuda:0","gpu_name":"NVIDIA GeForce RTX 4070 Ti SUPER",
+   "stream":{"open":false,"stream_id":null}}
 ```
 
 ### `load-model`
@@ -133,6 +135,46 @@ and switches variants without restarting the worker.
   samples, non-zero peak, positive duration) and fails the request loudly on
   NaN/Inf/silence.
 - Timeout: `RVC_WORKER_CONVERT_TIMEOUT` (default 120 s, SIGALRM-enforced).
+
+### Streaming: `stream_open` / `stream_push` / `stream_close`
+Opt-in streaming conversion (design: `docs/RVC_STREAMING_DESIGN.md`). The engine lives in
+`legacy/rvc_stream.py`; the worker only validates, frames and times requests. **`f0_method` is `pm`
+only** (omitted => `pm`), and there is **one stream per worker**: `stream_open` replaces any open
+stream. PCM is **base64 (standard alphabet) of little-endian float32 mono samples inside the JSON
+line** (no binary framing). Input 24 kHz, output 48 kHz.
+```json
+→ {"id":10,"action":"stream_open","stream_id":"s-1a2b","pitch_shift":0,"f0_method":"pm",
+   "first_block_ms":100,"block_ms":320,"context_ms":1000,"lookahead_ms":100,"crossfade_ms":40,"search_ms":20}
+← {"id":10,"status":"ok","stream_id":"s-1a2b","input_sample_rate":24000,"output_sample_rate":48000,
+   "sample_format":"f32le","channels":1,"min_input_samples_for_first_output":5760,
+   "replaced_stream":false,"model":"Goku","f0_method":"pm"}
+→ {"id":11,"action":"stream_push","stream_id":"s-1a2b","pcm_b64":"...","samples":6000}
+← {"id":11,"status":"ok","stream_id":"s-1a2b","pcm_b64":"...","samples":12000,
+   "input_total":6000,"output_total":12000,"compute_ms":3.2}
+→ {"id":12,"action":"stream_close","stream_id":"s-1a2b","flush":true}
+← {"id":12,"status":"ok","stream_id":"s-1a2b","closed":true,"pcm_b64":"...","samples":0,
+   "input_total":6000,"output_total":12000,"compute_ms_total":3.2,"steps":1}
+```
+- `stream_id` matches `^[A-Za-z0-9_-]{1,64}$`; `pitch_shift` and the `*_ms` fields
+  (`first_block_ms`, `block_ms`, `context_ms`, `lookahead_ms`, `crossfade_ms`, `search_ms`) are
+  integers, all optional (range/multiple-of-20 checks are the engine's `StreamParams`).
+- `stream_push`: `samples` must be an int equal to the decoded length, `0..48000` (2 s); `pcm_b64`
+  may be `""` in replies. `flush:true` on close returns the tail so `output_total == 2*input_total`;
+  `flush:false` aborts and discards (`samples` 0, `pcm_b64` `""`). Closing an unknown or
+  non-matching id is `ok` with `closed:false` (idempotent).
+- Errors: `{"id","status":"error","error",["traceback"],"stream_closed":bool}`. Bad base64, byte length
+  not a multiple of 4, samples mismatch or range, NaN/Inf input, non-finite output, engine exception
+  or timeout abort and drop the stream (`stream_closed:true`). `no model loaded; send load-model
+  first`, `no open stream`, `stream id mismatch`, bad `stream_open` fields leave state as it was
+  (`stream_closed:false`).
+- `load-model` while a stream is open aborts it first. `convert` and `health` stay legal during a
+  stream; `health` gains `"stream":{"open":bool,"stream_id":str|null}` (additive).
+- Timeouts (SIGALRM): `RVC_WORKER_STREAM_OPEN_TIMEOUT` (default 30 s) for open,
+  `RVC_WORKER_STREAM_TIMEOUT` (default 10 s) per push/close.
+- **Fake mode**: `RVC_WORKER_FAKE=1` makes `load-model` return canned info (device `fake`) without
+  importing torch/rvc_cli, `health` skip torch, and the default stream engine a 2x sample-repeat stub
+  (a push whose first sample is exactly `1234.5` raises `fake boom`). Used by
+  `tests/unit/test_rvc_worker_stream.py` and bot-side tests.
 
 ### `shutdown`
 ```json

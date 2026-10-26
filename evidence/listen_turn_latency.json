@@ -1,0 +1,639 @@
+{
+  "date": "2026-10-25 18:51:09",
+  "host": "omarchy",
+  "note": "Input is synthetic clean TTS speech fed in real time (20 ms packets, one thread), not real microphones. The LLM returns the whole reply before TTS starts, so 'asr->llm' is the full LLM generation, not time to a first sentence. Replies are played in real time by the fake player (sleep for the PCM duration), so a turn takes its full audio length.",
+  "offline_env_changed": {
+    "HF_HUB_OFFLINE": "1",
+    "TRANSFORMERS_OFFLINE": "1",
+    "HF_HUB_DISABLE_TELEMETRY": "1"
+  },
+  "budget": {
+    "total_p50_s": 6.0,
+    "total_p90_s": 9.0,
+    "backchannel_s": 0.8
+  },
+  "baseline_vram_used_mib": 1993,
+  "llm_model_id": "Qwen/Qwen3-4B-Instruct-2507",
+  "tts_model_id": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
+  "llm_load_s": 3.37,
+  "llm_max_new_tokens": 60,
+  "tts_load_s": 1.09,
+  "rvc_startup_s": 0.69,
+  "asr_load_s": 1.14,
+  "asr_backend": "parakeet_onnx",
+  "asr_settings": {
+    "backend": "parakeet_onnx",
+    "model_id": "istupakov/parakeet-tdt-0.6b-v2-onnx",
+    "whisper_model_id": "openai/whisper-small.en",
+    "device": "cpu",
+    "threads": 4,
+    "quantization": "int8",
+    "language": "en",
+    "timeout_s": 10.0
+  },
+  "after_load_vram_used_mib": 12119,
+  "clips": [
+    {
+      "text": "Hey Goku, what's your favorite food, and how much of it can you eat?",
+      "duration_s": 5.04
+    },
+    {
+      "text": "Goku, who was the toughest opponent you have ever fought?",
+      "duration_s": 5.6
+    },
+    {
+      "text": "Hey Goku, how do you stay so strong while training every single day?",
+      "duration_s": 4.88
+    },
+    {
+      "text": "What would you do if you had one whole day with nothing to fight?",
+      "duration_s": 5.2
+    },
+    {
+      "text": "Hey Goku, can you tell me about your first time turning Super Saiyan?",
+      "duration_s": 5.2
+    }
+  ],
+  "rvc_warmed": true,
+  "backchannel": {
+    "texts": [
+      "Hm?",
+      "Oh yeah?",
+      "Let me think."
+    ],
+    "rendered": 3,
+    "ready": 3
+  },
+  "not_opted_in_turn": {
+    "packets_sent": 317,
+    "decoder_calls": 0,
+    "buffered_samples": 0,
+    "transcribe_calls": 0,
+    "llm_calls": 0,
+    "metrics_lines": 0,
+    "plays": 0,
+    "passed": true
+  },
+  "percentile_method": "nearest rank: value at 1-based rank ceil(p/100*n)",
+  "turns": [
+    {
+      "turn": 1,
+      "question": "Hey Goku, what's your favorite food, and how much of it can you eat?",
+      "clip_s": 5.04,
+      "failure": null,
+      "endpoint_wait_s": 0.6,
+      "metrics_line": "listen turn guild=1 user=1 eos->asr=0.75 asr->llm=0.89 llm->tts1=1.46 tts1->audio=1.63 total=4.74",
+      "stages_s": {
+        "eos->asr": 0.75,
+        "asr->llm": 0.89,
+        "llm->tts1": 1.46,
+        "tts1->audio": 1.63,
+        "total": 4.74
+      },
+      "eos_to_backchannel_s": 0.754,
+      "first_reply_play_minus_eos_s": 4.735,
+      "plays": [
+        {
+          "at_eos_plus_s": 0.754,
+          "audio_s": 3.98,
+          "backchannel": true
+        },
+        {
+          "at_eos_plus_s": 4.735,
+          "audio_s": 1.66,
+          "backchannel": false
+        },
+        {
+          "at_eos_plus_s": 9.686,
+          "audio_s": 6.54,
+          "backchannel": false
+        }
+      ]
+    },
+    {
+      "turn": 2,
+      "question": "Goku, who was the toughest opponent you have ever fought?",
+      "clip_s": 5.6,
+      "failure": null,
+      "endpoint_wait_s": 0.623,
+      "metrics_line": "listen turn guild=1 user=1 eos->asr=0.80 asr->llm=0.75 llm->tts1=3.55 tts1->audio=0.00 total=5.11",
+      "stages_s": {
+        "eos->asr": 0.8,
+        "asr->llm": 0.75,
+        "llm->tts1": 3.55,
+        "tts1->audio": 0.0,
+        "total": 5.11
+      },
+      "eos_to_backchannel_s": 0.803,
+      "first_reply_play_minus_eos_s": 5.111,
+      "plays": [
+        {
+          "at_eos_plus_s": 0.803,
+          "audio_s": 2.3,
+          "backchannel": true
+        },
+        {
+          "at_eos_plus_s": 5.111,
+          "audio_s": 4.78,
+          "backchannel": false
+        },
+        {
+          "at_eos_plus_s": 10.457,
+          "audio_s": 7.42,
+          "backchannel": false
+        }
+      ]
+    },
+    {
+      "turn": 3,
+      "question": "Hey Goku, how do you stay so strong while training every single day?",
+      "clip_s": 4.88,
+      "failure": null,
+      "endpoint_wait_s": 0.619,
+      "metrics_line": "listen turn guild=1 user=1 eos->asr=0.78 asr->llm=0.73 llm->tts1=2.29 tts1->audio=0.00 total=3.80",
+      "stages_s": {
+        "eos->asr": 0.78,
+        "asr->llm": 0.73,
+        "llm->tts1": 2.29,
+        "tts1->audio": 0.0,
+        "total": 3.8
+      },
+      "eos_to_backchannel_s": 0.778,
+      "first_reply_play_minus_eos_s": 3.804,
+      "plays": [
+        {
+          "at_eos_plus_s": 0.778,
+          "audio_s": 1.5,
+          "backchannel": true
+        },
+        {
+          "at_eos_plus_s": 3.804,
+          "audio_s": 3.02,
+          "backchannel": false
+        },
+        {
+          "at_eos_plus_s": 18.657,
+          "audio_s": 20.7,
+          "backchannel": false
+        }
+      ]
+    },
+    {
+      "turn": 4,
+      "question": "What would you do if you had one whole day with nothing to fight?",
+      "clip_s": 5.2,
+      "failure": null,
+      "endpoint_wait_s": 0.621,
+      "metrics_line": "listen turn guild=1 user=1 eos->asr=0.80 asr->llm=0.88 llm->tts1=2.21 tts1->audio=0.89 total=4.78",
+      "stages_s": {
+        "eos->asr": 0.8,
+        "asr->llm": 0.88,
+        "llm->tts1": 2.21,
+        "tts1->audio": 0.89,
+        "total": 4.78
+      },
+      "eos_to_backchannel_s": 0.8,
+      "first_reply_play_minus_eos_s": 4.781,
+      "plays": [
+        {
+          "at_eos_plus_s": 0.8,
+          "audio_s": 3.98,
+          "backchannel": true
+        },
+        {
+          "at_eos_plus_s": 4.781,
+          "audio_s": 2.86,
+          "backchannel": false
+        },
+        {
+          "at_eos_plus_s": 15.183,
+          "audio_s": 13.98,
+          "backchannel": false
+        }
+      ]
+    },
+    {
+      "turn": 5,
+      "question": "Hey Goku, can you tell me about your first time turning Super Saiyan?",
+      "clip_s": 5.2,
+      "failure": null,
+      "endpoint_wait_s": 0.623,
+      "metrics_line": "listen turn guild=1 user=1 eos->asr=0.81 asr->llm=1.13 llm->tts1=2.06 tts1->audio=0.00 total=4.00",
+      "stages_s": {
+        "eos->asr": 0.81,
+        "asr->llm": 1.13,
+        "llm->tts1": 2.06,
+        "tts1->audio": 0.0,
+        "total": 4.0
+      },
+      "eos_to_backchannel_s": 0.815,
+      "first_reply_play_minus_eos_s": 3.997,
+      "plays": [
+        {
+          "at_eos_plus_s": 0.815,
+          "audio_s": 1.5,
+          "backchannel": true
+        },
+        {
+          "at_eos_plus_s": 3.997,
+          "audio_s": 2.54,
+          "backchannel": false
+        },
+        {
+          "at_eos_plus_s": 15.169,
+          "audio_s": 14.78,
+          "backchannel": false
+        }
+      ]
+    },
+    {
+      "turn": 6,
+      "question": "Hey Goku, what's your favorite food, and how much of it can you eat?",
+      "clip_s": 5.04,
+      "failure": null,
+      "endpoint_wait_s": 0.621,
+      "metrics_line": "listen turn guild=1 user=1 eos->asr=0.80 asr->llm=0.83 llm->tts1=2.44 tts1->audio=0.00 total=4.07",
+      "stages_s": {
+        "eos->asr": 0.8,
+        "asr->llm": 0.83,
+        "llm->tts1": 2.44,
+        "tts1->audio": 0.0,
+        "total": 4.07
+      },
+      "eos_to_backchannel_s": 0.8,
+      "first_reply_play_minus_eos_s": 4.07,
+      "plays": [
+        {
+          "at_eos_plus_s": 0.8,
+          "audio_s": 2.3,
+          "backchannel": true
+        },
+        {
+          "at_eos_plus_s": 4.07,
+          "audio_s": 3.1,
+          "backchannel": false
+        },
+        {
+          "at_eos_plus_s": 11.042,
+          "audio_s": 9.34,
+          "backchannel": false
+        }
+      ]
+    },
+    {
+      "turn": 7,
+      "question": "Goku, who was the toughest opponent you have ever fought?",
+      "clip_s": 5.6,
+      "failure": null,
+      "endpoint_wait_s": 0.601,
+      "metrics_line": "listen turn guild=1 user=1 eos->asr=0.80 asr->llm=0.94 llm->tts1=1.88 tts1->audio=1.16 total=4.78",
+      "stages_s": {
+        "eos->asr": 0.8,
+        "asr->llm": 0.94,
+        "llm->tts1": 1.88,
+        "tts1->audio": 1.16,
+        "total": 4.78
+      },
+      "eos_to_backchannel_s": 0.801,
+      "first_reply_play_minus_eos_s": 4.782,
+      "plays": [
+        {
+          "at_eos_plus_s": 0.801,
+          "audio_s": 3.98,
+          "backchannel": true
+        },
+        {
+          "at_eos_plus_s": 4.782,
+          "audio_s": 2.38,
+          "backchannel": false
+        },
+        {
+          "at_eos_plus_s": 13.061,
+          "audio_s": 11.34,
+          "backchannel": false
+        }
+      ]
+    },
+    {
+      "turn": 8,
+      "question": "Hey Goku, how do you stay so strong while training every single day?",
+      "clip_s": 4.88,
+      "failure": null,
+      "endpoint_wait_s": 0.62,
+      "metrics_line": "listen turn guild=1 user=1 eos->asr=0.77 asr->llm=0.81 llm->tts1=1.30 tts1->audio=0.00 total=2.89",
+      "stages_s": {
+        "eos->asr": 0.77,
+        "asr->llm": 0.81,
+        "llm->tts1": 1.3,
+        "tts1->audio": 0.0,
+        "total": 2.89
+      },
+      "eos_to_backchannel_s": 0.775,
+      "first_reply_play_minus_eos_s": 2.893,
+      "plays": [
+        {
+          "at_eos_plus_s": 0.775,
+          "audio_s": 1.5,
+          "backchannel": true
+        },
+        {
+          "at_eos_plus_s": 2.893,
+          "audio_s": 1.58,
+          "backchannel": false
+        },
+        {
+          "at_eos_plus_s": 12.587,
+          "audio_s": 13.34,
+          "backchannel": false
+        }
+      ]
+    },
+    {
+      "turn": 9,
+      "question": "What would you do if you had one whole day with nothing to fight?",
+      "clip_s": 5.2,
+      "failure": null,
+      "endpoint_wait_s": 0.621,
+      "metrics_line": "listen turn guild=1 user=1 eos->asr=0.79 asr->llm=0.74 llm->tts1=3.10 tts1->audio=0.00 total=4.63",
+      "stages_s": {
+        "eos->asr": 0.79,
+        "asr->llm": 0.74,
+        "llm->tts1": 3.1,
+        "tts1->audio": 0.0,
+        "total": 4.63
+      },
+      "eos_to_backchannel_s": 0.788,
+      "first_reply_play_minus_eos_s": 4.631,
+      "plays": [
+        {
+          "at_eos_plus_s": 0.788,
+          "audio_s": 1.5,
+          "backchannel": true
+        },
+        {
+          "at_eos_plus_s": 4.631,
+          "audio_s": 3.98,
+          "backchannel": false
+        },
+        {
+          "at_eos_plus_s": 10.261,
+          "audio_s": 7.58,
+          "backchannel": false
+        }
+      ]
+    },
+    {
+      "turn": 10,
+      "question": "Hey Goku, can you tell me about your first time turning Super Saiyan?",
+      "clip_s": 5.2,
+      "failure": null,
+      "endpoint_wait_s": 0.604,
+      "metrics_line": "listen turn guild=1 user=1 eos->asr=0.78 asr->llm=0.95 llm->tts1=7.37 tts1->audio=0.00 total=9.10",
+      "stages_s": {
+        "eos->asr": 0.78,
+        "asr->llm": 0.95,
+        "llm->tts1": 7.37,
+        "tts1->audio": 0.0,
+        "total": 9.1
+      },
+      "eos_to_backchannel_s": 0.778,
+      "first_reply_play_minus_eos_s": 9.099,
+      "plays": [
+        {
+          "at_eos_plus_s": 0.778,
+          "audio_s": 1.5,
+          "backchannel": true
+        },
+        {
+          "at_eos_plus_s": 9.099,
+          "audio_s": 10.3,
+          "backchannel": false
+        },
+        {
+          "at_eos_plus_s": 19.404,
+          "audio_s": 7.98,
+          "backchannel": false
+        }
+      ]
+    }
+  ],
+  "replies": [
+    {
+      "turn": 1,
+      "asr_text": "Hey Goku, what's your favorite food and how much of it can you eat?",
+      "asr_s": 0.154,
+      "llm_gen_s": 0.89,
+      "llm_raw": "Oh, hey there! My favorite food is definitely space chili\u2014super spicy and full of energy! I can eat a whole bucket, no problem, as long as it's not too close to a black hole.",
+      "raw_sentences": 3,
+      "raw_chars": 174,
+      "spoken_sentences": 2,
+      "spoken_text": "Oh, hey there! My favorite food is definitely space chili\u2014super spicy and full of energy!",
+      "within_max_sentences": true
+    },
+    {
+      "turn": 2,
+      "asr_text": "Goku, who was the toughest opponent you have ever fought.",
+      "asr_s": 0.18,
+      "llm_gen_s": 0.754,
+      "llm_raw": "Oh man, that's a tough one! Frieza was definitely the toughest\u2014like, he had that cold, deadly vibe and could fight me on the edge of space!",
+      "raw_sentences": 2,
+      "raw_chars": 139,
+      "spoken_sentences": 2,
+      "spoken_text": "Oh man, that's a tough one! Frieza was definitely the toughest\u2014like, he had that cold, deadly vibe and could fight me on the edge of space!",
+      "within_max_sentences": true
+    },
+    {
+      "turn": 3,
+      "asr_text": "Hey Goku, how do you stay so strong while training every single day?",
+      "asr_s": 0.158,
+      "llm_gen_s": 0.734,
+      "llm_raw": "Ah, that's a great question! I just keep believing in my power and never give up\u2014every punch, every stretch, every drop of sweat builds that inner fire!",
+      "raw_sentences": 2,
+      "raw_chars": 152,
+      "spoken_sentences": 2,
+      "spoken_text": "Ah, that's a great question! I just keep believing in my power and never give up\u2014every punch, every stretch, every drop of sweat builds that inner fire!",
+      "within_max_sentences": true
+    },
+    {
+      "turn": 4,
+      "asr_text": "What would you do if you had one whole day with nothing to fight?",
+      "asr_s": 0.179,
+      "llm_gen_s": 0.88,
+      "llm_raw": "Oh, that's a fun question! I'd just soak in the peace, maybe jump on a mountain, eat some pancakes, and listen to the stars\u2014no fighting, just pure joy and energy flowing!",
+      "raw_sentences": 2,
+      "raw_chars": 170,
+      "spoken_sentences": 2,
+      "spoken_text": "Oh, that's a fun question! I'd just soak in the peace, maybe jump on a mountain, eat some pancakes, and listen to the stars\u2014no fighting, just pure joy and energy flowing!",
+      "within_max_sentences": true
+    },
+    {
+      "turn": 5,
+      "asr_text": "Hey Goku, can you tell me about your first time turning Super Saiyan?",
+      "asr_s": 0.192,
+      "llm_gen_s": 1.126,
+      "llm_raw": "Oh, that was wild! I was just a tiny kid, running around, and suddenly my body lit up like a sunburst\u2014my hair turned orange, my energy exploded, and I felt like I could fly! Pure power, pure joy!",
+      "raw_sentences": 3,
+      "raw_chars": 195,
+      "spoken_sentences": 2,
+      "spoken_text": "Oh, that was wild! I was just a tiny kid, running around, and suddenly my body lit up like a sunburst\u2014my hair turned orange, my energy exploded, and I felt like I could fly!",
+      "within_max_sentences": true
+    },
+    {
+      "turn": 6,
+      "asr_text": "Hey Goku, what's your favorite food and how much of it can you eat?",
+      "asr_s": 0.178,
+      "llm_gen_s": 0.834,
+      "llm_raw": "Oh, my favorite is ramen! I can eat a whole bowl in one go, and sometimes I'll even sneak in a second\u2014one bowl after another, just like a Saiyan feast!",
+      "raw_sentences": 2,
+      "raw_chars": 151,
+      "spoken_sentences": 2,
+      "spoken_text": "Oh, my favorite is ramen! I can eat a whole bowl in one go, and sometimes I'll even sneak in a second\u2014one bowl after another, just like a Saiyan feast!",
+      "within_max_sentences": true
+    },
+    {
+      "turn": 7,
+      "asr_text": "Goku, who was the toughest opponent you have ever fought.",
+      "asr_s": 0.2,
+      "llm_gen_s": 0.941,
+      "llm_raw": "Oh, that's a tough one! Frieza was definitely the toughest\u2014his power was insane, and I remember that final battle, the sky turned red, and it felt like the whole universe was screaming at me!",
+      "raw_sentences": 2,
+      "raw_chars": 191,
+      "spoken_sentences": 2,
+      "spoken_text": "Oh, that's a tough one! Frieza was definitely the toughest\u2014his power was insane, and I remember that final battle, the sky turned red, and it felt like the whole universe was screaming at me!",
+      "within_max_sentences": true
+    },
+    {
+      "turn": 8,
+      "asr_text": "Hey Goku, how do you stay so strong while training every single day?",
+      "asr_s": 0.155,
+      "llm_gen_s": 0.814,
+      "llm_raw": "Hey! I just keep believing in my heart and fighting for my friends. Every drop of sweat fuels my spirit\u2014training isn't just about power, it's about staying true to who I am!",
+      "raw_sentences": 3,
+      "raw_chars": 173,
+      "spoken_sentences": 2,
+      "spoken_text": "Hey! I just keep believing in my heart and fighting for my friends.",
+      "within_max_sentences": true
+    },
+    {
+      "turn": 9,
+      "asr_text": "What would you do if you had one whole day with nothing to fight?",
+      "asr_s": 0.167,
+      "llm_gen_s": 0.74,
+      "llm_raw": "Oh, that\u2019s a fun question! I\u2019d probably just chill, watch the stars, and listen to some awesome music\u2014maybe even dance a little! \ud83d\ude80",
+      "raw_sentences": 3,
+      "raw_chars": 130,
+      "spoken_sentences": 2,
+      "spoken_text": "Oh, that\u2019s a fun question! I\u2019d probably just chill, watch the stars, and listen to some awesome music\u2014maybe even dance a little!",
+      "within_max_sentences": true
+    },
+    {
+      "turn": 10,
+      "asr_text": "Hey Goku, can you tell me about your first time turning Super Saiyan?",
+      "asr_s": 0.174,
+      "llm_gen_s": 0.952,
+      "llm_raw": "Yeah, my first Super Saiyan moment was wild\u2014just a burst of energy, my hair turned wild, and I felt like I could fly! I still remember the power surge and the way the world lit up around me.",
+      "raw_sentences": 2,
+      "raw_chars": 190,
+      "spoken_sentences": 2,
+      "spoken_text": "Yeah, my first Super Saiyan moment was wild\u2014just a burst of energy, my hair turned wild, and I felt like I could fly! I still remember the power surge and the way the world lit up around me.",
+      "within_max_sentences": true
+    }
+  ],
+  "summary": {
+    "eos->asr": {
+      "n": 10,
+      "p50_s": 0.79,
+      "p90_s": 0.8,
+      "min_s": 0.75,
+      "max_s": 0.81
+    },
+    "asr->llm": {
+      "n": 10,
+      "p50_s": 0.83,
+      "p90_s": 0.95,
+      "min_s": 0.73,
+      "max_s": 1.13
+    },
+    "llm->tts1": {
+      "n": 10,
+      "p50_s": 2.21,
+      "p90_s": 3.55,
+      "min_s": 1.3,
+      "max_s": 7.37
+    },
+    "tts1->audio": {
+      "n": 10,
+      "p50_s": 0.0,
+      "p90_s": 1.16,
+      "min_s": 0.0,
+      "max_s": 1.63
+    },
+    "total": {
+      "n": 10,
+      "p50_s": 4.63,
+      "p90_s": 5.11,
+      "min_s": 2.89,
+      "max_s": 9.1
+    },
+    "eos->backchannel": {
+      "n": 10,
+      "p50_s": 0.788,
+      "p90_s": 0.803,
+      "max_s": 0.815
+    },
+    "endpoint_wait (eos->utterance emitted)": {
+      "n": 10,
+      "p50_s": 0.62,
+      "p90_s": 0.623
+    }
+  },
+  "verdict": {
+    "turns_requested": 10,
+    "turns_with_metrics": 10,
+    "total_p50_within_6s": true,
+    "total_p90_within_9s": true,
+    "backchannel_p50_within_0.8s": true,
+    "backchannel_max_within_0.8s": false,
+    "all_replies_within_max_sentences": true,
+    "max_sentences": 2
+  },
+  "vram": {
+    "period_s": 0.25,
+    "n_samples": 1395,
+    "peak_overall_mib": 14863,
+    "per_phase": {
+      "load": {
+        "n": 25,
+        "peak_mib": 12123,
+        "min_mib": 1993
+      },
+      "load_done_idle": {
+        "n": 4,
+        "peak_mib": 12120,
+        "min_mib": 12119
+      },
+      "prepare_clips": {
+        "n": 78,
+        "peak_mib": 12291,
+        "min_mib": 12169
+      },
+      "warmup": {
+        "n": 61,
+        "peak_mib": 13240,
+        "min_mib": 12288
+      },
+      "idle_before_turns": {
+        "n": 4,
+        "peak_mib": 13053,
+        "min_mib": 13053
+      },
+      "turns": {
+        "n": 1223,
+        "peak_mib": 14863,
+        "min_mib": 13053
+      }
+    }
+  },
+  "peak_vram_used_mib": 14863,
+  "peak_vram_during_turns_mib": 14863
+}

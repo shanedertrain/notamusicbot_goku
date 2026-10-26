@@ -15,10 +15,11 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from notamusicbot.content import prompts
-from notamusicbot.content.base import ContentRequest
+from notamusicbot.content.base import ContentKind, ContentRequest
 from notamusicbot.speech.coordinator import InferenceCoordinator, shared_gpu_coordinator
 
 if TYPE_CHECKING:
@@ -27,6 +28,31 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL_ID = "Qwen/Qwen3-4B-Instruct-2507"
+
+
+def resolve_local_model_path(model_id: str) -> str:
+    """Return a local directory for ``model_id`` without any network access.
+
+    A model id that is an existing directory is returned unchanged. Otherwise
+    it is resolved from the local Hugging Face cache with
+    ``snapshot_download(local_files_only=True)`` so ``from_pretrained`` only
+    ever sees a path (transformers' hub-id code path calls ``model_info()``,
+    which raises under ``HF_HUB_OFFLINE=1``). Used identically online and
+    offline; never downloads. Shared with the TTS loader.
+    """
+    if Path(model_id).is_dir():
+        return model_id
+    from huggingface_hub import snapshot_download
+
+    try:
+        return str(snapshot_download(model_id, local_files_only=True))
+    except Exception as exc:
+        msg = (
+            f"Model {model_id!r} is not in the local Hugging Face cache and "
+            f"downloads are disabled at runtime. Run the one-time download: "
+            f"huggingface-cli download {model_id}"
+        )
+        raise RuntimeError(msg) from exc
 
 
 @dataclass(slots=True)
@@ -115,9 +141,10 @@ class LocalQwenLlmProvider:
         dtype = getattr(torch, self._dtype)
         start = time.perf_counter()
         logger.info("Loading local LLM %s on %s (%s)...", self._model_id, self._device, self._dtype)
-        tokenizer = AutoTokenizer.from_pretrained(self._model_id)
+        model_path = resolve_local_model_path(self._model_id)
+        tokenizer = AutoTokenizer.from_pretrained(model_path)
         model: PreTrainedModel = AutoModelForCausalLM.from_pretrained(
-            self._model_id,
+            model_path,
             dtype=dtype,
             attn_implementation=self._attn_implementation,
         )
@@ -158,16 +185,26 @@ class LocalQwenLlmProvider:
         still generating.
         """
         prompt = prompts.build_prompt(request)
+        if request.kind is ContentKind.CHAT:
+            return await self._gpu.run_blocking(
+                self._generate_sync, prompt, self._chat_system_prompt()
+            )
         return await self._gpu.run_blocking(self._generate_sync, prompt)
 
-    def _generate_sync(self, prompt: str) -> str:
+    def _chat_system_prompt(self) -> str:
+        """Chat persona prompt; an explicitly configured custom prompt wins."""
+        if self._system_prompt != prompts.RADIO_SYSTEM_PROMPT:
+            return self._system_prompt
+        return prompts.CHAT_SYSTEM_PROMPT
+
+    def _generate_sync(self, prompt: str, system_prompt: str | None = None) -> str:
         import torch
 
         if self._model is None or self._tokenizer is None:
             self.load()
         assert self._model is not None and self._tokenizer is not None
         messages = [
-            {"role": "system", "content": self._system_prompt},
+            {"role": "system", "content": system_prompt or self._system_prompt},
             {"role": "user", "content": prompt},
         ]
         text = self._tokenizer.apply_chat_template(

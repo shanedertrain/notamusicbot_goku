@@ -23,7 +23,7 @@ from notamusicbot.domain.voice_profiles import load_voice_profiles
 from notamusicbot.speech.coordinator import InferenceCoordinator
 from notamusicbot.speech.pipeline import SpeechPipeline
 from notamusicbot.speech.tts.qwen_custom_voice import QwenCustomVoiceSynthesizer
-from notamusicbot.speech.voice_conversion.base import VoiceConverter
+from notamusicbot.speech.voice_conversion.base import VoiceConverter, VoiceStreamParams
 from notamusicbot.speech.voice_conversion.router import VoiceConverterRouter
 
 logger = logging.getLogger(__name__)
@@ -58,6 +58,9 @@ class _LazySpeechSynthesizer:
                 device=s.tts_device,
                 dtype=s.tts_dtype,
                 attn_implementation=s.tts_attn_implementation,
+                fast=s.tts_fast,
+                stream_chunk_size=s.tts_stream_chunk_size,
+                coordinator=self._app.coordinator,
             )
         return self._real
 
@@ -103,9 +106,11 @@ class Application:
             enabled_backends=settings.speech.voice_conversion_backends,
             rvc_factory=rvc_factory,
             rvc_unavailable_policy=settings.speech.rvc_unavailable_policy,
+            rvc_stream_params=VoiceStreamParams.from_settings(settings.speech.voice_conversion),
         )
         self.pipeline: SpeechPipeline | None = None
         self._content_provider: ContentProvider | None = None
+        self._listen_provider: ContentProvider | None = None
         self._warmup_task: asyncio.Task[None] | None = None
 
     @property
@@ -120,6 +125,7 @@ class Application:
 
         Review Round-2 P1: when neither commentary, content, interstitial nor
         podcast is enabled, the expensive local models are not loaded at all.
+        Listen mode replies through the same LLM and speech pipeline.
         """
         s = self.settings
         return (
@@ -127,6 +133,7 @@ class Application:
             or s.content.enabled
             or s.interstitial.enabled
             or s.podcast.enabled
+            or s.listen.enabled
         )
 
     def build_content_provider(self) -> ContentProvider | None:
@@ -155,6 +162,93 @@ class Application:
             self._content_provider = StaticTemplateProvider()
         return self._content_provider
 
+    @property
+    def listen_uses_spark(self) -> bool:
+        """True when listen mode takes its reply text from the Spark."""
+        listen = self.settings.listen
+        return listen.enabled and listen.llm.provider == "spark"
+
+    @property
+    def listen_content_provider(self) -> ContentProvider | None:
+        """The provider listen mode replies through (``None`` unless listen is on)."""
+        return self.build_listen_content_provider()
+
+    def _build_local_chat_provider(self) -> Any:
+        """The in-process Qwen for listen: shared with music if that exists."""
+        from notamusicbot.content.llm import LocalQwenLlmProvider
+
+        shared = self.build_content_provider()
+        if isinstance(shared, LocalQwenLlmProvider):
+            return shared
+        return LocalQwenLlmProvider.from_settings(
+            self.settings.content, gpu_coordinator=self.coordinator
+        )
+
+    def _build_listen_fallback_provider(self) -> Any:
+        """Spark-down fallback: a dedicated Qwen capped at ``listen.reply.max_new_tokens``.
+
+        ``ContentRequest`` has no per-request token limit, so the shared music
+        provider (``content.max_new_tokens``, 120) cannot serve voice chat at
+        the 60-token cap. A dedicated instance costs a second model load only
+        if music commentary also runs on the local model at the same time.
+        """
+        from notamusicbot.content.llm import LocalQwenLlmProvider
+
+        content = self.settings.content.model_copy(
+            update={"max_new_tokens": self.settings.listen.reply.max_new_tokens}
+        )
+        return LocalQwenLlmProvider.from_settings(content, gpu_coordinator=self.coordinator)
+
+    def build_reply_synthesizer(self, voice_profile: Any) -> Any:
+        """Listen-mode ``ReplySynthesizer`` with the configured TTS length caps.
+
+        Needs ``build_pipeline()`` to have run. Job directories of failed calls
+        are cleaned under the pipeline's output dir.
+        """
+        from notamusicbot.listen.reply import ReplySynthesizer
+
+        if self.pipeline is None:
+            raise RuntimeError("speech pipeline is not built")
+        reply = self.settings.listen.reply
+        return ReplySynthesizer(
+            self.pipeline,
+            voice_profile,
+            artifact_root=Path(self.settings.speech.output_dir),
+            tts_max_seconds_per_word=reply.tts_max_seconds_per_word,
+            tts_cap_floor_seconds=reply.tts_cap_floor_seconds,
+            stream_converter=self.converter,
+        )
+
+    def build_listen_content_provider(self) -> ContentProvider | None:
+        """Construct the listen-mode chat provider (no model load, no network).
+
+        Independent of ``content.enabled``: listen must never be left without an
+        LLM because music commentary is off. With ``llm.provider: spark`` the
+        in-process model is only a lazy fallback and is never loaded at startup.
+        """
+        listen = self.settings.listen
+        if not listen.enabled:
+            return None
+        if self._listen_provider is not None:
+            return self._listen_provider
+        if self.listen_uses_spark:
+            from notamusicbot.content.fallback import FallbackChatProvider, LazyLocalProvider
+            from notamusicbot.content.spark_chat import SparkChatProvider
+
+            local = None
+            if listen.llm.fallback == "local":
+                local = LazyLocalProvider(
+                    self._build_listen_fallback_provider, gpu_coordinator=self.coordinator
+                )
+            self._listen_provider = FallbackChatProvider(
+                SparkChatProvider(listen.llm, max_new_tokens=listen.reply.max_new_tokens),
+                local,
+                listen.llm.health_interval_s,
+            )
+        else:
+            self._listen_provider = self._build_local_chat_provider()
+        return self._listen_provider
+
     def load_content_model(self) -> None:
         """Load the local LLM off the event loop (call during startup).
 
@@ -166,6 +260,11 @@ class Application:
         """
         if not self.speech_features_enabled:
             logger.info("Content/speech features disabled; skipping content model load")
+            return
+        if self.listen_uses_spark:
+            # Listen replies come from the Spark; the in-process model is a lazy
+            # fallback (and music commentary loads it on first use if needed).
+            logger.info("Listen mode uses the Spark; skipping eager in-process LLM load")
             return
         provider = self.build_content_provider()
         if provider is None:
@@ -200,6 +299,9 @@ class Application:
                     device=s.tts_device,
                     dtype=s.tts_dtype,
                     attn_implementation=s.tts_attn_implementation,
+                    fast=s.tts_fast,
+                    stream_chunk_size=s.tts_stream_chunk_size,
+                    coordinator=self.coordinator,
                 )
         return self._synthesizer
 

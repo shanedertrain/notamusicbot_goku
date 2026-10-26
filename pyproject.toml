@@ -28,6 +28,11 @@ dependencies = [
 discord = ["discord.py>=2.4", "PyNaCl>=1.5"]
 media = ["yt-dlp", "yt-dlp-ejs>=0.8", "spotipy>=2.24"]
 reddit = ["praw>=7.7"]
+# Voice listen mode: silero VAD (ONNX, CPU) and onnx-asr (Parakeet, CPU). Optional;
+# the energy VAD needs neither.
+listen = ["silero-vad>=6.0", "onnx-asr>=0.12"]
+# Also needed by listen mode but NOT expressible here: faster-qwen3-tts==0.3.1 (--no-deps)
+# and onnxruntime-gpu==1.31.0 replacing onnxruntime. See DEPENDENCY_NOTES.md.
 dev = ["pytest>=8", "pytest-asyncio>=0.24", "ruff>=0.7", "mypy>=1.11"]
 
 [project.scripts]

@@ -65,6 +65,30 @@ combination (torch 2.14.1+cu130, transformers 4.57.3) is documented in
 - **`dev`**: `pytest` 9.1.1, `pytest-asyncio` 1.4.0, `ruff` 0.16.10, `mypy` 2.4.0.
   Installed into the main venv by `scripts/setup.sh` (fixed in `548b150` — the
   dev extra was previously missing from the main-venv install).
+- **`listen`**: `silero-vad>=6.0` (`speech/vad/silero.py`, ONNX on CPU, loaded
+  lazily; 6.2.3 resolves). NOT installed in `.venv-main` yet: `uv pip install
+  --dry-run` shows it would add only `silero-vad` itself (torch, torchaudio and
+  onnxruntime already present). The energy VAD (`speech/vad/energy.py`) needs
+  nothing and is used by the unit tests.
+  Also `onnx-asr>=0.12` (0.12.0, the version the ASR bake-off used;
+  `speech/asr/parakeet_onnx.py`, Parakeet TDT 0.6B v2 int8 on CPU, local HF
+  cache only). Installed into `.venv-main` after a dry-run showed it adds only
+  `onnx-asr` (onnxruntime 1.31.0, numpy, torch, transformers, huggingface_hub
+  unchanged). One-time weights setup: `hf download istupakov/parakeet-tdt-0.6b-v2-onnx`.
+- **Listen speed build (2026-10-25), installed by hand, NOT in any extra**:
+  - `faster-qwen3-tts==0.3.1`, installed with `uv pip install --no-deps` (its
+    pins `transformers<5` and `huggingface-hub<1.0` would downgrade the
+    resolved set; its other requirements are already present). Imported only
+    in `speech/tts/qwen_custom_voice.py`; if it is missing or graph capture
+    fails the stock `Qwen3TTSModel` loads (`speech.tts_fast: false` skips it).
+  - `onnxruntime` was REPLACED by `onnxruntime-gpu==1.31.0` (same version, same
+    module name, so the two cannot coexist; uninstall `onnxruntime` first).
+    The CUDA Parakeet path (`listen.asr.device: cuda`, fp32 weights) needs it
+    plus torch imported first so the pip cuDNN is on the loader path; without
+    CUDA it falls back to CPU int8. Not an extra because an extra cannot
+    express `--no-deps` or a replacement. Reinstall order after a rebuild:
+    `uv pip uninstall onnxruntime; uv pip install onnxruntime-gpu==1.31.0;
+    uv pip install --no-deps faster-qwen3-tts==0.3.1`.
 - **`reddit`**: `praw` (floor `>=7.7`; 8.0.3 tested) — **Reddit IS ported**:
   `content/reddit.py` contains a real PRAW-backed `RedditPostFetcher` used for
   reddit interstitials and podcast topics. This is an optional extra, not a

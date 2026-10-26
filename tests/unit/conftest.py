@@ -1,4 +1,5 @@
-"""Shared pytest fixtures: fakes at the TTS/VC boundaries (no GPU, no weights)."""
+"""Shared pytest fixtures: fakes at the TTS/VC and listen-mode boundaries
+(no GPU, no weights, no Discord)."""
 
 from __future__ import annotations
 
@@ -9,6 +10,8 @@ import numpy as np
 import pytest
 import soundfile as sf
 
+from notamusicbot.content.base import ContentRequest
+from notamusicbot.domain.listen import AudioChunk, Transcript
 from notamusicbot.domain.speech import AudioArtifact, TtsRequest, VoiceConversionProfile
 
 
@@ -70,6 +73,118 @@ class FailingSynthesizer(FakeSynthesizer):
 
     async def synthesize(self, request: TtsRequest, output_path: Path) -> AudioArtifact:
         raise RuntimeError(self.message)
+
+
+# ----------------------------------------------------------------- listen mode
+
+
+class FakeClock:
+    """Manually advanced monotonic clock; ``sleep`` advances instead of waiting."""
+
+    def __init__(self, start: float = 0.0) -> None:
+        self.now = start
+        self.sleeps: list[float] = []
+
+    def __call__(self) -> float:
+        return self.now
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+    async def sleep(self, seconds: float) -> None:
+        import asyncio
+
+        self.sleeps.append(seconds)
+        self.now += seconds
+        await asyncio.sleep(0)  # still yield to the loop
+
+
+class FakeTranscriber:
+    """Returns scripted transcripts in order (the last one repeats)."""
+
+    def __init__(self, texts: list[str] | None = None, elapsed_s: float = 0.0) -> None:
+        self.texts = list(texts) if texts else ["hello there goku"]
+        self.elapsed_s = elapsed_s
+        self.calls: list[AudioChunk] = []
+        self.shutdowns = 0
+
+    async def transcribe(self, audio: AudioChunk) -> Transcript:
+        index = min(len(self.calls), len(self.texts) - 1)
+        self.calls.append(audio)
+        return Transcript(text=self.texts[index], language="en", elapsed_s=self.elapsed_s)
+
+    async def shutdown(self) -> None:
+        self.shutdowns += 1
+
+
+class FakeVad:
+    """Returns scripted speech probabilities per frame, then ``default``."""
+
+    def __init__(self, probabilities: list[float] | None = None, default: float = 0.0) -> None:
+        self.probabilities = list(probabilities or [])
+        self.default = default
+        self.frames = 0
+        self.resets = 0
+
+    def process(self, frame: np.ndarray) -> float:
+        index = self.frames
+        self.frames += 1
+        if index < len(self.probabilities):
+            return self.probabilities[index]
+        return self.default
+
+    def reset(self) -> None:
+        self.resets += 1
+
+
+class FakePacketSource:
+    """Delivers scripted ``(user_id, opus_payload)`` packets to a receive callback."""
+
+    def __init__(self, packets: list[tuple[int | None, bytes]] | None = None) -> None:
+        self.packets = list(packets or [])
+
+    @classmethod
+    def interleaved(cls, user_ids: list[int | None], count: int) -> FakePacketSource:
+        """``count`` packets per user, round-robin; payload encodes user and index."""
+        packets = [
+            (user_id, f"{user_id}:{i}".encode()) for i in range(count) for user_id in user_ids
+        ]
+        return cls(packets)
+
+    def deliver(self, callback: Callable[[int | None, bytes], None]) -> int:
+        for user_id, payload in self.packets:
+            callback(user_id, payload)
+        return len(self.packets)
+
+
+class FakeContentProvider:
+    """Scripted ContentProvider: replies in order (last repeats); an Exception
+    item is raised instead of returned. ``delay_s`` awaits before replying."""
+
+    def __init__(self, replies: list[str | Exception] | None = None, delay_s: float = 0.0) -> None:
+        self.replies = list(replies) if replies else ["Hey, that sounds awesome!"]
+        self.delay_s = delay_s
+        self.calls: list[ContentRequest] = []
+
+    async def generate(self, request: ContentRequest) -> str:
+        import asyncio
+
+        index = min(len(self.calls), len(self.replies) - 1)
+        self.calls.append(request)
+        if self.delay_s:
+            await asyncio.sleep(self.delay_s)
+        reply = self.replies[index]
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
+
+
+@pytest.fixture()
+def fake_clock() -> FakeClock:
+    return FakeClock()
 
 
 @pytest.fixture()

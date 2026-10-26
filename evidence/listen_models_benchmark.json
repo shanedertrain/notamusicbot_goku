@@ -1,0 +1,184 @@
+{
+  "note": "ASR clips are synthetic clean TTS speech; word error rates are optimistic compared with real microphones.",
+  "vram_steps": {
+    "0_baseline": {
+      "used_mib": 1690,
+      "free_mib": 14316,
+      "total_mib": 16376
+    },
+    "1_after_llm": {
+      "used_mib": 9636,
+      "free_mib": 6369,
+      "total_mib": 16376
+    },
+    "2_after_tts": {
+      "used_mib": 11822,
+      "free_mib": 4183,
+      "total_mib": 16376
+    },
+    "3_after_rvc_startup": {
+      "used_mib": 11819,
+      "free_mib": 4186,
+      "total_mib": 16376
+    },
+    "4_after_first_rvc_job": {
+      "used_mib": 12647,
+      "free_mib": 3358,
+      "total_mib": 16376
+    },
+    "5_after_whisper_small": {
+      "used_mib": 13078,
+      "free_mib": 2927,
+      "total_mib": 16376
+    },
+    "6_after_whisper_base_also": {
+      "used_mib": 13186,
+      "free_mib": 2819,
+      "total_mib": 16376
+    }
+  },
+  "llm_load_s": 3.2,
+  "tts_load_s": 2.2,
+  "rvc_startup_s": 0.66,
+  "tts_rvc_cold_first_job": {
+    "text": "Hello, this is the first cold job.",
+    "words": 7,
+    "tts_s": 2.699,
+    "vc_s": 1.876,
+    "pp_s": 0.007,
+    "total_s": 4.584,
+    "audio_s": 2.94,
+    "rtf": 1.559
+  },
+  "tts_rvc_warmup_job": {
+    "text": "Warm up job, here we go.",
+    "words": 6,
+    "tts_s": 2.216,
+    "vc_s": 0.172,
+    "pp_s": 0.009,
+    "total_s": 2.399,
+    "audio_s": 3.1,
+    "rtf": 0.774
+  },
+  "tts_rvc_warm_lines": [
+    {
+      "text": "Hey there, it's me, Goku!",
+      "words": 5,
+      "tts_s": 2.628,
+      "vc_s": 0.263,
+      "pp_s": 0.01,
+      "total_s": 2.902,
+      "audio_s": 3.74,
+      "rtf": 0.776
+    },
+    {
+      "text": "That fight sounds really intense, tell me more.",
+      "words": 8,
+      "tts_s": 2.731,
+      "vc_s": 0.112,
+      "pp_s": 0.031,
+      "total_s": 2.875,
+      "audio_s": 3.9,
+      "rtf": 0.737
+    },
+    {
+      "text": "I'm getting hungry, let's grab some food.",
+      "words": 7,
+      "tts_s": 2.027,
+      "vc_s": 0.105,
+      "pp_s": 0.029,
+      "total_s": 2.162,
+      "audio_s": 2.78,
+      "rtf": 0.778
+    },
+    {
+      "text": "Wow, you're getting stronger every single day.",
+      "words": 7,
+      "tts_s": 2.385,
+      "vc_s": 0.108,
+      "pp_s": 0.025,
+      "total_s": 2.52,
+      "audio_s": 3.34,
+      "rtf": 0.754
+    },
+    {
+      "text": "Let's train together and see how far we can go.",
+      "words": 10,
+      "tts_s": 3.585,
+      "vc_s": 0.125,
+      "pp_s": 0.057,
+      "total_s": 3.768,
+      "audio_s": 4.86,
+      "rtf": 0.775
+    }
+  ],
+  "tts_rvc_warm_mean": {
+    "tts_s": 2.671,
+    "vc_s": 0.143,
+    "total_s": 2.845,
+    "audio_s": 3.724,
+    "rtf": 0.764
+  },
+  "whisper_small_en": {
+    "model": "openai/whisper-small.en",
+    "load_s": 1.21,
+    "vram_delta_mib": 353,
+    "per_clip": [
+      {
+        "reference": "The quick brown fox jumps over the lazy dog near the river.",
+        "hypothesis": "The quick brown fox jumps over the lazy dog near the river.",
+        "clip_s": 4.48,
+        "latency_s": 0.062,
+        "wer": 0.0
+      },
+      {
+        "reference": "Please play some music and turn the volume up a little.",
+        "hypothesis": "Please play some music and turn the volume up a little.",
+        "clip_s": 5.04,
+        "latency_s": 0.058,
+        "wer": 0.0
+      },
+      {
+        "reference": "What time does the next train leave for the city tomorrow morning?",
+        "hypothesis": "What time does the next train leave for the city tomorrow morning?",
+        "clip_s": 5.68,
+        "latency_s": 0.059,
+        "wer": 0.0
+      }
+    ],
+    "mean_latency_s": 0.06,
+    "mean_wer": 0.0
+  },
+  "whisper_base_en": {
+    "model": "openai/whisper-base.en",
+    "load_s": 1.11,
+    "vram_delta_mib": 130,
+    "per_clip": [
+      {
+        "reference": "The quick brown fox jumps over the lazy dog near the river.",
+        "hypothesis": "The quick brown fox jumps over the lazy dog near the river.",
+        "clip_s": 4.48,
+        "latency_s": 0.038,
+        "wer": 0.0
+      },
+      {
+        "reference": "Please play some music and turn the volume up a little.",
+        "hypothesis": "Please play some music and turn the volume up a little.",
+        "clip_s": 5.04,
+        "latency_s": 0.033,
+        "wer": 0.0
+      },
+      {
+        "reference": "What time does the next train leave for the city tomorrow morning?",
+        "hypothesis": "What time does the next train leave for the city tomorrow morning?",
+        "clip_s": 5.68,
+        "latency_s": 0.037,
+        "wer": 0.0
+      }
+    ],
+    "mean_latency_s": 0.036,
+    "mean_wer": 0.0
+  },
+  "everything_resident_free_mib": 2927,
+  "everything_resident_note": "step 5 = LLM + TTS + RVC worker + whisper small.en; step 6 additionally holds base.en"
+}

@@ -8,9 +8,28 @@ at import time.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
+from urllib.parse import urlsplit
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+
+
+def assert_loopback_url(url: str, *, what: str = "listen.llm.base_url") -> str:
+    """Return ``url`` unchanged if its host is loopback, else raise ``ValueError``.
+
+    Plan section 17: the owner's Spark is reached only through the SSH tunnel
+    on loopback. Used by the config validator AND again by the Spark chat
+    provider at call time, before any socket is opened.
+    """
+    parts = urlsplit(url)
+    host = parts.hostname or ""
+    if parts.scheme not in {"http", "https"} or host not in LOOPBACK_HOSTS:
+        allowed = ", ".join(sorted(LOOPBACK_HOSTS))
+        raise ValueError(f"{what} host {host!r} is not loopback (allowed: {allowed})")
+    return url
 
 
 class SecretsSettings(BaseSettings):
@@ -48,6 +67,34 @@ class VoiceConversionSettings(BaseModel):
         default=None,
         pattern="^(pm|harvest|dio|crepe|crepe-tiny)$",
     )
+    # Opt-in streaming RVC (docs/RVC_STREAMING_DESIGN.md): the reply path
+    # converts the TTS stream block by block instead of whole sentences.
+    # Streams force the ``pm`` f0 method. ``False`` keeps today's behavior.
+    streaming: bool = False
+    stream_first_block_ms: int = Field(default=100, ge=20, le=1000)
+    stream_block_ms: int = Field(default=320, ge=100, le=2000)
+    stream_context_ms: int = Field(default=1000, ge=200, le=4000)
+    stream_lookahead_ms: int = Field(default=100, ge=40, le=500)
+    stream_crossfade_ms: int = Field(default=40, ge=10, le=200)
+    stream_search_ms: int = Field(default=20, ge=0, le=100)
+
+    @model_validator(mode="after")
+    def _validate_stream_timing(self) -> VoiceConversionSettings:
+        for name in (
+            "stream_first_block_ms",
+            "stream_block_ms",
+            "stream_context_ms",
+            "stream_lookahead_ms",
+            "stream_crossfade_ms",
+            "stream_search_ms",
+        ):
+            if getattr(self, name) % 20 != 0:
+                msg = f"{name} must be a multiple of 20 ms (got {getattr(self, name)})"
+                raise ValueError(msg)
+        if self.stream_crossfade_ms > self.stream_block_ms:
+            msg = "stream_crossfade_ms must not exceed stream_block_ms"
+            raise ValueError(msg)
+        return self
 
 
 class SpeechSettings(BaseModel):
@@ -60,6 +107,9 @@ class SpeechSettings(BaseModel):
     tts_dtype: str = "bfloat16"
     tts_attn_implementation: str = "sdpa"
     tts_model_id: str = "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
+    # faster-qwen3-tts (CUDA graphs, streaming); falls back to stock on failure.
+    tts_fast: bool = True
+    tts_stream_chunk_size: int = Field(default=8, ge=1)
     max_concurrent_inference: int = Field(default=1, ge=1)
     queue_size: int = Field(default=8, ge=1)
     warmup_on_start: bool = False
@@ -186,6 +236,141 @@ class PodcastSettings(BaseModel):
     reply_turns: int = Field(default=2, ge=1, le=6)
 
 
+class ListenVadSettings(BaseModel):
+    """Voice-activity detection and endpointing (CPU only, never the GPU)."""
+
+    backend: Literal["silero", "energy"] = "silero"
+    threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+    # Speech starts after this much sustained voice; ends after this much silence.
+    min_speech_ms: int = Field(default=250, ge=1)
+    end_silence_ms: int = Field(default=600, ge=1)
+    max_utterance_s: float = Field(default=15.0, gt=0.0)
+    pre_roll_ms: int = Field(default=300, ge=0)
+    # Per-user bounded ring; the oldest audio is dropped beyond this.
+    ring_buffer_s: float = Field(default=30.0, gt=0.0)
+
+    @model_validator(mode="after")
+    def _end_silence_covers_min_speech(self) -> ListenVadSettings:
+        if self.end_silence_ms < self.min_speech_ms:
+            raise ValueError("listen.vad.end_silence_ms must be >= listen.vad.min_speech_ms")
+        return self
+
+
+class ListenAsrSettings(BaseModel):
+    """Speech recognition (local only, no speech API).
+
+    Owner decision: Parakeet TDT 0.6B v2 int8 via onnx-asr on the CPU (4
+    intra-op threads), so it never competes with the GPU. ``whisper_hf`` is the
+    GPU fallback (Whisper small.en); it loads ``whisper_model_id``, and
+    ``model_id`` / ``quantization`` / ``threads`` apply to the Parakeet backend.
+    ``device: cuda`` runs Parakeet fp32 on the GPU regardless of ``quantization``
+    (the int8 graph gains nothing there, so int8 is overridden with one warning);
+    load runs a silent self-check and falls back to CPU int8 if CUDA/cuDNN fails.
+    """
+
+    backend: Literal["parakeet_onnx", "whisper_hf"] = "parakeet_onnx"
+    model_id: str = "istupakov/parakeet-tdt-0.6b-v2-onnx"
+    whisper_model_id: str = "openai/whisper-small.en"
+    device: Literal["cpu", "cuda"] = "cpu"
+    threads: int = Field(default=4, ge=1)
+    quantization: Literal["int8", "fp32"] = "int8"
+    language: str = "en"
+    timeout_s: float = Field(default=10.0, gt=0.0)
+
+
+class ListenReplySettings(BaseModel):
+    """Spoken-reply shaping, barge-in and rate limits."""
+
+    max_sentences: int = Field(default=2, ge=1)
+    max_new_tokens: int = Field(default=60, ge=1)
+    backchannel_enabled: bool = True
+    backchannel_texts: list[str] = Field(
+        default_factory=lambda: ["Hm?", "Oh yeah?", "Let me think."]
+    )
+    barge_in_min_speech_ms: int = Field(default=400, ge=1)
+    per_user_cooldown_s: float = Field(default=2.0, ge=0.0)
+    max_replies_per_minute: int = Field(default=12, ge=1)
+    # In-memory rolling history only; never written to disk.
+    history_turns: int = Field(default=8, ge=0)
+    llm_timeout_s: float = Field(default=20.0, gt=0.0)
+    # Streamed reply chunking: the first chunk is short so TTS starts early.
+    first_chunk_max_words: int = Field(default=8, ge=3)
+    later_chunk_max_words: int = Field(default=12, ge=3)
+    # TTS length cap: max(tts_cap_floor_seconds, words * tts_max_seconds_per_word).
+    tts_max_seconds_per_word: float = Field(default=1.0, gt=0.0)
+    tts_cap_floor_seconds: float = Field(default=2.0, ge=0.0)
+
+
+class ListenLlmSettings(BaseModel):
+    """Where listen-mode reply text comes from (plan section 17).
+
+    ``spark`` is the owner's Spark system over the loopback SSH tunnel (never
+    any other host); ``local`` is the in-process Qwen3-4B. With ``spark`` and
+    ``fallback: local`` an unreachable Spark falls back to the in-process model.
+    """
+
+    provider: Literal["spark", "local"] = "spark"
+    base_url: str = "http://127.0.0.1:8000/v1"
+    # "auto" = first id from GET {base_url}/models; never a hardcoded id.
+    model: str = "auto"
+    timeout_s: float = Field(default=20.0, gt=0.0)
+    first_token_timeout_s: float = Field(default=8.0, gt=0.0)
+    fallback: Literal["local", "none"] = "local"
+    health_interval_s: float = Field(default=30.0, gt=0.0)
+    # "off" sends thinking:false (about 1 s); "low" sends reasoning_effort low
+    # (about +1-2 s first token, better answers). Reasoning tokens count against
+    # max_tokens, so "low" adds ``thinking_token_budget`` to the reply limit.
+    thinking: Literal["off", "low"] = "off"
+    thinking_token_budget: int = Field(default=300, ge=1)
+    # Hedged request (thinking "low" only): if the first request has produced no
+    # content delta (reasoning deltas do not count) after this many seconds, start
+    # a second thinking-off request and stream whichever yields text first.
+    # None or 0 = off.
+    hedge_after_s: float | None = Field(default=None, ge=0.0)
+
+    @field_validator("base_url")
+    @classmethod
+    def _base_url_is_loopback(cls, value: str) -> str:
+        return assert_loopback_url(value)
+
+
+class ListenPrivacySettings(BaseModel):
+    """Transcript logging and opt-in persistence (both off by default)."""
+
+    # DEBUG-level transcript logging only when true.
+    log_transcripts: bool = False
+    # Owner decision: opt-ins are per session unless this is turned on.
+    persist_opt_ins: bool = False
+
+
+class ListenSettings(BaseModel):
+    """Voice listen mode (``!glisten``).
+
+    Off by default, and an empty ``allowed_channel_ids`` makes the session
+    refuse to start even when ``enabled`` is true (enforced at session start,
+    not here, so such a config still loads).
+    """
+
+    enabled: bool = False
+    allowed_channel_ids: list[int] = Field(default_factory=list)
+    # Empty -> guild administrators only.
+    operator_user_ids: list[int] = Field(default_factory=list)
+    voice_profile: str = "goku"
+    announce_on_join: bool = True
+    announcement_text: str = (
+        "Heads up, I'm listening now. Only people who type listen on get "
+        "transcribed, and nothing is saved."
+    )
+    respond_to: Literal["all", "wake_word"] = "all"
+    wake_word: str = "goku"
+    follow_up_window_s: float = Field(default=8.0, ge=0.0)
+    vad: ListenVadSettings = ListenVadSettings()
+    asr: ListenAsrSettings = ListenAsrSettings()
+    reply: ListenReplySettings = ListenReplySettings()
+    llm: ListenLlmSettings = ListenLlmSettings()
+    privacy: ListenPrivacySettings = ListenPrivacySettings()
+
+
 class AppSettings(BaseModel):
     """Non-secret application settings, normally loaded from ``config/app.yaml``."""
 
@@ -196,6 +381,7 @@ class AppSettings(BaseModel):
     reddit: RedditSettings = RedditSettings()
     interstitial: InterstitialSettings = InterstitialSettings()
     podcast: PodcastSettings = PodcastSettings()
+    listen: ListenSettings = ListenSettings()
 
 
 DEFAULT_APP_CONFIG_PATH = Path("config/app.yaml")

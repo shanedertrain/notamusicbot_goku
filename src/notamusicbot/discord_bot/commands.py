@@ -1,6 +1,7 @@
 """Prefix commands (!g...) preserving legacy semantics.
 
-Commands: play, playnow, play_spotify, join, stop, skip, deleteallmessages.
+Commands: play, playnow, play_spotify, join, stop, skip, podcast,
+deleteallmessages, listen (voice listen mode: start|on|off|stop|status).
 State access is guild-scoped (``ctx.guild.voice_client`` + per-guild queue);
 the speech pipeline is used only for generated commentary and its failure
 never blocks media playback (handoff section 20).
@@ -34,6 +35,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 YOUTUBE_HOSTS = ("youtube.com", "youtu.be")
+LISTEN_ON_MESSAGE = "listen mode is on; !glisten stop first"
 
 
 def _guild(ctx: Context) -> Guild:
@@ -46,6 +48,34 @@ def _guild(ctx: Context) -> Guild:
     if guild is None:
         raise commands.CommandError("command must be used inside a guild")
     return guild
+
+
+async def _refuse_if_listening(bot: NotAMusicBot, ctx: Context) -> bool:
+    """Music and listen are mutually exclusive per guild (v1); reply and report."""
+    guild = ctx.guild
+    if guild is not None and bot.listen_sessions.active(guild.id):
+        await ctx.send(LISTEN_ON_MESSAGE)
+        return True
+    return False
+
+
+def _music_active(bot: NotAMusicBot, guild: Guild) -> bool:
+    """True if the guild has a voice client, a queued item or a running player."""
+    if guild.voice_client is not None:
+        return True
+    state = bot.guild_states.get(guild.id)
+    if state is None:
+        return False
+    task = state.player_task
+    return not state.queue.empty() or (task is not None and not task.done())
+
+
+def _is_listen_operator(bot: NotAMusicBot, ctx: Context) -> bool:
+    operators = bot.app.settings.listen.operator_user_ids
+    if operators:
+        return ctx.author.id in operators
+    permissions = getattr(ctx.author, "guild_permissions", None)
+    return permissions is not None and bool(permissions.administrator)
 
 
 def _requester(bot: NotAMusicBot, ctx: Context) -> UserProfile:
@@ -147,6 +177,8 @@ async def _enqueue_commentary(
 def setup_commands(bot: NotAMusicBot) -> None:
     @bot.command(name="play", help="Add a video or playlist to the queue and start playing")
     async def play(ctx: Context, url: str) -> None:
+        if await _refuse_if_listening(bot, ctx):
+            return
         try:
             await _join_and_start(bot, ctx)
             await _enqueue_youtube(bot, ctx, url, quick=False)
@@ -160,6 +192,8 @@ def setup_commands(bot: NotAMusicBot) -> None:
         name="playnow", help="Add a video or playlist to the queue and start playing immediately"
     )
     async def playnow(ctx: Context, url: str) -> None:
+        if await _refuse_if_listening(bot, ctx):
+            return
         try:
             await _join_and_start(bot, ctx)
             await _enqueue_youtube(bot, ctx, url, quick=True)
@@ -171,6 +205,8 @@ def setup_commands(bot: NotAMusicBot) -> None:
 
     @bot.command(name="play_spotify", help="Add spotify song to the queue and start playing")
     async def play_spotify(ctx: Context, url: str) -> None:
+        if await _refuse_if_listening(bot, ctx):
+            return
         try:
             await _join_and_start(bot, ctx)
             user = _requester(bot, ctx)
@@ -203,6 +239,8 @@ def setup_commands(bot: NotAMusicBot) -> None:
 
     @bot.command(name="join", help="Joins the voice channel of the user who invoked the command")
     async def join_channel(ctx: Context) -> None:
+        if await _refuse_if_listening(bot, ctx):
+            return
         await _join_and_start(bot, ctx)
 
     @bot.command(name="stop", help="Stops playing the audio and disconnects from the voice channel")
@@ -228,6 +266,8 @@ def setup_commands(bot: NotAMusicBot) -> None:
         "two-voice conversation (!gpodcast start|stop)",
     )
     async def podcast(ctx: Context, action: str = "start") -> None:
+        if await _refuse_if_listening(bot, ctx):
+            return
         action = action.lower()
         if action not in ("start", "stop"):
             await ctx.send("Usage: !gpodcast start|stop")
@@ -252,6 +292,8 @@ def setup_commands(bot: NotAMusicBot) -> None:
                 "profile, or already active)."
             )
 
+    _setup_listen_commands(bot)
+
     @bot.command(
         name="deleteallmessages",
         help="Deletes all messages posted by this bot in the current channel",
@@ -266,6 +308,100 @@ def setup_commands(bot: NotAMusicBot) -> None:
             if message.author == bot.user:
                 await message.delete()
                 await asyncio.sleep(delay)
+
+
+def _setup_listen_commands(bot: NotAMusicBot) -> None:
+    """``!glisten start|on|off|stop|status``: opt-in voice listen mode.
+
+    Replies are short and never include transcripts. All session work goes
+    through ``bot.listen_sessions`` / ``bot.make_listen_session``.
+    """
+
+    @bot.group(
+        name="listen",
+        invoke_without_command=True,
+        help="Voice listen mode (!glisten start|on|off|stop|status)",
+    )
+    async def listen(ctx: Context) -> None:
+        await ctx.send("Usage: !glisten start|on|off|stop|status")
+
+    @listen.command(name="start", help="Operator: start listening in your voice channel")
+    async def listen_start(ctx: Context) -> None:
+        guild = _guild(ctx)
+        settings = bot.app.settings.listen
+        if not settings.enabled:
+            await ctx.send("Listen mode is disabled in settings.")
+            return
+        if not _is_listen_operator(bot, ctx):
+            await ctx.send("Only an operator can start listen mode.")
+            return
+        voice = getattr(ctx.author, "voice", None)
+        channel = voice.channel if voice is not None else None
+        if channel is None:
+            await ctx.send("Join a voice channel first.")
+            return
+        if channel.id not in settings.allowed_channel_ids:
+            await ctx.send("Listening is not allowed in this channel.")
+            return
+        if bot.listen_sessions.active(guild.id):
+            await ctx.send("Listen mode is already on.")
+            return
+        if _music_active(bot, guild):
+            await ctx.send("Music is active here; !gstop first.")
+            return
+        # No await between the checks above and add(): two racing starts
+        # cannot both register.
+        session = bot.make_listen_session(guild, channel)
+        bot.listen_sessions.add(session)
+        try:
+            await session.start()
+        except Exception:
+            logger.error("Listen session failed to start in guild %s", guild.id, exc_info=True)
+            await bot.stop_listen_session(guild.id)
+            await ctx.send("Could not start listen mode.")
+
+    @listen.command(name="on", help="Opt in: let the bot hear and transcribe you this session")
+    async def listen_on(ctx: Context) -> None:
+        session = bot.listen_sessions.get(_guild(ctx).id)
+        if session is None:
+            await ctx.send("Listen mode is not on.")
+            return
+        voice = getattr(ctx.author, "voice", None)
+        if voice is None or voice.channel is None or voice.channel.id != session.channel_id:
+            await ctx.send("Join the listening voice channel first.")
+            return
+        session.opt_in(ctx.author.id)
+        await ctx.send(f"{ctx.author.display_name}: opted in. !glisten off to stop.")
+
+    @listen.command(name="off", help="Opt out: stop being heard; your pending audio is cleared")
+    async def listen_off(ctx: Context) -> None:
+        session = bot.listen_sessions.get(_guild(ctx).id)
+        if session is None:
+            await ctx.send("Listen mode is not on.")
+            return
+        # Not gated on the author's channel: opting out must always work.
+        session.opt_out(ctx.author.id)  # synchronous; clears the buffer before we reply
+        await ctx.send(f"{ctx.author.display_name}: opted out.")
+
+    @listen.command(name="stop", help="Operator: stop listening and clear everything")
+    async def listen_stop(ctx: Context) -> None:
+        guild = _guild(ctx)
+        if not _is_listen_operator(bot, ctx):
+            await ctx.send("Only an operator can stop listen mode.")
+            return
+        if not bot.listen_sessions.active(guild.id):
+            await ctx.send("Listen mode is not on.")
+            return
+        await bot.stop_listen_session(guild.id)
+        await ctx.send("Listen mode stopped; nothing was saved.")
+
+    @listen.command(name="status", help="Show listen mode status")
+    async def listen_status(ctx: Context) -> None:
+        session = bot.listen_sessions.get(_guild(ctx).id)
+        if session is None:
+            await ctx.send("Listen mode is not on.")
+            return
+        await ctx.send(session.status())
 
 
 async def _leave(bot: NotAMusicBot, ctx: Context) -> None:

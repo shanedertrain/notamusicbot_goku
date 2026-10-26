@@ -30,6 +30,7 @@ from notamusicbot.podcast import PodcastCoordinator
 
 if TYPE_CHECKING:
     from notamusicbot.app import Application
+    from notamusicbot.discord_bot.listen_glue import ListenSession, ListenSessionRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,10 @@ class NotAMusicBot(commands.Bot):
             client_secret=app.secrets.spotify_client_secret,
         )
         self._announce_channels: dict[int, Any] = {}
+        # Voice listen mode. The registry is built on first use so listen_glue
+        # (and its heavy imports) load only when a session is requested.
+        self._listen_sessions: ListenSessionRegistry | None = None
+        self._listen_tasks: set[asyncio.Task[None]] = set()
         # Post-song content (review P0-5): randomized news/reddit interstitials
         # and the !gpodcast conversation mode. All fetchers are lazy/fail-soft;
         # nothing connects at construction time.
@@ -95,6 +100,72 @@ class NotAMusicBot(commands.Bot):
 
     def guild_state(self, guild_id: int) -> GuildState:
         return self.guild_states.get_or_create(guild_id)
+
+    @property
+    def listen_sessions(self) -> ListenSessionRegistry:
+        if self._listen_sessions is None:
+            from notamusicbot.discord_bot.listen_glue import ListenSessionRegistry
+
+            self._listen_sessions = ListenSessionRegistry()
+        return self._listen_sessions
+
+    def make_listen_session(
+        self, guild: discord.Guild, channel: discord.VoiceChannel | discord.StageChannel
+    ) -> ListenSession:
+        from notamusicbot.discord_bot.listen_glue import ListenSession
+
+        return ListenSession(self.app, self, guild, channel)
+
+    async def stop_listen_session(self, guild_id: int) -> None:
+        """Stop and unregister a guild's session (idempotent; never raises).
+
+        The session stays registered until ``stop`` returns, so music commands
+        keep refusing while the voice client is being torn down.
+        """
+        registry = self._listen_sessions
+        session = registry.get(guild_id) if registry is not None else None
+        if registry is None or session is None:
+            return
+        try:
+            await session.stop()
+        except Exception:
+            logger.warning("Listen session stop failed in guild %s", guild_id, exc_info=True)
+        finally:
+            if registry.get(guild_id) is session:
+                registry.remove(guild_id)
+
+    async def stop_all_listen_sessions(self) -> None:
+        if self._listen_sessions is None:
+            return
+        for guild in list(self.guilds):
+            await self.stop_listen_session(guild.id)
+
+    def _spawn_listen_stop(self, guild_id: int) -> None:
+        task = asyncio.create_task(self.stop_listen_session(guild_id))
+        self._listen_tasks.add(task)
+        task.add_done_callback(self._listen_tasks.discard)
+
+    async def on_voice_state_update(
+        self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState
+    ) -> None:
+        """Listen mode upkeep: opt a leaver out at once; stop when nobody is left."""
+        registry = self._listen_sessions
+        session = registry.get(member.guild.id) if registry is not None else None
+        if session is None:
+            return
+        channel_id = session.channel_id
+        if self.user is not None and member.id == self.user.id:
+            # The bot was disconnected or moved out of the session channel.
+            if after.channel is None or after.channel.id != channel_id:
+                self._spawn_listen_stop(member.guild.id)
+            return
+        left = before.channel is not None and before.channel.id == channel_id
+        if not left or (after.channel is not None and after.channel.id == channel_id):
+            return
+        session.on_member_left(member.id)  # synchronous consent.opt_out
+        assert before.channel is not None
+        if not any(not m.bot for m in before.channel.members):
+            self._spawn_listen_stop(member.guild.id)
 
     def set_announce_channel(self, guild_id: int, channel: Any) -> None:
         self._announce_channels[guild_id] = channel
@@ -219,6 +290,7 @@ class NotAMusicBot(commands.Bot):
         content hook) can never trigger a speech chain that races — or lazily
         restarts — the RVC worker after shutdown.
         """
+        await self.stop_all_listen_sessions()
         await self._stop_guild_players()
         self.prefetch.discard_all()
         try:

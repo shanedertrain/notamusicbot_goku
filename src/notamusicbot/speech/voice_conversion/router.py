@@ -22,16 +22,24 @@ of crashing the bot. What happens afterwards is decided by
   output the un-converted source voice.
 - ``"passthrough"`` -> requests degrade to the passthrough converter with a
   warning (legacy permissive behavior).
+
+Streaming (opt-in, ``speech.voice_conversion.streaming``): :meth:`supports_streaming`
+gates :meth:`convert_stream`, which forwards a chunk stream to the RVC adapter.
+Streams never fall back to passthrough: an unavailable RVC raises
+:class:`RvcUnavailableError` and the caller uses the whole-sentence path.
 """
 
 from __future__ import annotations
 
+import contextlib
 import logging
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 
+import numpy as np
+
 from notamusicbot.domain.speech import AudioArtifact, VoiceConversionProfile
-from notamusicbot.speech.voice_conversion.base import VoiceConverter
+from notamusicbot.speech.voice_conversion.base import VoiceConverter, VoiceStreamParams
 from notamusicbot.speech.voice_conversion.passthrough import PassthroughVoiceConverter
 
 logger = logging.getLogger(__name__)
@@ -72,6 +80,7 @@ class VoiceConverterRouter:
         enabled_backends: list[str] | tuple[str, ...] = KNOWN_BACKENDS,
         rvc_factory: Callable[[], VoiceConverter] | None = None,
         rvc_unavailable_policy: str = "error",
+        rvc_stream_params: VoiceStreamParams | None = None,
     ) -> None:
         unknown = [b for b in enabled_backends if b not in KNOWN_BACKENDS]
         if unknown:
@@ -85,6 +94,7 @@ class VoiceConverterRouter:
             raise ValueError(msg)
         self._enabled_backends = frozenset(enabled_backends)
         self._rvc_unavailable_policy = rvc_unavailable_policy
+        self._rvc_stream_params = rvc_stream_params
         self._rvc_factory = rvc_factory or self._default_rvc_factory
         self._rvc: VoiceConverter | None = None
         self._rvc_available = False
@@ -95,11 +105,10 @@ class VoiceConverterRouter:
         self._closed = False
         self._passthrough = PassthroughVoiceConverter()
 
-    @staticmethod
-    def _default_rvc_factory() -> VoiceConverter:
+    def _default_rvc_factory(self) -> VoiceConverter:
         from notamusicbot.speech.voice_conversion.rvc import RvcVoiceConverter
 
-        return RvcVoiceConverter()
+        return RvcVoiceConverter(stream_params=self._rvc_stream_params)
 
     # ------------------------------------------------------------------ state
 
@@ -225,3 +234,71 @@ class VoiceConverterRouter:
             raise RvcUnavailableError(msg)
         assert self._rvc is not None
         return await self._rvc.convert(source, profile, output_path)
+
+    # --------------------------------------------------------------- streaming
+
+    def supports_streaming(self, profile: VoiceConversionProfile) -> bool:
+        """True when ``profile`` can be served by :meth:`convert_stream` now."""
+        if self._closed or profile.backend != RVC_BACKEND:
+            return False
+        if RVC_BACKEND not in self._enabled_backends:
+            return False
+        params = self._rvc_stream_params
+        if params is None or not params.enabled or not self._rvc_available:
+            return False
+        check = getattr(self._rvc, "supports_streaming", None)
+        return callable(check) and bool(check(profile))
+
+    def _check_stream_request(self, profile: VoiceConversionProfile) -> None:
+        if self._closed:
+            msg = (
+                "voice-converter router is shut down; conversion is refused "
+                "until a deliberate new startup cycle"
+            )
+            raise RouterClosedError(msg)
+        backend = profile.backend
+        if backend not in KNOWN_BACKENDS:
+            msg = (
+                f"Unknown voice-conversion backend {backend!r} in voice profile "
+                f"(known backends: {', '.join(KNOWN_BACKENDS)})"
+            )
+            raise UnknownBackendError(msg)
+        if backend not in self._enabled_backends:
+            msg = (
+                f"Voice-conversion backend {backend!r} is not enabled in the "
+                "application configuration "
+                f"(enabled: {', '.join(sorted(self._enabled_backends))})"
+            )
+            raise UnknownBackendError(msg)
+
+    async def convert_stream(
+        self,
+        chunks: AsyncIterator[np.ndarray],
+        profile: VoiceConversionProfile,
+    ) -> AsyncIterator[np.ndarray]:
+        """Stream-convert mono f32 24 kHz chunks to mono f32 48 kHz (RVC only)."""
+        self._check_stream_request(profile)
+        if profile.backend != RVC_BACKEND:
+            msg = f"streaming conversion is not supported for backend {profile.backend!r}"
+            raise UnknownBackendError(msg)
+        if not self._rvc_available:
+            await self._ensure_rvc_started()
+        if not self._rvc_available or self._rvc is None:
+            msg = "RVC voice conversion is unavailable; streams never fall back to passthrough"
+            raise RvcUnavailableError(msg)
+        stream = getattr(self._rvc, "convert_stream", None)
+        if stream is None:
+            msg = "the RVC voice converter does not support streaming"
+            raise RvcUnavailableError(msg)
+        async with contextlib.aclosing(stream(chunks, profile)) as outputs:
+            async for out in outputs:
+                yield out
+
+    async def warm_stream(self, profile: VoiceConversionProfile) -> bool:
+        """Pre-warm the streaming path; False when unsupported or failed."""
+        if not self.supports_streaming(profile):
+            return False
+        warm = getattr(self._rvc, "warm_stream", None)
+        if warm is None:
+            return False
+        return bool(await warm(profile))

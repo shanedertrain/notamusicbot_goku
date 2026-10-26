@@ -18,6 +18,9 @@ class TtsRequest:
     language: str
     speaker: str
     instruction: str | None = None
+    # Upper bound on generated audio, in seconds. ``None`` = unbounded (the
+    # model's own limit). Backends turn it into a generation-length bound.
+    max_audio_seconds: float | None = None
 
 
 @dataclass(frozen=True, slots=True)

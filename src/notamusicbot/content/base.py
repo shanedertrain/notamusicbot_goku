@@ -21,6 +21,7 @@ class ContentKind(Enum):
     SONG = auto()
     NEWS = auto()
     REDDIT = auto()
+    CHAT = auto()
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +44,10 @@ class ContentRequest:
     article_text: str = ""
     post_title: str = ""
     post_text: str = ""
+    # Listen-mode chat: what the speaker just said and the recent turns,
+    # pre-rendered one line per turn (oldest first).
+    transcript_text: str = ""
+    chat_history: tuple[str, ...] = ()
 
 
 @runtime_checkable

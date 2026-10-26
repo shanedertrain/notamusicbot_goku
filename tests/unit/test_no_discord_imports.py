@@ -21,6 +21,27 @@ NON_DISCORD_MODULES = [
     "notamusicbot.speech.pipeline",
     "notamusicbot.speech.postprocess",
     "notamusicbot.speech.artifacts",
+    "notamusicbot.domain.listen",
+    "notamusicbot.speech.asr",
+    "notamusicbot.speech.asr.base",
+    "notamusicbot.speech.vad",
+    "notamusicbot.speech.vad.base",
+    "notamusicbot.listen",  # package __init__ must stay lightweight
+    "notamusicbot.speech.vad.energy",
+    "notamusicbot.speech.vad.silero",  # silero-vad itself is imported lazily
+    "notamusicbot.listen.ingress",
+    "notamusicbot.listen.endpointer",
+    "notamusicbot.listen.conversation",
+    "notamusicbot.listen.reply",
+    "notamusicbot.listen.metrics",
+    "notamusicbot.listen.turn_taking",
+    "notamusicbot.listen.offline",
+    "notamusicbot.speech.asr._common",
+    "notamusicbot.speech.asr.parakeet_onnx",  # onnx-asr itself is imported lazily
+    "notamusicbot.speech.asr.whisper_hf",  # transformers itself is imported lazily
+    "notamusicbot.speech.asr.factory",
+    "notamusicbot.content.spark_chat",  # httpx, loopback only (plan section 17)
+    "notamusicbot.content.fallback",
 ]
 
 _HOOK = """
