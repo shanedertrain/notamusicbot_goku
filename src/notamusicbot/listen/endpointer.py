@@ -12,7 +12,7 @@ import logging
 import math
 import threading
 from collections import deque
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
 
@@ -64,6 +64,10 @@ class IngressSource(Protocol):
 
     def drain(self, user_id: int) -> np.ndarray:
         """Return and remove the user's pending float32 16 kHz samples."""
+        ...
+
+    def known_user_ids(self) -> frozenset[int]:
+        """Snapshot of the user ids that currently have a buffer in the ingress."""
         ...
 
 
@@ -187,38 +191,37 @@ class Endpointer:
                 self._finish(user_id, st)
 
     def discard(self, user_id: int) -> None:
-        """Forget a user (opt-out): drop buffered audio and emit nothing."""
+        """Forget a user (they left the channel): drop buffered audio and emit nothing."""
         self._users.pop(user_id, None)
 
 
 class EndpointerThread:
-    """Polls ``ingress.drain`` for opted-in users on one dedicated thread.
+    """Polls ``ingress.drain`` for the users the ingress knows on one dedicated thread.
 
     ``on_event`` is called ON THIS THREAD. The caller must hop to the asyncio
     loop itself, e.g. ``lambda ev: loop.call_soon_threadsafe(handle, ev)``;
-    never touch loop objects directly from it. ``users`` returns the current
-    opted-in ids (e.g. ``consent.opted_in``); users that drop out of it are
-    discarded from the endpointer so no buffered audio outlives opt-out.
+    never touch loop objects directly from it. The user set comes from
+    ``ingress.known_user_ids()``; users the ingress forgets (they left the
+    channel) are discarded from the endpointer so no buffered audio outlives
+    their stay.
     """
 
     def __init__(
         self,
         ingress: IngressSource,
         endpointer: Endpointer,
-        users: Callable[[], Iterable[int]],
         poll_interval_s: float = 0.01,
     ) -> None:
         self._ingress = ingress
         self._endpointer = endpointer
-        self._users = users
         self._poll_interval_s = poll_interval_s
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._known: set[int] = set()
 
     def poll_once(self) -> int:
-        """Drain every opted-in user once; returns the number of samples fed."""
-        current = set(self._users())
+        """Drain every known user once; returns the number of samples fed."""
+        current = set(self._ingress.known_user_ids())
         for gone in self._known - current:
             self._endpointer.discard(gone)
         self._known = current

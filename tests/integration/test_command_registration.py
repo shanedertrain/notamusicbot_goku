@@ -63,4 +63,7 @@ def test_listen_group_is_registered_with_its_subcommands() -> None:
     group = bot.get_command("listen")
     assert isinstance(group, commands.Group)
     assert bot.get_command("glisten") is None  # no double prefix
-    assert {c.name for c in group.commands} == {"start", "on", "off", "stop", "status"}
+    # The per-user opt-in commands are gone; start/stop/status remain.
+    assert {c.name for c in group.commands} == {"start", "stop", "status"}
+    assert bot.get_command("listen on") is None
+    assert bot.get_command("listen off") is None

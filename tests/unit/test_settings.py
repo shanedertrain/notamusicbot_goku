@@ -54,8 +54,12 @@ def test_listen_defaults_pinned() -> None:
     assert listen.voice_profile == "goku"
     assert listen.announce_on_join is True
     assert listen.announcement_text == (
-        "Heads up, I'm listening now. Only people who type listen on get "
-        "transcribed, and nothing is saved."
+        "Heads up, I'm listening now. Everyone in this channel is transcribed, "
+        "and nothing is saved."
+    )
+    assert listen.announcement_text_stored == (
+        "Heads up, I'm listening now. Everyone in this channel is transcribed. "
+        "The text of what you say and what I reply is saved for {days} days (no audio)."
     )
     assert listen.respond_to == "all"
     assert listen.wake_word == "goku"
@@ -105,7 +109,8 @@ def test_listen_defaults_pinned() -> None:
     assert llm.health_interval_s == 30.0
 
     assert listen.privacy.log_transcripts is False
-    assert listen.privacy.persist_opt_ins is False
+    # The per-session opt-in system is gone, so its persistence flag is too.
+    assert "persist_opt_ins" not in type(listen.privacy).model_fields
 
 
 def test_listen_validators_reject_bad_values() -> None:

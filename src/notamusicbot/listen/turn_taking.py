@@ -1,8 +1,8 @@
 """Listen-mode turn manager (plan sections 5 and 7).
 
-One manager per guild owns the whole spoken-reply pipeline: consent re-checks,
-ASR, the noise / echo / wake-word filters, the backchannel clip, the LLM call,
-sentence-pipelined synthesis and playback, barge-in and the rate limits.
+One manager per guild owns the whole spoken-reply pipeline: the bot-self
+guard, ASR, the noise / echo / wake-word filters, the backchannel clip, the LLM
+call, sentence-pipelined synthesis and playback, barge-in and the rate limits.
 Everything here is local and in memory; nothing is written to disk and
 nothing imports discord.py (the glue owns the voice client and calls in).
 
@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import sys
 from collections.abc import AsyncIterator, Callable
 from contextlib import aclosing
 from dataclasses import dataclass, field
@@ -42,11 +43,12 @@ from notamusicbot.listen.conversation import (
 )
 from notamusicbot.listen.metrics import format_turn_metrics
 from notamusicbot.listen.reply import ReplyAudio, ReplySynthesisError
+from notamusicbot.listen.transcript_store import TranscriptStore
 
 if TYPE_CHECKING:
     from notamusicbot.config import ListenSettings
     from notamusicbot.content.base import ContentProvider, ContentRequest
-    from notamusicbot.domain.listen import ConsentState, SpeechStarted, Transcript, UtteranceEvent
+    from notamusicbot.domain.listen import SpeechStarted, Transcript, UtteranceEvent
     from notamusicbot.listen.conversation import Conversation
     from notamusicbot.listen.reply import BackchannelCache, ReplySynthesizer
     from notamusicbot.speech.asr.base import Transcriber
@@ -174,7 +176,6 @@ class TurnManager:
         self,
         settings: ListenSettings,
         clock: ClockPort,
-        consent: ConsentState,
         transcriber: Transcriber,
         conversation: Conversation,
         provider: ContentProvider,
@@ -188,10 +189,11 @@ class TurnManager:
         persona_description: str = "",
         system_prompt: str = "",
         name_resolver: Callable[[int], str] | None = None,
+        transcript_store: TranscriptStore | None = None,
     ) -> None:
+        self._transcripts = transcript_store
         self._settings = settings
         self._clock = clock
-        self._consent = consent
         self._transcriber = transcriber
         self._conversation = conversation
         self._provider = provider
@@ -290,7 +292,7 @@ class TurnManager:
 
     async def on_speech_started(self, event: SpeechStarted) -> None:
         """Speech onset: LISTENING, and barge-in once the speech is sustained."""
-        if self._closed or not self._allowed(event.user_id):
+        if self._closed or not self._is_speaker(event.user_id):
             return
         self._barge_candidates[event.user_id] = event.t_start
         if self._state is TurnState.IDLE:
@@ -315,8 +317,8 @@ class TurnManager:
         self._barge_candidates.pop(user_id, None)
         if self._closed:
             return
-        # Round-2 finding: check consent BEFORE any ASR work.
-        if not self._allowed(user_id):
+        # Round-2 finding: check the speaker BEFORE any ASR work.
+        if not self._is_speaker(user_id):
             self._settle_state()
             return
         self._start_early_backchannel(event)
@@ -336,13 +338,14 @@ class TurnManager:
                 return
             t_asr_done = self._clock()
             text = transcript.text.strip()
-            # Consent can be revoked while ASR ran: drop, never reply to it.
+            # The filters below can still reject after ASR ran: drop, never reply to it.
             accepted = self._accept(user_id, text, t_asr_done)
             self._log_asr_timing(event, transcript, t_asr_start, t_asr_done)
             if not accepted:
                 return
             if self._settings.privacy.log_transcripts:
                 logger.debug("listen transcript user=%s text=%r", user_id, text)
+            self._note(self._name_of(user_id), text)
             entry = _Pending(user_id, self._name_of(user_id), text, event.t_eos, t_asr_done)
             self._pending.pop(user_id, None)  # same user replaces; order = arrival
             self._pending[user_id] = entry
@@ -392,13 +395,11 @@ class TurnManager:
 
     # ---------------------------------------------------------------- filters
 
-    def _allowed(self, user_id: int) -> bool:
-        """Consent, plus the bot's own id even if ConsentState was built without it."""
-        return user_id != self._bot_user_id and self._consent.allowed(user_id)
+    def _is_speaker(self, user_id: int) -> bool:
+        """True for a human speaker; the bot's own id is never a speaker (self-hearing)."""
+        return user_id != self._bot_user_id
 
     def _accept(self, user_id: int, text: str, now: float) -> bool:
-        if not self._allowed(user_id):
-            return False
         if not text or is_noise_transcript(text):
             return False
         recently_spoke = self._last_spoke_at is not None and (
@@ -450,7 +451,7 @@ class TurnManager:
         await self._clock.sleep(delay)
         if self._closed or self._barge_candidates.get(user_id) != t_start:
             return  # the user stopped (or a newer onset replaced this one)
-        if not self._can_barge_in() or not self._allowed(user_id):
+        if not self._can_barge_in() or not self._is_speaker(user_id):
             return
         if self._barge_remaining(t_start) > _EPS:
             return
@@ -512,7 +513,7 @@ class TurnManager:
         # Let every in-flight ASR finish so near-simultaneous speakers merge.
         while self._asr_inflight:
             await self._asr_settled.wait()
-        lines = [p for p in self._pending.values() if self._allowed(p.user_id)]
+        lines = list(self._pending.values())
         self._pending.clear()
         if not lines:
             return
@@ -614,11 +615,19 @@ class TurnManager:
                     self._queue_chunks(flow, flow.chunker.feed_chunks(delta))
         self._queue_chunks(flow, flow.chunker.finish_chunks())
 
+    def _note(self, who: str, text: str) -> None:
+        """Show text on a terminal (never a redirected file) and store it when enabled."""
+        if self._settings.privacy.show_text_in_console and sys.stderr.isatty():
+            print(f"{who}: {text}", file=sys.stderr, flush=True)
+        if self._transcripts is not None:
+            self._transcripts.write(who, text)
+
     def _queue_chunks(self, flow: _ReplyFlow, chunks: list[StreamChunk]) -> None:
         for chunk in chunks:
             if flow.t_first_chunk is None:
                 flow.t_first_chunk = self._clock()
             flow.spoken.append(chunk.text)
+            self._note("BOT", chunk.text)
             if self._bot_turn_added:
                 self._conversation.extend_bot(chunk.text)
             flow.chunk_q.put_nowait((chunk.text, chunk.sentence_index))

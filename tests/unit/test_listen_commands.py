@@ -32,12 +32,11 @@ USER_ID = 2
 class FakeSession:
     def __init__(self, app, bot, guild, channel) -> None:
         self.channel = channel
-        self.opted_in: set[int] = set()
         self.left: list[int] = []
         self.started = 0
         self.stops = 0
         self.fail_start = False
-        self.events: list[str] = []
+        self.state = "IDLE"
 
     @property
     def channel_id(self) -> int:
@@ -51,19 +50,11 @@ class FakeSession:
     async def stop(self) -> None:
         self.stops += 1
 
-    def opt_in(self, user_id: int) -> None:
-        self.opted_in.add(user_id)
-
-    def opt_out(self, user_id: int) -> None:
-        self.opted_in.discard(user_id)
-        self.events.append(f"opt_out:{user_id}")
-
     def on_member_left(self, user_id: int) -> None:
         self.left.append(user_id)
-        self.opt_out(user_id)
 
     def status(self) -> str:
-        return f"listening in {self.channel_id}"
+        return f"Listening in {self.channel.name}. State: {self.state}."
 
 
 class FakeRegistry:
@@ -87,7 +78,7 @@ class FakeRegistry:
 
 
 def _channel(channel_id: int = CHANNEL_ID, members=()):
-    return SimpleNamespace(id=channel_id, members=list(members))
+    return SimpleNamespace(id=channel_id, name=f"channel-{channel_id}", members=list(members))
 
 
 def _member(user_id: int, channel=None, *, admin=False, bot=False):
@@ -270,62 +261,15 @@ def test_stop_requires_operator() -> None:
     assert bot.listen_sessions.active(GUILD_ID)
 
 
-# --------------------------------------------------------------- on / off
+# --------------------------------------------------------------- status
 
 
-def test_on_from_inside_the_channel_opts_in() -> None:
-    bot = make_bot()
-    session, _ = start_session(bot)
-    run(bot, ("listen", "on"), Ctx(_member(USER_ID, _channel()), _guild()))
-    assert session.opted_in == {USER_ID}
-
-
-def test_on_from_another_channel_or_no_voice_is_refused() -> None:
-    bot = make_bot()
-    session, _ = start_session(bot)
-    run(bot, ("listen", "on"), Ctx(_member(USER_ID, _channel(OTHER_CHANNEL_ID)), _guild()))
-    run(bot, ("listen", "on"), Ctx(_member(USER_ID), _guild()))
-    assert session.opted_in == set()
-
-
-def test_on_without_session_is_refused() -> None:
-    bot = make_bot()
-    ctx = Ctx(_member(USER_ID, _channel()), _guild())
-    run(bot, ("listen", "on"), ctx)
-    assert "not on" in ctx.sent[0]
-
-
-def test_off_clears_synchronously_before_replying() -> None:
-    bot = make_bot()
-    session, _ = start_session(bot)
-    session.opt_in(USER_ID)
-    ctx = Ctx(_member(USER_ID, _channel()), _guild())
-    original_send = ctx.send
-
-    async def checking_send(text: str = "") -> None:
-        assert session.events == [f"opt_out:{USER_ID}"]  # cleared before the reply
-        await original_send(text)
-
-    ctx.send = checking_send
-    run(bot, ("listen", "off"), ctx)
-    assert session.opted_in == set()
-    assert ctx.sent
-
-
-def test_off_works_from_outside_the_channel() -> None:
-    bot = make_bot()
-    session, _ = start_session(bot)
-    session.opt_in(USER_ID)
-    run(bot, ("listen", "off"), Ctx(_member(USER_ID), _guild()))
-    assert session.opted_in == set()
-
-
-def test_status_shows_session_text_only() -> None:
+def test_status_forwards_the_session_status_text_only() -> None:
     bot = make_bot()
     start_session(bot)
     ctx = Ctx(_member(USER_ID), _guild())
     run(bot, ("listen", "status"), ctx)
-    assert ctx.sent == [f"listening in {CHANNEL_ID}"]
+    assert ctx.sent == [f"Listening in channel-{CHANNEL_ID}. State: IDLE."]
     idle = make_bot()
     ctx = Ctx(_member(USER_ID), _guild())
     run(idle, ("listen", "status"), ctx)
@@ -412,7 +356,7 @@ def test_other_channels_and_mute_toggles_are_ignored() -> None:
     fake, stops = hook_bot(session)
     voice_update(fake, _hook_member(5), _channel(OTHER_CHANNEL_ID), None)
     voice_update(fake, _hook_member(5), _channel(), _channel())  # mute toggle
-    voice_update(fake, _hook_member(5), None, _channel())  # joining never opts in
+    voice_update(fake, _hook_member(5), None, _channel())  # joining never clears anything
     assert session.left == []
     assert stops == []
 

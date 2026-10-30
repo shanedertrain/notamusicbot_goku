@@ -1,13 +1,11 @@
-"""Listen-mode domain models: captured audio, utterance events, transcripts,
-per-turn metrics and the per-session consent set.
+"""Listen-mode domain models: captured audio, utterance events, transcripts
+and per-turn metrics.
 
 User audio stays in memory: :class:`AudioChunk` carries samples, never a path.
 """
 
 from __future__ import annotations
 
-import threading
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -79,69 +77,3 @@ class ListenTurnMetrics:
     llm_to_tts1_s: float = 0.0
     tts1_to_audio_s: float = 0.0
     total_s: float = 0.0
-
-
-class ConsentState:
-    """Thread-safe set of users who opted in for this listen session.
-
-    Read on the receive thread (:meth:`allowed`, per packet) and written from
-    the event loop (commands, member leave). ``bot_user_id`` and ``None`` are
-    never allowed. Clear hooks run synchronously on opt-out and :meth:`clear`,
-    after the user is already removed (so no new audio is admitted) and
-    outside the lock (so a hook may take its own buffer lock).
-    """
-
-    def __init__(self, bot_user_id: int | None = None) -> None:
-        self._bot_user_id = bot_user_id
-        self._lock = threading.Lock()
-        self._opted_in: set[int] = set()
-        self._clear_hooks: list[Callable[[int], None]] = []
-
-    def add_clear_hook(self, hook: Callable[[int], None]) -> None:
-        """Register ``hook(user_id)``, called when a user's audio must be dropped."""
-        with self._lock:
-            self._clear_hooks.append(hook)
-
-    def opt_in(self, user_id: int) -> bool:
-        """Opt ``user_id`` in. Returns False for the bot itself."""
-        if user_id == self._bot_user_id:
-            return False
-        with self._lock:
-            self._opted_in.add(user_id)
-        return True
-
-    def opt_out(self, user_id: int) -> bool:
-        """Opt ``user_id`` out and run the clear hooks before returning.
-
-        Returns whether the user had been opted in. Hooks run either way, so
-        a stray buffer can never outlive an explicit ``off``.
-        """
-        with self._lock:
-            was_in = user_id in self._opted_in
-            self._opted_in.discard(user_id)
-            hooks = list(self._clear_hooks)
-        for hook in hooks:
-            hook(user_id)
-        return was_in
-
-    def allowed(self, user_id: int | None) -> bool:
-        """True only for an opted-in user who is not the bot."""
-        if user_id is None or user_id == self._bot_user_id:
-            return False
-        with self._lock:
-            return user_id in self._opted_in
-
-    def opted_in(self) -> frozenset[int]:
-        """Snapshot of the opted-in user ids."""
-        with self._lock:
-            return frozenset(self._opted_in)
-
-    def clear(self) -> None:
-        """Opt everyone out (session stop) and run the hooks for each user."""
-        with self._lock:
-            users = sorted(self._opted_in)
-            self._opted_in.clear()
-            hooks = list(self._clear_hooks)
-        for user_id in users:
-            for hook in hooks:
-                hook(user_id)

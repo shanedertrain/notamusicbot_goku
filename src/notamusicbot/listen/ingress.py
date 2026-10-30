@@ -1,16 +1,13 @@
-"""Consent-filtered voice ingress: the only place user audio is decoded.
+"""Voice ingress: the only place user audio is decoded.
 
 ``accept_packet`` is called from the receive library's reader thread. It drops
-``None``, the bot's own id and every user who has not opted in BEFORE opus
-decode, then downmixes 48 kHz stereo int16 to 16 kHz mono float32 and appends
-it to a bounded per-user ring. Audio stays in memory; nothing here touches disk.
+``None`` and the bot's own id (self-hearing) BEFORE opus decode, then downmixes
+48 kHz stereo int16 to 16 kHz mono float32 and appends it to a bounded per-user
+ring. Audio stays in memory; nothing here touches disk.
 
-Consent is re-checked under the per-user buffer lock at append time. Together
-with :meth:`ConsentState.opt_out` removing the user before it runs the clear
-hooks, that closes the race where a packet passed the first ``allowed`` check
-just before ``opt_out`` and appended after the clear hook: once ``opt_out``
-returns, a late packet either sees the user as not allowed (dropped) or
-appended before the hook's clear (cleared).
+The endpointer polls :meth:`ListenIngress.known_user_ids`; users the session
+forgets here (a member leaving the channel) are discarded downstream as well,
+so no buffered audio outlives their stay.
 
 This module imports no discord; the opus decoder is injected.
 """
@@ -24,7 +21,7 @@ from typing import Protocol
 
 import numpy as np
 
-from notamusicbot.domain.listen import LISTEN_SAMPLE_RATE_HZ, ConsentState
+from notamusicbot.domain.listen import LISTEN_SAMPLE_RATE_HZ
 
 # Discord delivers 48 kHz stereo; 48 kHz -> 16 kHz is an exact factor of 3.
 _SOURCE_CHANNELS = 2
@@ -60,34 +57,31 @@ class _UserBuffer:
 
 
 class ListenIngress:
-    """Thread-safe consent filter, decoder and per-user 16 kHz ring buffer."""
+    """Thread-safe decoder and per-user 16 kHz ring buffer."""
 
     def __init__(
         self,
-        consent: ConsentState,
         bot_user_id: int,
         decoder_factory: Callable[[], OpusDecoder],
         ring_buffer_s: float,
         on_pcm: Callable[[int, np.ndarray], None] | None = None,
     ) -> None:
-        self._consent = consent
         self._bot_user_id = bot_user_id
         self._decoder_factory = decoder_factory
         self._max_samples = int(ring_buffer_s * LISTEN_SAMPLE_RATE_HZ)
         self._on_pcm = on_pcm
         self._users_lock = threading.Lock()
         self._users: dict[int, _UserBuffer] = {}
-        consent.add_clear_hook(self._clear_user)
 
     def accept_packet(self, user_id: int | None, opus: bytes) -> None:
         """Filter, decode and buffer one packet. Safe from any thread; never raises.
+
+        Only ``None`` and the bot's own id are dropped (self-hearing).
 
         ``on_pcm(user_id, samples)`` runs on the calling thread under the
         user's buffer lock, so it must be quick and must not block.
         """
         if user_id is None or user_id == self._bot_user_id:
-            return
-        if not self._consent.allowed(user_id):
             return
         buf = self._buffer(user_id)
         with buf.lock:
@@ -98,9 +92,6 @@ class ListenIngress:
             except Exception:  # corrupt packet: drop it; no per-packet logging
                 return
             samples = self._to_16k_mono(buf, pcm)
-            # Re-check consent now that no clear hook can interleave with the append.
-            if not self._consent.allowed(user_id):
-                return
             if len(samples) == 0:
                 return
             buf.chunks.append(samples)
@@ -108,6 +99,11 @@ class ListenIngress:
             self._trim(buf)
             if self._on_pcm is not None:
                 self._on_pcm(user_id, samples)
+
+    def known_user_ids(self) -> frozenset[int]:
+        """Snapshot of the user ids that currently have a buffer here."""
+        with self._users_lock:
+            return frozenset(self._users)
 
     def pending_samples(self, user_id: int) -> int:
         """Number of buffered 16 kHz samples for ``user_id``."""
@@ -134,13 +130,6 @@ class ListenIngress:
         """Forget ``user_id`` entirely: buffer, decoder and resample state."""
         with self._users_lock:
             buf = self._users.pop(user_id, None)
-        if buf is not None:
-            with buf.lock:
-                buf.clear()
-
-    def _clear_user(self, user_id: int) -> None:
-        """Consent clear hook: empty the buffer (the state object stays)."""
-        buf = self._peek(user_id)
         if buf is not None:
             with buf.lock:
                 buf.clear()

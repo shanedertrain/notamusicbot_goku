@@ -7,7 +7,7 @@ import re
 
 import numpy as np
 import pytest
-from _listen_turn_fakes import make_rig, spin, utterance
+from _listen_turn_fakes import BOT_ID, make_rig, spin, utterance
 
 from conftest import FakeClock, FakeVad
 from notamusicbot.config import ListenVadSettings
@@ -57,10 +57,10 @@ async def test_line_emitted_once_with_deltas(caplog: pytest.LogCaptureFixture) -
     assert "tell me something fun" not in caplog.text.split("listen asr timing")[1].split("\n")[0]
 
 
-async def test_not_emitted_for_non_consenting_user(caplog: pytest.LogCaptureFixture) -> None:
-    rig = make_rig(users=(1,))
+async def test_not_emitted_for_the_bot(caplog: pytest.LogCaptureFixture) -> None:
+    rig = make_rig()
     with caplog.at_level(logging.INFO, logger="notamusicbot.listen.turn_taking"):
-        await rig.manager.on_utterance(utterance(2))
+        await rig.manager.on_utterance(utterance(BOT_ID))
         await spin()
     assert _lines(caplog) == []
     assert rig.transcriber.calls == []

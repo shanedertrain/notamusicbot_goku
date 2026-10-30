@@ -24,11 +24,7 @@ from pathlib import Path
 import numpy as np
 
 from notamusicbot.config import ListenSettings
-from notamusicbot.domain.listen import (
-    ConsentState,
-    SpeechStarted,
-    UtteranceEvent,
-)
+from notamusicbot.domain.listen import SpeechStarted, UtteranceEvent
 from notamusicbot.domain.voice_profiles import VoiceProfile
 from notamusicbot.listen.conversation import Conversation
 from notamusicbot.listen.endpointer import Endpointer, EndpointerThread, ListenEvent
@@ -64,8 +60,8 @@ FakeTranscriber = _fakes.FakeTranscriber
 FakePacketSource = _fakes.FakePacketSource
 
 BOT_ID = 999
-OPTED_IN = 1
-STRANGER = 2
+HUMAN = 1
+OTHER_HUMAN = 2
 SAMPLE_RATE_48K = 48000
 PACKET_FRAMES = 960  # 20 ms at 48 kHz
 ASR_DELAY_S = 0.03
@@ -170,14 +166,10 @@ def _profile() -> VoiceProfile:
 class Harness:
     """The real chain with fakes at the edges; events are collected, not threaded."""
 
-    def __init__(self, tmp_path: Path, *, opted_in: tuple[int, ...] = (OPTED_IN,)) -> None:
+    def __init__(self, tmp_path: Path) -> None:
         self.settings = ListenSettings()
-        self.consent = ConsentState(bot_user_id=BOT_ID)
-        for user in opted_in:
-            self.consent.opt_in(user)
         self.decoded: list[bytes] = []
         self.ingress = ListenIngress(
-            self.consent,
             BOT_ID,
             lambda: PassThroughDecoder(self.decoded),
             self.settings.vad.ring_buffer_s,
@@ -192,7 +184,7 @@ class Harness:
             self.events.append(event)
 
         self.endpointer = Endpointer(EnergyVad(), self.settings.vad, self.clock, emit)
-        self.poller = EndpointerThread(self.ingress, self.endpointer, self.consent.opted_in)
+        self.poller = EndpointerThread(self.ingress, self.endpointer)
 
         out = tmp_path / "speech"
         pipeline = SpeechPipeline(FakeSynthesizer(seconds=0.4), FakeConverter(), output_dir=out)
@@ -204,7 +196,6 @@ class Harness:
         self.manager = TurnManager(
             self.settings,
             self.clock,
-            self.consent,
             self.transcriber,
             Conversation(self.settings.reply.history_turns),
             self.provider,
@@ -233,20 +224,20 @@ class Harness:
         await self.manager.wait_idle()
 
 
-async def test_opted_in_user_gets_exactly_one_reply_with_low_plumbing_overhead(
+async def test_human_voice_gets_exactly_one_reply_with_low_plumbing_overhead(
     tmp_path: Path,
 ) -> None:
     h = Harness(tmp_path)
     packets = speech_like_48k_stereo_packets()
 
-    assert h.feed_wav(OPTED_IN, packets) == len(packets)
+    assert h.feed_wav(HUMAN, packets) == len(packets)
     utterances = [e for e in h.events if isinstance(e, UtteranceEvent)]
     assert len([e for e in h.events if isinstance(e, SpeechStarted)]) == 1
     assert len(utterances) == 1
     # About one second of voice plus 300 ms pre-roll, 16 kHz mono float32.
     assert 0.9 < utterances[0].audio.duration_s < 1.6
     assert utterances[0].audio.sample_rate_hz == 16000
-    assert len(h.decoded) == len(packets)  # opted in: every packet was decoded
+    assert len(h.decoded) == len(packets)  # no opt-in gate: every packet was decoded
 
     await h.dispatch()
 
@@ -263,7 +254,7 @@ async def test_opted_in_user_gets_exactly_one_reply_with_low_plumbing_overhead(
     parsed = parse_turn_line(h.metrics[0])
     assert parsed is not None
     assert parsed["guild"] == "7"
-    assert parsed["user"] == str(OPTED_IN)
+    assert parsed["user"] == str(HUMAN)
     for key in ("eos->asr", "asr->llm", "llm->tts1", "tts1->audio"):
         assert key in parsed
     assert parsed["total"] is not None and parsed["total"] > 0.0
@@ -281,35 +272,34 @@ async def test_opted_in_user_gets_exactly_one_reply_with_low_plumbing_overhead(
     assert list((tmp_path / "speech").rglob("*.wav")) == []
 
 
-async def test_user_who_is_not_opted_in_is_never_decoded_or_transcribed(tmp_path: Path) -> None:
-    h = Harness(tmp_path, opted_in=(OPTED_IN,))
+async def test_any_human_in_the_channel_is_decoded_and_transcribed(tmp_path: Path) -> None:
+    """No opt-in any more: a second human is heard exactly like the first."""
+    h = Harness(tmp_path)
     packets = speech_like_48k_stereo_packets()
 
-    h.feed_wav(STRANGER, packets)
+    h.feed_wav(OTHER_HUMAN, packets)
+    utterances = [e for e in h.events if isinstance(e, UtteranceEvent)]
+    assert len(utterances) == 1 and utterances[0].user_id == OTHER_HUMAN
+    assert len(h.decoded) == len(packets)
+    await h.dispatch()
+
+    assert len(h.transcriber.calls) == 1
+    assert len(h.provider.calls) == 1
+    assert len(h.player.plays) == 1
+
+
+async def test_bot_audio_is_never_decoded_transcribed_or_answered(tmp_path: Path) -> None:
+    h = Harness(tmp_path)
+    packets = speech_like_48k_stereo_packets()
+
+    h.feed_wav(BOT_ID, packets)
     await h.dispatch()
 
     assert h.decoded == []  # dropped before decode
-    assert h.ingress.pending_samples(STRANGER) == 0
+    assert h.ingress.pending_samples(BOT_ID) == 0
+    assert h.ingress.known_user_ids() == frozenset()
     assert h.events == []  # no VAD, no utterance
-    assert len(h.transcriber.calls) == 0  # ZERO transcribe calls
+    assert len(h.transcriber.calls) == 0
     assert h.provider.calls == []
     assert h.player.plays == []
     assert h.metrics == []
-
-
-async def test_stranger_utterance_handed_straight_to_manager_is_not_transcribed(
-    tmp_path: Path,
-) -> None:
-    """Belt and braces: even an event that reaches the manager is checked before ASR."""
-    h = Harness(tmp_path, opted_in=(OPTED_IN,))
-    h.feed_wav(OPTED_IN, speech_like_48k_stereo_packets())
-    event = next(e for e in h.events if isinstance(e, UtteranceEvent))
-    forged = UtteranceEvent(
-        user_id=STRANGER, audio=event.audio, t_start=event.t_start, t_eos=event.t_eos
-    )
-
-    await h.manager.on_utterance(forged)
-    await h.manager.wait_idle()
-
-    assert len(h.transcriber.calls) == 0
-    assert h.player.plays == []

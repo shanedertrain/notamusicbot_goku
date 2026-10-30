@@ -8,9 +8,9 @@ once DAVE is on, or only transport-decrypted frames that still need
 Privacy, by construction:
   * Nothing is written to disk and no transcription runs. Only counters and
     a level (dBFS) per user are kept, in memory, and printed at the end.
-  * On join the bot posts a notice in the channel's chat. Only users who react
-    with the check mark (or are passed by ``--consent-ids``) are analysed.
-    Every other user's packets are dropped BEFORE DAVE decrypt and opus decode.
+  * On join the bot posts a notice in the channel's chat. Everyone in the
+    channel is analysed; only packets with no source and the bot's own id are
+    dropped BEFORE DAVE decrypt and opus decode.
   * It never speaks. It leaves after ``--seconds``.
 
     .venv-main/bin/python tools/listen_p0a_spike.py --channel-id 123 --seconds 60
@@ -33,7 +33,6 @@ from discord.opus import Decoder as OpusDecoder
 
 from notamusicbot.config import SecretsSettings
 
-CONSENT_EMOJI = "✅"
 # An opus silence frame (what clients send between talk spurts).
 _OPUS_SILENCE = b"\xf8\xff\xfe"
 
@@ -54,12 +53,11 @@ class UserStats:
 
 
 class Spike(voice_recv.AudioSink):
-    def __init__(self, client: voice_recv.VoiceRecvClient, consented: set[int]) -> None:
+    def __init__(self, client: voice_recv.VoiceRecvClient) -> None:
         super().__init__()
         self._client = client
-        self.consented = consented
         self.stats: dict[int, UserStats] = {}
-        self.dropped_no_consent = 0
+        self.dropped_self = 0
         self.unknown_source = 0
         self.dave_versions: set[int] = set()
 
@@ -70,12 +68,12 @@ class Spike(voice_recv.AudioSink):
         return None
 
     def write(self, user: discord.abc.User | None, data: voice_recv.VoiceData) -> None:
-        # Reader thread. Consent check first: no decrypt, no decode for others.
+        # Reader thread. Drop only a packet with no source and the bot's own id.
         if user is None:
             self.unknown_source += 1
             return
-        if user.id not in self.consented or user.id == self._client.user.id:
-            self.dropped_no_consent += 1
+        if user.id == self._client.user.id:
+            self.dropped_self += 1
             return
         st = self.stats.setdefault(user.id, UserStats(name=user.display_name))
         st.packets += 1
@@ -115,7 +113,7 @@ class Spike(voice_recv.AudioSink):
 
 def verdict(sink: Spike) -> str:
     if not sink.stats:
-        return "NO DATA: nobody opted in and spoke, or no packets arrived"
+        return "NO DATA: nobody spoke, or no packets arrived"
     ok = sum(s.opus_ok for s in sink.stats.values())
     dave_fail = sum(s.dave_fail for s in sink.stats.values())
     opus_fail = sum(s.opus_fail for s in sink.stats.values())
@@ -142,30 +140,9 @@ async def run(args: argparse.Namespace) -> int:
     intents = discord.Intents.default()
     intents.members = True
     intents.voice_states = True
-    intents.guild_reactions = True
     client = discord.Client(intents=intents)
     done = asyncio.Event()
     result = {"code": 1}
-
-    consented: set[int] = set(args.consent_ids or [])
-    notice_ids: set[int] = set()
-
-    @client.event
-    async def on_raw_reaction_add(payload: discord.RawReactionActionEvent) -> None:
-        if payload.message_id in notice_ids and str(payload.emoji) == CONSENT_EMOJI:
-            if payload.user_id != client.user.id:
-                consented.add(payload.user_id)
-
-    @client.event
-    async def on_raw_reaction_remove(payload: discord.RawReactionActionEvent) -> None:
-        if payload.message_id in notice_ids and str(payload.emoji) == CONSENT_EMOJI:
-            consented.discard(payload.user_id)
-
-    @client.event
-    async def on_voice_state_update(member, before, after) -> None:  # noqa: ANN001
-        # Leaving the channel withdraws consent at once.
-        if before.channel and before.channel != after.channel:
-            consented.discard(member.id)
 
     @client.event
     async def on_ready() -> None:
@@ -176,29 +153,24 @@ async def run(args: argparse.Namespace) -> int:
                 return
             humans = [m.display_name for m in channel.members if not m.bot]
             print(f"channel: {channel.guild.name} / {channel.name}; people present: {humans}")
-            if args.consent_present:
-                # Owner vouches that everyone present has agreed (relayed, not per-user).
-                consented.update(m.id for m in channel.members if not m.bot)
             vc = await channel.connect(cls=voice_recv.VoiceRecvClient, timeout=30)
             notice = await channel.send(
                 f"Audio test (Goku bot). For the next {args.seconds} s I will check that I can "
                 f"receive voice here. Nothing is recorded, saved or transcribed, and I will not "
-                f"speak. React {CONSENT_EMOJI} to this message if you are happy to be included; "
-                f"anyone who does not react is ignored, and leaving the channel withdraws it."
+                f"speak. Everyone in this channel is included; leaving the channel stops your "
+                f"audio."
             )
-            await notice.add_reaction(CONSENT_EMOJI)
-            notice_ids.add(notice.id)
-            sink = Spike(vc, consented)
+            sink = Spike(vc)
             vc.listen(sink)
-            print(f"listening for {args.seconds} s; opted in so far: {sorted(consented)}")
+            print(f"listening for {args.seconds} s; analysing everyone in the channel")
             await asyncio.sleep(args.seconds)
             vc.stop_listening()
 
             print("\n== P0a result ==")
             print(f"dave protocol versions seen: {sorted(sink.dave_versions)}")
             print(
-                f"opted-in users: {len(sink.stats)}; "
-                f"dropped (no consent): {sink.dropped_no_consent}; "
+                f"analysed users: {len(sink.stats)}; "
+                f"dropped (self): {sink.dropped_self}; "
                 f"unmapped source: {sink.unknown_source}"
             )
             by = defaultdict(dict)
@@ -238,12 +210,6 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--channel-id", type=int, required=True)
     ap.add_argument("--seconds", type=int, default=60)
-    ap.add_argument(
-        "--consent-present",
-        action="store_true",
-        help="opt in everyone in the channel at join (owner confirms they agreed)",
-    )
-    ap.add_argument("--consent-ids", type=int, nargs="*", help="user ids opted in up front")
     return asyncio.run(run(ap.parse_args()))
 
 

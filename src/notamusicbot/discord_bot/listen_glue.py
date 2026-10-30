@@ -5,11 +5,11 @@ One :class:`ListenSession` per guild joins a voice channel with a
 sink -> ``ListenIngress`` -> ``Endpointer`` -> ``TurnManager`` -> reply
 synthesis -> the same voice client's playback. Nothing here decides policy that
 the listen modules already enforce; it only connects them and keeps the
-consent rules at the Discord boundary:
+self-hearing filter at the Discord boundary:
 
-* The sink drops ``None``, the bot and every user who has not opted in BEFORE
-  the DAVE decrypt (and ``ListenIngress`` drops them again before opus decode).
-* A member leaving the channel is opted out, never just forgotten.
+* The sink drops ``None`` and the bot's own id BEFORE the DAVE decrypt (and
+  ``ListenIngress`` drops them again before opus decode).
+* A member leaving the channel has their buffered audio cleared at once.
 * No audio or transcript touches disk; history lives in the in-memory
   ``Conversation`` and is cleared on stop.
 
@@ -28,18 +28,20 @@ import threading
 import time
 from collections.abc import AsyncIterator, Coroutine
 from contextlib import aclosing
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import davey
 import discord
 from discord.ext import voice_recv
 
-from notamusicbot.domain.listen import ConsentState, UtteranceEvent
+from notamusicbot.domain.listen import UtteranceEvent
 from notamusicbot.listen.conversation import Conversation
 from notamusicbot.listen.endpointer import Endpointer, EndpointerThread, ListenEvent
 from notamusicbot.listen.ingress import ListenIngress
 from notamusicbot.listen.offline import enforce_offline_models
 from notamusicbot.listen.reply import BackchannelCache, ReplySynthesizer, warm_voice_converter
+from notamusicbot.listen.transcript_store import TranscriptStore
 from notamusicbot.listen.turn_taking import MonotonicClock, TurnManager
 from notamusicbot.speech.asr.factory import build_transcriber
 from notamusicbot.speech.vad.energy import EnergyVad
@@ -83,17 +85,15 @@ def dave_decrypt(
 
 
 class ListenDaveSink(voice_recv.AudioSink):
-    """Reader-thread sink: consent filter, DAVE decrypt, then the ingress."""
+    """Reader-thread sink: self filter, DAVE decrypt, then the ingress."""
 
     def __init__(
         self,
-        consent: ConsentState,
         ingress: ListenIngress,
         bot_user_id: int,
         get_connection: Any,
     ) -> None:
         super().__init__()
-        self._consent = consent
         self._ingress = ingress
         self._bot_user_id = bot_user_id
         self._get_connection = get_connection
@@ -106,8 +106,8 @@ class ListenDaveSink(voice_recv.AudioSink):
         return None
 
     def write(self, user: Any, data: Any) -> None:
-        # Consent first: no DAVE decrypt (and no decode) for anyone else.
-        if user is None or user.id == self._bot_user_id or not self._consent.allowed(user.id):
+        # Drop only None and the bot's own id: no DAVE decrypt (and no decode) for them.
+        if user is None or user.id == self._bot_user_id:
             return
         opus = data.opus
         if not opus:
@@ -323,7 +323,6 @@ class ListenSession:
         self._channel = channel
         self._started = False
         self._stopped = False
-        self._consent: ConsentState | None = None
         self._conversation: Conversation | None = None
         self._ingress: ListenIngress | None = None
         self._endpointer: Endpointer | None = None
@@ -395,20 +394,16 @@ class ListenSession:
 
         self._vc = await self._channel.connect(cls=voice_recv.VoiceRecvClient, timeout=30.0)
         bot_id = self._bot.user.id
-        self._consent = consent = ConsentState(bot_user_id=bot_id)
         self._conversation = Conversation(reply.history_turns)
-        self._ingress = ListenIngress(consent, bot_id, _new_opus_decoder, listen.vad.ring_buffer_s)
+        self._ingress = ListenIngress(bot_id, _new_opus_decoder, listen.vad.ring_buffer_s)
         vad = SileroVad if listen.vad.backend == "silero" else EnergyVad
         self._endpointer = Endpointer(vad, listen.vad, time.monotonic, self._on_event)
         self._poller = EndpointerThread(
-            self._ingress, self._endpointer, consent.opted_in, ENDPOINT_POLL_INTERVAL_S
+            self._ingress, self._endpointer, ENDPOINT_POLL_INTERVAL_S
         )
-        # Opt-out also forgets the user's half-finished utterance, synchronously.
-        consent.add_clear_hook(self._endpointer.discard)
         self._turns = TurnManager(
             listen,
             MonotonicClock(),
-            consent,
             self._transcriber,
             self._conversation,
             app.listen_content_provider,  # type: ignore[arg-type]
@@ -421,16 +416,32 @@ class ListenSession:
             persona_description=profile.persona.description,
             system_prompt=profile.persona.chat_prompt,
             name_resolver=self._display_name,
+            transcript_store=self._open_transcript_store(),
         )
         self._sink = ListenDaveSink(
-            consent, self._ingress, bot_id, lambda: getattr(self._vc, "_connection", None)
+            self._ingress, bot_id, lambda: getattr(self._vc, "_connection", None)
         )
         self._vc.listen(self._sink)
         self._loop_task = asyncio.get_running_loop().create_task(self._endpoint_loop())
 
-        await self._post_notice(listen.announcement_text)
+        notice = self._notice_text()
+        await self._post_notice(notice)
         if listen.announce_on_join:
-            await self._announce(synth, listen.announcement_text)
+            await self._announce(synth, notice)
+
+    def _notice_text(self) -> str:
+        listen = self._app.settings.listen
+        if listen.privacy.store_transcripts:
+            return listen.announcement_text_stored.format(
+                days=listen.privacy.transcript_retention_days
+            )
+        return listen.announcement_text
+
+    def _open_transcript_store(self) -> TranscriptStore | None:
+        privacy = self._app.settings.listen.privacy
+        if not privacy.store_transcripts:
+            return None
+        return TranscriptStore(Path(privacy.transcript_dir), privacy.transcript_retention_days)
 
     async def _post_notice(self, text: str) -> None:
         try:
@@ -487,25 +498,23 @@ class ListenSession:
         except Exception:
             logger.exception("listen turn handler failed")
 
-    # --------------------------------------------------------------- consent
-
-    def opt_in(self, user_id: int) -> None:
-        if self._consent is not None and not self._stopped:
-            self._consent.opt_in(user_id)
-
-    def opt_out(self, user_id: int) -> None:
-        """Opt out and clear the user's buffer and pending utterance before returning."""
-        if self._consent is not None:
-            self._consent.opt_out(user_id)
+    # ----------------------------------------------------------- member leave
 
     def on_member_left(self, user_id: int) -> None:
-        """A member left the channel. Call on the event loop (e.g. from on_voice_state_update)."""
-        self.opt_out(user_id)
+        """A member left the channel: drop their buffer and pending utterance.
+
+        Call on the event loop (e.g. from on_voice_state_update). No-op before
+        the pipeline exists or once the session has stopped.
+        """
+        if self._stopped or self._ingress is None or self._endpointer is None:
+            return
+        self._ingress.remove_user(user_id)
+        self._endpointer.discard(user_id)
 
     def handle_voice_state_update(
         self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState
     ) -> None:
-        """Voice-state hook for the bot: leaving opts out, the bot losing the channel stops."""
+        """Voice-state hook: a member leaving clears buffers; the bot losing the channel stops."""
         left = before.channel is not None and before.channel.id == self._channel.id
         if not left or (after.channel is not None and after.channel.id == self._channel.id):
             return
@@ -522,9 +531,6 @@ class ListenSession:
         if self._stopped:
             return
         self._stopped = True
-        # Consent goes first: no new audio is admitted while the rest unwinds.
-        if self._consent is not None:
-            self._consent.clear()
         if self._vc is not None:
             with contextlib.suppress(Exception):
                 self._vc.stop_listening()
@@ -555,13 +561,11 @@ class ListenSession:
     # ---------------------------------------------------------------- status
 
     def status(self) -> str:
-        """Channel, opted-in display names and turn state. Never transcripts."""
-        ids = sorted(self._consent.opted_in()) if self._consent is not None else []
-        names = ", ".join(self._display_name(i) for i in ids) or "nobody"
+        """Channel and turn state. Never transcripts."""
         state = self._turns.state.name if self._turns is not None else "STOPPED"
         if self._stopped:
             state = "STOPPED"
-        return f"Listening in {self._channel.name}. Opted in: {names}. State: {state}."
+        return f"Listening in {self._channel.name}. State: {state}."
 
 
 class ListenSessionRegistry:

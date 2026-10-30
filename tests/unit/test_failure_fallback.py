@@ -6,7 +6,6 @@ import asyncio
 from pathlib import Path
 
 from conftest import FailingSynthesizer, FakeConverter, FakeSynthesizer
-
 from notamusicbot.domain.speech import TtsRequest, VoiceConversionProfile
 from notamusicbot.speech.pipeline import SpeechPipeline
 

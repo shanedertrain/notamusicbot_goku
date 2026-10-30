@@ -4,6 +4,8 @@ Written 2026-10-25 by a Fable planning agent (read-only) from the code in this r
 Execution model after approval: an Opus orchestrator dispatches Sonnet builders per task, reviews the diffs, merges.
 Paths below are relative to this repo unless absolute. Branch `listen` from `rework/qwen3-tts` (HEAD `b0022fa`).
 
+> **2026-10-30 update — the opt-in consent system was removed** on owner instruction. Listen mode no longer has per-user opt-in: every human in the session channel is decoded and transcribed, and only `None` and the bot's own id are dropped (self-hearing, before opus decode). `ConsentState`, `!glisten on`/`!glisten off`, the opt-out clear hooks and `privacy.persist_opt_ins` are gone; the endpointer polls `ListenIngress.known_user_ids()`, and a member leaving only has their buffers and half-finished utterance dropped. Section 6 and the task table below reflect the current state. The review and measurement paragraphs further down (for example "**Consent: holds**") are dated records of the reviews that were actually run at the time and are preserved as history.
+
 ## 0. What the code says vs. what we assumed
 
 | Assumption | Reality | Consequence |
@@ -35,8 +37,8 @@ Recommendation: build A first, build B's provider as an optional task, and make 
 ```
 Discord UDP -> receive library (SSRC->user, transport decrypt, DAVE decrypt)   [reader thread]
    | opus packets + user id
-ListenIngress: consent filter (user in opted_in and != bot)                    [reader thread]
-   | decode ONLY consenting users; downmix + resample to 16 kHz mono
+ListenIngress: drop None and the bot's own id (self-hearing)                  [reader thread]
+   | decode every human in the channel; downmix + resample to 16 kHz mono
    | per-user bounded ring (<= 30 s)
 VadWorker: silero ONNX (CPU) or energy VAD; endpointing; pre-roll              [1 CPU thread]
    | UtteranceEvent(user_id, pcm16k, t_start, t_eos) via call_soon_threadsafe
@@ -61,7 +63,7 @@ Threading rules:
 ```
 src/notamusicbot/
   config.py                     + ListenSettings (Vad/Asr/Reply/Llm/Privacy), AppSettings.listen
-  domain/listen.py              AudioChunk, UtteranceEvent, SpeechStarted, Transcript, ListenTurnMetrics, ConsentState
+  domain/listen.py              AudioChunk, UtteranceEvent, SpeechStarted, Transcript, ListenTurnMetrics
   speech/asr/base.py            Transcriber protocol
   speech/asr/whisper_hf.py      Path A
   speech/asr/qwen_worker.py     Path B (subprocess JSON IPC, mirrors voice_conversion/rvc.py)
@@ -137,29 +139,28 @@ States per guild: `IDLE`, `LISTENING(user)`, `THINKING(user)`, `SPEAKING(reply_i
 - **Endpointing (per user):** speech starts after at least 250 ms above threshold; 300 ms pre-roll; ends after 600 ms silence or the 15 s cap; emits `UtteranceEvent` and a `SpeechStarted` at onset.
 - **Addressing:** `respond_to: all | wake_word`. With `wake_word`, reply only if the transcript contains it or the bot spoke within `follow_up_window_s` (8 s).
 - **Multiple speakers:** one reply pipeline per guild. An utterance during THINKING replaces the pending slot (depth 1); from a different user it is merged as `"<name A>: ...\n<name B>: ..."`.
-- **Barge-in:** sustained speech (at least 400 ms) from an **opted-in** user while SPEAKING stops playback, cancels the reply task, marks history `"[interrupted after sentence k]"`, goes to LISTENING. Not triggered in the backchannel clip's first 300 ms.
+- **Barge-in:** sustained speech (at least 400 ms) from a user who is not the bot while SPEAKING stops playback, cancels the reply task, marks history `"[interrupted after sentence k]"`, goes to LISTENING. Not triggered in the backchannel clip's first 300 ms.
 - **Self-hearing:** (a) drop `user_id == bot.user.id`; (b) while SPEAKING raise the VAD threshold by 0.15 and the min speech to 400 ms; (c) echo-text guard: drop a transcript if its `difflib` ratio against the bot's last sentence exceeds 0.6 or it is a substring; (d) drop empty or under-2-word transcripts and the Whisper hallucinations `""`, `"."`, `"Thank you."`, `"Thanks for watching."`.
 - **Limits:** per-user cooldown 2 s; at most 12 replies per minute per guild; LLM timeout 20 s drops the turn; ASR timeout 10 s.
 - **Transcripts:** in-memory rolling history (8 turns), cleared on `!glisten stop`, session end or disconnect. Never written to disk. DEBUG logging only if `log_transcripts: true`.
 
-## 6. Consent and config
+## 6. Commands and config
 
 Commands (prefix `!g`; register as `listen`, mind the double-prefix trap in `tests/integration/test_command_registration.py`):
 
 | Command | Who | Effect |
 |---|---|---|
 | `!glisten start` | operator (`operator_user_ids`, else guild admins) | Requires the operator's voice channel in `allowed_channel_ids` (empty list refuses). Connects the recv client, plays the pre-rendered announcement, posts a text notice |
-| `!glisten on` / `off` | each user | Opt in or out for the session. `off` clears that user's buffer and pending utterance synchronously before replying |
 | `!glisten stop` | operator | Stops the session, clears buffers and history, disconnects |
-| `!glisten status` | anyone | Channel, opted-in users, state |
+| `!glisten status` | anyone | Channel, state |
 
-A user leaving the channel is removed from `opted_in`; a user joining is not opted in. Music commands while listening reply "listen mode is on; `!glisten stop` first" (v1 mutual exclusion).
+A user leaving the channel has their buffers and half-finished utterance dropped; a user joining is heard automatically (there is no opt-in step). Music commands while listening reply "listen mode is on; `!glisten stop` first" (v1 mutual exclusion).
 
 **Hard invariants (orchestrator reviews these):**
-1. Packets from users not opted in, or equal to `bot.user.id`, are dropped **before opus decode**. No VAD, no ASR, no history for non-consenting users.
+1. Packets from `None` or `bot.user.id` are dropped **before opus decode**; every other user in the session channel is decoded, VAD'd and transcribed (no per-user permission state exists).
 2. User audio never touches disk. `AudioChunk` is in-memory; the Path B worker gets base64 PCM inside the JSON line, never a path.
 3. `listen.enabled: false` and `allowed_channel_ids: []` by default, so listen cannot start.
-4. Opt-ins are not persisted unless `persist_opt_ins: true`.
+4. No consent/approval state is persisted or carried between sessions; the only gate is the channel the session was started in.
 
 ```yaml
 listen:
@@ -168,7 +169,7 @@ listen:
   operator_user_ids: []            # empty => guild administrators only
   voice_profile: goku
   announce_on_join: true
-  announcement_text: "Heads up, I'm listening now. Only people who type listen on get transcribed, and nothing is saved."
+  announcement_text: "Heads up, I'm listening now. Everyone in this channel is transcribed, and nothing is saved."
   respond_to: all                  # all | wake_word
   wake_word: goku
   follow_up_window_s: 8.0
@@ -176,7 +177,7 @@ listen:
   asr: {backend: whisper_hf, model_id: openai/whisper-small.en, language: en, timeout_s: 10.0}   # whisper_hf | qwen_worker
   reply: {max_sentences: 2, max_new_tokens: 60, backchannel_enabled: true, backchannel_texts: ["Hm?", "Oh yeah?", "Let me think."], barge_in_min_speech_ms: 400, per_user_cooldown_s: 2.0, max_replies_per_minute: 12, history_turns: 8, llm_timeout_s: 20.0}
   llm: {provider: shared, base_url: "http://127.0.0.1:8000/v1", model: GLM-5.3-Flash-EXL3, reasoning_effort: low, timeout_s: 20.0}   # shared | openai_compat
-  privacy: {log_transcripts: false, persist_opt_ins: false}
+  privacy: {log_transcripts: false}
 ```
 
 Validators a test must check: `end_silence_ms >= min_speech_ms`, `max_sentences >= 1`, `respond_to in {all, wake_word}`, `llm.provider in {shared, openai_compat}`. `enabled` with an empty channel list loads, but `ListenCoordinator.start` refuses.
@@ -190,16 +191,16 @@ Legend: **[O]** orchestrator does it; **[S]** Sonnet builder; GPU / LIVE = needs
 | P0a | S, LIVE | Receive + DAVE spike, scratch script and separate venv | Section 2 PASS; log versions and per-packet stats; a human confirms audio. Parallel with P0b |
 | P0b | S, GPU | `tools/listen_bench_models.py`: one-sentence TTS+RVC timing x5; Whisper small.en and base.en on 3 clips; Qwen3-ASR if Path B; free VRAM with everything loaded | JSON `evidence/listen_models_benchmark.json`. **O reads the values** and fixes the A/B choice and budget |
 | P1 | O | Interfaces, `ListenSettings`, `domain/listen.py`, protocols, fakes in `conftest.py`, example yaml, `speech_features_enabled` | Unit suite green; `AppSettings().listen.enabled is False`; example yaml validates. Blocks the rest |
-| P2 | S | `listen/ingress.py`, `ConsentState` | Users `{A opted, B not, bot}` x 100 packets: decoder called exactly 100 times, all for A; `opt_out(A)` leaves `pending_samples(A) == 0`; ring caps at `ring_buffer_s*16000`; `user_id=None` dropped. **O reviews invariant 1** |
+| P2 | S | `listen/ingress.py`, `known_user_ids` | Users `{A, B, bot}` x 100 packets: decoder called exactly 200 times, all for A and B; `user_id=None` and the bot id never reach the decoder; `remove_user(A)` leaves `pending_samples(A) == 0`; ring caps at `ring_buffer_s*16000`. **O reviews invariant 1** |
 | P3 | S | Energy and silero VAD, `listen/endpointer.py` | 0.3 s silence / 1.0 s tone / 0.8 s silence gives one event with duration in [1.0, 1.35] s and audio length `(0.3+1.0)*16000 +/- 1 frame`; 20 s tone is cut at 15 s |
 | P4a | S | Whisper HF transcriber | Fake-model unit tests for normalization values; GPU test transcribes a fixture with non-empty text and `elapsed_s < 2.0`. **O reads GPU result** |
 | P4b | S, optional | Qwen3-ASR worker (`speech/asr/qwen_worker.py`, `legacy/asr_worker.py`) | Protocol test with a stdlib fake worker; GPU test with the real one. Do not touch `.venv`, `rvc_cli` or the RVC worker |
 | P5 | S | `listen/conversation.py`, `ContentKind.CHAT`, `build_chat_prompt` (additive only) | Echo guard true at ratio 0.7 and for identical text, false at 0.3; prompt has the speaker name and the last 2 turns only; reply trimmed to 2 sentences |
 | P5b | S, optional | `content/openai_compat.py` | `httpx.MockTransport`: normal reply; `content: null, finish_reason: length` raises `EmptyModelText`; timeout raises. Not wired into music commentary |
 | P6 | S | `listen/reply.py`: sentence synthesizer, `BackchannelCache`, announcement clip | Bytes length `== duration_s*48000*2*2 +/- 4`; artifact dir empty after; second call hits the cache (pipeline not called again) |
-| P7 | S | `listen/turn_taking.py` with `ReplyPlayerPort` | With fakes and `FakeClock`: one transcribe + one generate per utterance, backchannel before reply; barge-in at 0.5 s calls `player.stop()` once and cancels the task, history has `"[interrupted"`; two utterances during THINKING give one generate with both texts; 13 utterances in a minute give 12 replies; LLM timeout returns to IDLE; unknown user never barges in |
+| P7 | S | `listen/turn_taking.py` with `ReplyPlayerPort` | With fakes and `FakeClock`: one transcribe + one generate per utterance, backchannel before reply; barge-in at 0.5 s calls `player.stop()` once and cancels the task, history has `"[interrupted"`; two utterances during THINKING give one generate with both texts; 13 utterances in a minute give 12 replies; LLM timeout returns to IDLE; the bot never barges in |
 | P8 | S | `listen/metrics.py`, `tools/listen_bench.py` | Log line matches a regex with all five deltas; harness prints P50/P90 |
-| P9 | S, after P0a | `discord_bot/listen_glue.py`, `!glisten`, `bot.py`, `app.py` lifecycle | `"listen"` in command registration test; guard tests with a fake ctx; lifecycle tests: listen off means no ASR load, listen on loads ASR after the LLM and before RVC start. **O reviews consent enforcement and mutual exclusion** |
+| P9 | S, after P0a | `discord_bot/listen_glue.py`, `!glisten`, `bot.py`, `app.py` lifecycle | `"listen"` in command registration test; guard tests with a fake ctx; lifecycle tests: listen off means no ASR load, listen on loads ASR after the LLM and before RVC start. **O reviews the drop-before-decode rule and mutual exclusion** |
 | P10 | S | WAV harness: FakePacketSource through ingress, endpointer, TurnManager, ReplySynthesizer, FakeReplyPlayer | One reply PCM; plumbing overhead under 50 ms excluding fake sleeps; metrics line emitted; `--gpu` swaps in the real transcriber and pipeline |
 | P11 | O + human, GPU + LIVE | Live checklist below | Results recorded in `TEST_RESULTS.md` as PASS / FAIL / NOT RUN |
 | P12 | O | Squash per task onto `listen`; README, `DEPENDENCY_NOTES.md`, example yaml | n/a |
@@ -208,17 +209,17 @@ Order: P0a and P0b in parallel, then P1, then P2, P3, P4a, P4b, P5, P5b, P6, P8 
 
 ## 8. Test strategy
 
-- **Unit:** fakes beside `FakeSynthesizer`; `FakeClock` for all timing; every `TurnManager` transition pinned with exact counts; the ingress consent invariant pinned with exact decoder call counts; defaults pinned with exact values.
+- **Unit:** fakes beside `FakeSynthesizer`; `FakeClock` for all timing; every `TurnManager` transition pinned with exact counts; the ingress bot/`None` drop pinned with exact decoder call counts; defaults pinned with exact values.
 - **Integration without Discord:** the P10 harness, with a `--gpu` variant (markers `gpu`/`integration`, skipping cleanly when weights are absent).
 - **GPU evidence:** `evidence/listen_models_benchmark.json` (P0b) and `evidence/listen_turn_latency.json` (P10 `--gpu`, 10 turns, P50/P90 per stage).
 - **Live checklist** (private server, two humans, owner present):
   1. `!glisten start` outside an allowed channel is refused.
   2. Start in the allowed channel: announcement audible within 2 s, text notice posted.
-  3. Human B (not opted in) talks 20 s: no transcript at DEBUG, no reply, ingress counter for B is 0.
-  4. Human A `!glisten on` and talks: backchannel within 1 s, Goku reply within 9 s, metrics line present.
+  3. The bot's own voice is never transcribed: 20 s of bot speech triggers no self-reply (self-hearing guard).
+  4. Human A talks with no opt-in step: backchannel within 1 s, Goku reply within 9 s, metrics line present.
   5. A interrupts mid-reply: playback stops within 500 ms and the next reply references the interruption.
-  6. A and B both opted in and talk over each other: two transcripts, one merged reply.
-  7. `!glisten off` by A mid-sentence: nothing of that sentence is replied to.
+  6. A and B talk over each other: two transcripts, one merged reply.
+  7. A stops talking mid-sentence (or leaves the channel): the half-finished utterance is dropped, not replied to.
   8. `!gplay` during listen is refused.
   9. `!glisten stop`: bot disconnects, and `var/` has no user audio (`find var -newer <marker> -name '*.wav'` shows only bot clips).
   10. Ctrl+C during a reply: clean exit, RVC worker reaped, no orphan ASR worker.
@@ -230,9 +231,9 @@ Order: P0a and P0b in parallel, then P1, then P2, P3, P4a, P4b, P5, P5b, P6, P8 
 3. **VRAM.** ASR + LLM + TTS + RVC must stay under 14.5 GB steady. OOM in P0b stage 4 means Path B or a smaller ASR.
 4. **Coordinator head-of-line blocking** (ASR waits for TTS). If `eos→asr` P90 exceeds 3 s in P10 `--gpu`, add a dedicated ASR lease as a follow-up, not before.
 5. **Acoustic echo and self-trigger loops.** Mitigated in section 5. If loops persist, default to `respond_to: wake_word`.
-6. **Receive thread starvation.** Decode only consenting users; move resampling to the VAD thread if P10 shows more than 5 ms per packet.
+6. **Receive thread starvation.** Decode only users that are not the bot; move resampling to the VAD thread if P10 shows more than 5 ms per packet.
 7. **Environment drift.** Pin versions before P0; apply the PYTHONPATH rule for worktrees.
-8. **Consent regression by a builder** ("optimizing" the filter after decode). Orchestrator-owned review of P2 and P9; the exact-count tests are the tripwire.
+8. **Self-hearing guard regression by a builder** (moving the `None`/bot drop after decode, or dropping a human). Orchestrator-owned review of P2 and P9; the exact-count tests are the tripwire.
 
 ## 10. Owner decisions (2026-10-25)
 
@@ -241,7 +242,7 @@ Order: P0a and P0b in parallel, then P1, then P2, P3, P4a, P4b, P5, P5b, P6, P8 
 | 1 | **Path A**: LLM stays in-process on the 4070. ~~Path B (Spark tunnel) optional later task~~ **Removed 2026-10-25: local only, see section 13** |
 | 1b | **ASR: NVIDIA Parakeet TDT 0.6B** (see section 11), replacing the Whisper `small.en` default. Whisper stays as the baseline and fallback |
 | 2 | Not answered; checked by the assistant (see below) |
-| 3 | Opt-ins are **per session**, not persisted |
+| 3 | ~~Opt-ins are **per session**, not persisted~~ **Removed 2026-10-30: there are no opt-ins; everyone in the session channel is heard** |
 | 4 | Music and listen are **mutually exclusive** per guild in v1 |
 | 5 | If RVC is unavailable mid-session: **drop the reply**, log it, say nothing |
 
@@ -249,7 +250,7 @@ Order: P0a and P0b in parallel, then P1, then P2, P3, P4a, P4b, P5, P5b, P6, P8 
 
 1. Is the DGX Spark tunnel (127.0.0.1:8000, owner's own hardware, reasoning models) acceptable as "local" for listen mode, and is it up whenever the bot runs? This decides Path A or B.
 2. Is PyPI reachable from this box for `discord-ext-voice-recv` and `silero-vad`, or must wheels be fetched elsewhere?
-3. Should opt-ins persist across restarts (a file under `var/`) or stay per session (proposed)?
+3. ~~Should opt-ins persist across restarts (a file under `var/`) or stay per session (proposed)?~~ **Moot since 2026-10-30: there are no opt-ins.**
 4. Listen mode and music: mutually exclusive per guild (proposed), or should listen pause music on speech?
 5. If RVC is unavailable mid-session: drop the reply (proposed, consistent with `rvc_unavailable_policy: error`) or speak in the source voice?
 
@@ -626,7 +627,7 @@ Orchestrator edits this round: `test_no_discord_imports.py` (registered `content
 
 **What landed (not committed).** G1: `discord_bot/listen_glue.py` (`dave_decrypt`, `ListenDaveSink`, `VoicePlayer`, `ListenSession`, `ListenSessionRegistry`), `test_listen_glue.py`, `test_listen_dave_sink.py`. G2: `!glisten start|on|off|stop|status` in `commands.py`, music commands refuse while a session is active, `bot.py` registry + `on_voice_state_update` + `close()` stops sessions, `app.py` fallback provider capped at `listen.reply.max_new_tokens` and `build_reply_synthesizer`, `test_listen_commands.py`, additions to `test_app_lifecycle.py` and `test_command_registration.py`.
 
-**P0a finding (DAVE).** discord-ext-voice-recv 0.5.2a179 has no DAVE support. With `wants_opus()` the frames are transport-decrypted but still DAVE-encrypted, so the sink runs `davey` `DaveSession.decrypt` itself. davey raises `ValueError("UnencryptedWhenPassthroughDisabled")` for 3-9% of frames (arrived unencrypted): those are used as plain opus. Any other decrypt error drops the frame. Consent filtering runs BEFORE the decrypt.
+**P0a finding (DAVE).** discord-ext-voice-recv 0.5.2a179 has no DAVE support. With `wants_opus()` the frames are transport-decrypted but still DAVE-encrypted, so the sink runs `davey` `DaveSession.decrypt` itself. davey raises `ValueError("UnencryptedWhenPassthroughDisabled")` for 3-9% of frames (arrived unencrypted): those are used as plain opus. Any other decrypt error drops the frame. The `None`/bot self-filter runs BEFORE the decrypt.
 
 **Interface agreement G1/G2: OK.** Names, sync/async and argument order match (`make_listen_session(guild, channel)`, `registry.add/get/remove/active`, `session.start/stop/opt_in/opt_out/on_member_left/status/channel_id`). `handle_voice_state_update` (G1) is unused; the bot's own hook does that job. No fixes needed.
 
@@ -668,11 +669,11 @@ Orchestrator edits this round: `test_no_discord_imports.py` (registered `content
 **Live checklist for P11 (GPU + LIVE, 'ppc' channel, owner plus one more human).** Items 1-10 of section 8 apply; adapted:
 1. From a channel other than `ppc`, `!glisten start` is refused ("not allowed"). A non-operator in `ppc` is refused.
 2. In `ppc`: announcement audible within 2 s, text notice posted.
-3. Human B not opted in talks 20 s: no transcript at DEBUG, no reply, `ingress` counter for B is 0, `dave_dropped` low.
-4. A `!glisten on` and talks: backchannel within 1 s, reply within 9 s, metrics line present.
+3. Human B (who never types a listen command) talks 20 s: B is transcribed and replied to like anyone else, `dave_dropped` low.
+4. A talks: backchannel within 1 s, reply within 9 s, metrics line present.
 5. A interrupts mid-reply: playback stops within 500 ms, listening continues (the `stop_playing` fix), next reply references the interruption.
-6. A and B opted in, overlapping: two transcripts, one merged reply.
-7. `!glisten off` by A mid-sentence: nothing of that sentence is replied to. Also A leaves the channel: opted out.
+6. A and B overlapping: two transcripts, one merged reply.
+7. A stops mid-sentence or leaves the channel: the half-finished utterance is not replied to.
 8. `!gplay` and `!gjoin` during listen: refused with the "!glisten stop first" message.
 9. `!glisten stop`: bot disconnects, `find var -newer <marker> -name '*.wav'` shows only bot clips.
 10. Everyone leaves: session stops by itself. Ctrl+C during a reply: clean exit, RVC worker reaped.
@@ -822,7 +823,7 @@ listen:
 | emit->asr_start | loop hop before ASR starts | under 0.01 s |
 | asr_compute | transcriber call as the loop sees it | 0.03-0.1 s |
 | asr_wait | asr_compute minus the transcriber's own timer (thread hop, loop lag) | near 0 |
-| asr_done->accepted | filters and consent | near 0 |
+| asr_done->accepted | filters (noise / echo / wake word / cooldown) | near 0 |
 
 By code reading the 0.76 s eos->asr is the 0.416 s silence rule plus 0.05-0.3 s of event-loop lag (inline Silero per 32 ms frame, Discord decode, TTS/LLM tasks on the same loop). Not yet measured live: collect the new lines from the next session.
 

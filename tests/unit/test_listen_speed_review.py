@@ -1,34 +1,10 @@
-"""Review additions for the listen speed build: streaming consent, stream limiter."""
+"""Review additions for the listen speed build: stream limiting."""
 
 from __future__ import annotations
 
 import numpy as np
-from _listen_turn_fakes import StreamPlayer, StreamSynth, TimelineClock, make_rig, spin, utterance
 
-from conftest import FakeContentProvider
 from notamusicbot.listen.reply import STREAM_GAIN_DB, _soft_limit
-
-
-async def test_consent_revoked_before_turn_never_streams_synthesis() -> None:
-    clock = TimelineClock(start=100.0)
-    log: list[tuple[str, float, str]] = []
-    synth = StreamSynth(clock, log)
-    player = StreamPlayer(clock, log)
-    rig = make_rig(
-        clock=clock,
-        synth=synth,  # type: ignore[arg-type]
-        player=player,  # type: ignore[arg-type]
-        provider=FakeContentProvider(["Hello there friend."]),
-        users=(1,),
-    )
-    # The turn task is created but has not run when consent is withdrawn.
-    await rig.manager.on_utterance(utterance(1))
-    rig.consent.opt_out(1)
-    await spin()
-    await clock.run()
-    await rig.manager.wait_idle()
-    assert synth.calls == []
-    assert rig.provider.calls == []
 
 
 def test_soft_limit_is_linear_below_the_knee_and_stays_within_full_scale() -> None:

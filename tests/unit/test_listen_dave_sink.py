@@ -1,4 +1,4 @@
-"""DAVE decrypt helper and the reader-thread sink (consent before decrypt)."""
+"""DAVE decrypt helper and the reader-thread sink (None/bot dropped before decrypt)."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ import davey
 import pytest
 
 from notamusicbot.discord_bot.listen_glue import ListenDaveSink, dave_decrypt
-from notamusicbot.domain.listen import ConsentState
 
 BOT_ID = 999
 
@@ -64,14 +63,11 @@ def test_no_session_is_raw() -> None:
 
 
 def _sink(
-    session: FakeDaveSession, *, opted: tuple[int, ...] = (1,), version: int = 1
+    session: FakeDaveSession, *, version: int = 1
 ) -> tuple[ListenDaveSink, FakeIngress]:
-    consent = ConsentState(bot_user_id=BOT_ID)
-    for user in opted:
-        consent.opt_in(user)
     ingress = FakeIngress()
     conn = SimpleNamespace(dave_session=session, dave_protocol_version=version)
-    sink = ListenDaveSink(consent, ingress, BOT_ID, lambda: conn)  # type: ignore[arg-type]
+    sink = ListenDaveSink(ingress, BOT_ID, lambda: conn)  # type: ignore[arg-type]
     return sink, ingress
 
 
@@ -92,22 +88,11 @@ def test_sink_decrypts_then_hands_the_payload_to_the_ingress() -> None:
     assert len(session.calls) == 1
 
 
-@pytest.mark.parametrize("user", [None, SimpleNamespace(id=2), SimpleNamespace(id=BOT_ID)])
-def test_sink_drops_unconsented_none_and_bot_before_decrypt(user: object) -> None:
-    session = FakeDaveSession()
-    sink, ingress = _sink(session, opted=(1,))
-    # The bot id is dropped even when a consent state somehow lists it.
-    sink._consent._opted_in.add(BOT_ID)  # type: ignore[attr-defined]
-    sink.write(user, _data())  # type: ignore[arg-type]
-    assert session.calls == []
-    assert ingress.packets == []
-
-
-def test_sink_drops_a_user_who_opted_out() -> None:
+@pytest.mark.parametrize("user", [None, SimpleNamespace(id=BOT_ID)])
+def test_sink_drops_none_and_bot_before_decrypt(user: object) -> None:
     session = FakeDaveSession()
     sink, ingress = _sink(session)
-    sink._consent.opt_out(1)  # type: ignore[attr-defined]
-    sink.write(SimpleNamespace(id=1), _data())  # type: ignore[arg-type]
+    sink.write(user, _data())  # type: ignore[arg-type]
     assert session.calls == []
     assert ingress.packets == []
 

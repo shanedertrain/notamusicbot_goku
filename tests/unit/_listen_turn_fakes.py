@@ -14,7 +14,6 @@ from conftest import FakeClock, FakeContentProvider, FakeTranscriber
 from notamusicbot.config import ListenReplySettings, ListenSettings
 from notamusicbot.domain.listen import (
     AudioChunk,
-    ConsentState,
     SpeechStarted,
     Transcript,
     UtteranceEvent,
@@ -277,7 +276,6 @@ def speech(user_id: int, t_start: float) -> SpeechStarted:
 class Rig:
     manager: TurnManager
     clock: FakeClock
-    consent: ConsentState
     transcriber: FakeTranscriber | UserTranscriber
     conversation: Conversation
     provider: FakeContentProvider
@@ -288,7 +286,6 @@ class Rig:
 
 def make_rig(
     *,
-    users: tuple[int, ...] = (1,),
     reply: dict | None = None,
     respond_to: str = "all",
     transcriber: FakeTranscriber | UserTranscriber | None = None,
@@ -302,9 +299,6 @@ def make_rig(
     reply_settings = ListenReplySettings(**({"per_user_cooldown_s": 0.0} | (reply or {})))
     settings = ListenSettings(respond_to=respond_to, reply=reply_settings)  # type: ignore[arg-type]
     clock = clock or FakeClock(start=100.0)
-    consent = ConsentState(bot_user_id=BOT_ID)
-    for user in users:
-        consent.opt_in(user)
     tr = transcriber or FakeTranscriber(["tell me something fun"])
     conversation = Conversation(settings.reply.history_turns)
     prov = provider or FakeContentProvider(["Hey, that sounds awesome!"])
@@ -314,7 +308,6 @@ def make_rig(
     manager = TurnManager(
         settings,
         clock,
-        consent,
         tr,
         conversation,
         prov,
@@ -326,7 +319,7 @@ def make_rig(
         guild_id=7,
         name_resolver=(lambda uid: (names or {}).get(uid, f"User {uid}")),
     )
-    return Rig(manager, clock, consent, tr, conversation, prov, sy, pl, metrics)
+    return Rig(manager, clock, tr, conversation, prov, sy, pl, metrics)
 
 
 async def spin(times: int = 10) -> None:

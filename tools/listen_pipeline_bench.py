@@ -82,7 +82,6 @@ _EMOJI_RE = re.compile("[\U0001f000-\U0001ffff\u2600-\u27bf\u2b00-\u2bff\ufe0f\u
 _MARKDOWN_RE = re.compile(r"[*_`#~]|^\s*[-+>]\s|\[[^\]]*\]\([^)]*\)", re.MULTILINE)
 BOT_ID = 999
 USER_ID = 1
-STRANGER_ID = 2
 STREAM_PREBUFFER_S = 0.12  # VoicePlayer.PREBUFFER_FRAMES (6) x 20 ms
 PACKET_FRAMES = 960  # 20 ms at 48 kHz
 RATE_48K = 48000
@@ -645,7 +644,6 @@ async def run(args: argparse.Namespace) -> dict:
     from notamusicbot.content.llm import LocalQwenLlmProvider
     from notamusicbot.domain.listen import (
         AudioChunk,
-        ConsentState,
         SpeechStarted,
         UtteranceEvent,
     )
@@ -855,14 +853,12 @@ async def run(args: argparse.Namespace) -> dict:
         # ---- the real chain -----------------------------------------------------
         sampler.phase = "turns"
         loop = asyncio.get_running_loop()
-        consent = ConsentState(bot_user_id=BOT_ID)
-        consent.opt_in(USER_ID)  # STRANGER_ID is never opted in
         decode_total = [0]  # every decode() call by any user
 
         def decoder_factory() -> PassThroughDecoder:
             return PassThroughDecoder(decode_total)
 
-        ingress = ListenIngress(consent, BOT_ID, decoder_factory, listen.vad.ring_buffer_s)
+        ingress = ListenIngress(BOT_ID, decoder_factory, listen.vad.ring_buffer_s)
         clock = MonotonicClock()
         player = RecordingPlayer()
         counting_asr = CountingTranscriber(transcriber)
@@ -879,7 +875,6 @@ async def run(args: argparse.Namespace) -> dict:
         manager = TurnManager(
             listen,
             clock,
-            consent,
             counting_asr,
             Conversation(listen.reply.history_turns),
             recording_llm,
@@ -917,7 +912,7 @@ async def run(args: argparse.Namespace) -> dict:
             clock,
             lambda ev: loop.call_soon_threadsafe(handle, ev),
         )
-        poller = EndpointerThread(ingress, endpointer, consent.opted_in)
+        poller = EndpointerThread(ingress, endpointer)
         poller.start()
 
         records: list[TurnRecord] = []
@@ -992,25 +987,25 @@ async def run(args: argparse.Namespace) -> dict:
             else:
                 rec.failure = rec.failure or "no metrics line (turn dropped)"
 
-        # ---- the not-opted-in user: one extra turn, fed at full speed -----------
+        # ---- the bot's own id: packets must be ignored, fed at full speed --------
         n_calls = len(counting_asr.calls)
         n_met, n_plays, n_llm = len(metrics_lines), len(player.plays), len(recording_llm.calls)
         n_decoded = decode_total[0]
-        stranger = PacedPacketSource(STRANGER_ID, build_packets(clips[0]["pcm"]), realtime=False)
-        await asyncio.to_thread(stranger.deliver, ingress.accept_packet)
+        self_packets = PacedPacketSource(BOT_ID, build_packets(clips[0]["pcm"]), realtime=False)
+        await asyncio.to_thread(self_packets.deliver, ingress.accept_packet)
         await asyncio.sleep(2.0)  # long enough for any (wrongly) endpointed turn to show up
         await manager.wait_idle()
-        stranger_result = {
-            "packets_sent": len(stranger.payloads),
+        bot_result = {
+            "packets_sent": len(self_packets.payloads),
             "decoder_calls": decode_total[0] - n_decoded,
-            "buffered_samples": ingress.pending_samples(STRANGER_ID),
+            "buffered_samples": ingress.pending_samples(BOT_ID),
             "transcribe_calls": len(counting_asr.calls) - n_calls,
             "llm_calls": len(recording_llm.calls) - n_llm,
             "metrics_lines": len(metrics_lines) - n_met,
             "plays": len(player.plays) - n_plays,
         }
-        stranger_result["passed"] = all(
-            stranger_result[k] == 0
+        bot_result["passed"] = all(
+            bot_result[k] == 0
             for k in (
                 "decoder_calls",
                 "buffered_samples",
@@ -1020,7 +1015,7 @@ async def run(args: argparse.Namespace) -> dict:
                 "plays",
             )
         )
-        result["not_opted_in_turn"] = stranger_result
+        result["bot_ignored_turn"] = bot_result
 
         # ---- per-turn table, replies, percentiles -------------------------------
         rows = []
@@ -1292,7 +1287,7 @@ def main() -> int:
     except Exception:
         traceback.print_exc()
         return 1
-    print(json.dumps({k: result[k] for k in ("summary", "verdict", "not_opted_in_turn")}, indent=2))
+    print(json.dumps({k: result[k] for k in ("summary", "verdict", "bot_ignored_turn")}, indent=2))
     print(
         "baseline MiB", result["baseline_vram_used_mib"], "peak MiB", result["peak_vram_used_mib"]
     )

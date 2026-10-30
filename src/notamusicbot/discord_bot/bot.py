@@ -148,7 +148,7 @@ class NotAMusicBot(commands.Bot):
     async def on_voice_state_update(
         self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState
     ) -> None:
-        """Listen mode upkeep: opt a leaver out at once; stop when nobody is left."""
+        """Listen mode upkeep: clear a leaver's buffered audio at once; stop when nobody is left."""
         registry = self._listen_sessions
         session = registry.get(member.guild.id) if registry is not None else None
         if session is None:
@@ -162,7 +162,7 @@ class NotAMusicBot(commands.Bot):
         left = before.channel is not None and before.channel.id == channel_id
         if not left or (after.channel is not None and after.channel.id == channel_id):
             return
-        session.on_member_left(member.id)  # synchronous consent.opt_out
+        session.on_member_left(member.id)  # synchronous buffer cleanup
         assert before.channel is not None
         if not any(not m.bot for m in before.channel.members):
             self._spawn_listen_stop(member.guild.id)

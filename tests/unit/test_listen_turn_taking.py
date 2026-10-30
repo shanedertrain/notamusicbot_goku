@@ -84,7 +84,7 @@ async def test_next_sentence_synthesized_while_first_plays() -> None:
 async def test_barge_in_half_second_into_reply() -> None:
     player = FakePlayer(hold=True)
     provider = FakeContentProvider(["First one here. Second one there."])
-    rig = make_rig(users=(1, 2), player=player, provider=provider)
+    rig = make_rig(player=player, provider=provider)
     await rig.manager.on_utterance(utterance(1))
     await spin()
     assert rig.manager.state is TurnState.SPEAKING
@@ -104,7 +104,7 @@ async def test_barge_in_half_second_into_reply() -> None:
 
 async def test_barge_in_below_400ms_does_not_stop() -> None:
     player = FakePlayer(hold=True)
-    rig = make_rig(users=(1, 2), player=player)
+    rig = make_rig(player=player)
     await rig.manager.on_utterance(utterance(1))
     await spin()
     rig.clock.advance(0.2)
@@ -122,7 +122,7 @@ async def test_barge_in_below_400ms_does_not_stop() -> None:
 
 async def test_sustained_speech_barges_in_once_400ms_pass() -> None:
     player = FakePlayer(hold=True)
-    rig = make_rig(users=(1, 2), player=player)
+    rig = make_rig(player=player)
     await rig.manager.on_utterance(utterance(1))
     await spin()
     rig.clock.advance(0.2)
@@ -135,7 +135,7 @@ async def test_sustained_speech_barges_in_once_400ms_pass() -> None:
 
 async def test_no_barge_in_in_first_300ms_of_backchannel() -> None:
     player = FakePlayer(hold=True)
-    rig = make_rig(users=(1, 2), player=player, backchannel=FakeBackchannel())
+    rig = make_rig(player=player, backchannel=FakeBackchannel())
     await rig.manager.on_utterance(utterance(1))
     await spin()
     assert player.plays == [BACKCHANNEL_PCM]
@@ -149,14 +149,13 @@ async def test_no_barge_in_in_first_300ms_of_backchannel() -> None:
     assert rig.clock.sleeps == [pytest.approx(0.6)]
 
 
-@pytest.mark.parametrize("user_id", [50, BOT_ID])
-async def test_unknown_or_bot_speech_never_barges_in(user_id: int) -> None:
+async def test_bot_speech_never_barges_in() -> None:
     player = FakePlayer(hold=True)
     rig = make_rig(player=player)
     await rig.manager.on_utterance(utterance(1))
     await spin()
     rig.clock.advance(5.0)
-    await rig.manager.on_speech_started(speech(user_id, t_start=rig.clock() - 5.0))
+    await rig.manager.on_speech_started(speech(BOT_ID, t_start=rig.clock() - 5.0))
     await spin()
     assert player.stop_calls == 0
     assert rig.manager.state is TurnState.SPEAKING
@@ -167,7 +166,7 @@ async def test_unknown_or_bot_speech_never_barges_in(user_id: int) -> None:
 async def test_two_utterances_while_thinking_merge_into_one_generate() -> None:
     tr = UserTranscriber({1: "hello there goku", 2: "what about me"})
     tr.gates = {1: asyncio.Event(), 2: asyncio.Event()}
-    rig = make_rig(users=(1, 2), transcriber=tr, names={1: "Alice", 2: "Bob"})
+    rig = make_rig(transcriber=tr, names={1: "Alice", 2: "Bob"})
     a = asyncio.create_task(rig.manager.on_utterance(utterance(1)))
     b = asyncio.create_task(rig.manager.on_utterance(utterance(2)))
     await spin()
@@ -203,26 +202,10 @@ async def test_same_user_replaces_pending_slot() -> None:
     assert rig.provider.calls[0].transcript_text == "second thing said"
 
 
-async def test_revoked_during_other_users_asr_is_filtered_from_merge() -> None:
-    tr = UserTranscriber({1: "hello there goku", 2: "what about me"})
-    tr.gates = {2: asyncio.Event()}
-    rig = make_rig(users=(1, 2), transcriber=tr, names={1: "Alice", 2: "Bob"})
-    b = asyncio.create_task(rig.manager.on_utterance(utterance(2)))
-    await spin()
-    await rig.manager.on_utterance(utterance(1))  # accepted while Bob's ASR runs
-    rig.consent.opt_out(1)
-    tr.gates[2].set()
-    await b
-    await rig.manager.wait_idle()
-    assert len(rig.provider.calls) == 1
-    assert rig.provider.calls[0].transcript_text == "what about me"
-    assert [t.speaker for t in rig.conversation.history()] == ["Bob", "Goku"]
-
-
 async def test_thirteen_utterances_in_a_minute_give_twelve_replies() -> None:
     users = (1, 2, 3)
     texts = [f"tell me story number {i}" for i in range(13)]
-    rig = make_rig(users=users, transcriber=FakeTranscriber(texts))
+    rig = make_rig(transcriber=FakeTranscriber(texts))
     for i in range(13):
         await rig.manager.on_utterance(utterance(users[i % 3]))
         await rig.manager.wait_idle()
@@ -284,31 +267,14 @@ async def test_synthesis_error_drops_reply(caplog: pytest.LogCaptureFixture) -> 
     assert rig.metrics == []
 
 
-async def test_consent_revoked_between_asr_and_llm_never_calls_llm() -> None:
+async def test_every_human_is_transcribed_and_answered() -> None:
     rig = make_rig()
-
-    class RevokingTranscriber(FakeTranscriber):
-        async def transcribe(self, audio):  # type: ignore[no-untyped-def]
-            result = await super().transcribe(audio)
-            rig.consent.opt_out(1)
-            return result
-
-    rig.manager._transcriber = RevokingTranscriber(["tell me something fun"])  # type: ignore[attr-defined]
+    await rig.manager.on_utterance(utterance(77))
+    await rig.manager.wait_idle()
     await rig.manager.on_utterance(utterance(1))
     await rig.manager.wait_idle()
-    assert rig.provider.calls == []
-    assert rig.player.plays == []
-    assert rig.conversation.history() == []
-    assert rig.manager.state is TurnState.IDLE
-
-
-async def test_never_opted_in_user_is_not_transcribed() -> None:
-    rig = make_rig(users=(1,))
-    await rig.manager.on_utterance(utterance(77))
-    await rig.manager.on_utterance(utterance(BOT_ID))
-    await rig.manager.wait_idle()
-    assert rig.transcriber.calls == []
-    assert rig.provider.calls == []
+    assert len(rig.transcriber.calls) == 2  # no per-user permission gate
+    assert len(rig.provider.calls) == 2
     assert rig.manager.state is TurnState.IDLE
 
 
@@ -415,47 +381,33 @@ async def test_shutdown_stops_everything_and_clears_history() -> None:
 # ---------------------------------------------------- round-3 orchestrator tripwires
 
 
-async def test_post_asr_recheck_drops_revoked_user_before_logging_or_queueing(
+async def test_transcript_text_is_logged_at_debug_only_when_enabled(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    # Only the post-ASR re-check (not the pre-LLM filter) keeps a user who opted
-    # out during ASR out of the DEBUG transcript log and the pending slot.
-    rig = make_rig()
+    rig = make_rig(transcriber=FakeTranscriber(["secret words here"]))
     m = rig.manager
+    with caplog.at_level(logging.DEBUG, logger="notamusicbot.listen.turn_taking"):
+        await rig.manager.on_utterance(utterance(1))
+        await rig.manager.wait_idle()
+    assert not [r for r in caplog.records if "secret words here" in r.getMessage()]
+
     m._settings = m._settings.model_copy(  # type: ignore[attr-defined]
         update={"privacy": ListenPrivacySettings(log_transcripts=True)}
     )
-    seen_pending: list[dict] = []
-
-    class RevokingTranscriber(FakeTranscriber):
-        async def transcribe(self, audio):  # type: ignore[no-untyped-def]
-            result = await super().transcribe(audio)
-            rig.consent.opt_out(1)
-            return result
-
-    rig.manager._transcriber = RevokingTranscriber(["secret words here"])  # type: ignore[attr-defined]
     with caplog.at_level(logging.DEBUG, logger="notamusicbot.listen.turn_taking"):
         await rig.manager.on_utterance(utterance(1))
-        seen_pending.append(dict(rig.manager._pending))  # type: ignore[attr-defined]
         await rig.manager.wait_idle()
-    assert seen_pending == [{}]
-    assert rig.manager.reply_task is None
-    assert not [r for r in caplog.records if "secret words here" in r.getMessage()]
-    assert rig.provider.calls == []
+    assert [r for r in caplog.records if "secret words here" in r.getMessage()]
 
 
-async def test_bot_id_dropped_even_if_consent_state_lacks_it() -> None:
-    from notamusicbot.domain.listen import ConsentState
-
+async def test_bot_id_is_never_transcribed_or_answered() -> None:
     rig = make_rig()
-    loose = ConsentState()  # built without bot_user_id, so opt_in(BOT_ID) succeeds
-    assert loose.opt_in(BOT_ID) is True
-    loose.opt_in(1)
-    rig.manager._consent = loose  # type: ignore[attr-defined]
     await rig.manager.on_utterance(utterance(BOT_ID))
     await rig.manager.wait_idle()
     assert rig.transcriber.calls == []
     assert rig.provider.calls == []
+    assert rig.player.plays == []
+    assert rig.manager.state is TurnState.IDLE
 
 
 async def test_synthesis_error_on_second_sentence_keeps_first_only() -> None:
@@ -491,7 +443,6 @@ def _timed_rig(
     synth = TimedSynth(clock, log, synth_s=1.0, play_s=3.0, fail_on_call=fail_on_call)
     player = TimedPlayer(clock, log, play_s=3.0)
     rig = make_rig(
-        users=(1, 2),
         clock=clock,
         synth=synth,  # type: ignore[arg-type]
         player=player,  # type: ignore[arg-type]
@@ -765,12 +716,11 @@ async def test_first_chunk_caps_come_from_settings() -> None:
 # ------------------------------------------------------------ early backchannel
 
 
-def _bc_rig(*, users: tuple[int, ...] = (1,), **kwargs):  # type: ignore[no-untyped-def]
+def _bc_rig(**kwargs):  # type: ignore[no-untyped-def]
     clock = TimelineClock(start=100.0)
     log: list[tuple[str, float, str]] = []
     player = TimedPlayer(clock, log, play_s=1.0)
     rig = make_rig(
-        users=users,
         clock=clock,
         player=player,  # type: ignore[arg-type]
         backchannel=FakeBackchannel(),
@@ -815,12 +765,9 @@ async def test_no_early_backchannel_for_a_short_utterance() -> None:
     assert eplayer.plays == [BACKCHANNEL_PCM, REPLY]
 
 
-async def test_no_early_backchannel_for_a_user_who_is_not_allowed() -> None:
-    rig, clock, log, player = _bc_rig(users=(1,))
-    await rig.manager.on_utterance(utterance(77, audio_s=2.0))
+async def test_no_early_backchannel_for_the_bot() -> None:
+    rig, clock, log, player = _bc_rig()
     await rig.manager.on_utterance(utterance(BOT_ID, audio_s=2.0))
-    rig.consent.opt_out(1)
-    await rig.manager.on_utterance(utterance(1, audio_s=2.0))
     await clock.run()
     await rig.manager.wait_idle()
     assert player.plays == []
@@ -841,7 +788,7 @@ async def test_dropped_utterance_keeps_its_clip_and_adds_no_second_one() -> None
 async def test_backchannel_plays_once_per_turn_for_merged_utterances() -> None:
     tr = UserTranscriber({1: "hello there goku", 2: "what about me"})
     tr.gates = {1: asyncio.Event(), 2: asyncio.Event()}
-    rig, clock, log, player = _bc_rig(users=(1, 2), transcriber=tr)
+    rig, clock, log, player = _bc_rig(transcriber=tr)
     a = asyncio.create_task(rig.manager.on_utterance(utterance(1, audio_s=2.0)))
     b = asyncio.create_task(rig.manager.on_utterance(utterance(2, audio_s=2.0)))
     await spin()

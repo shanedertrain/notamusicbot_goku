@@ -20,7 +20,9 @@ ROOT = Path(__file__).resolve().parents[2]
 ORACLE = ROOT / "tests" / "fixtures" / "hubert_oracle.npz"
 STATE_DICT = Path(os.environ.get("HUBERT_STATE_DICT", ROOT / "hubert_base.state_dict.pt"))
 
-pytestmark = pytest.mark.skipif(not STATE_DICT.exists(), reason="hubert_base.state_dict.pt not present")
+pytestmark = pytest.mark.skipif(
+    not STATE_DICT.exists(), reason="hubert_base.state_dict.pt not present"
+)
 
 
 @pytest.fixture(scope="module")
@@ -83,7 +85,9 @@ def test_half_precision_inference_matches_reference(oracle):
     feats = torch.from_numpy(wav).half().view(1, -1).to("cuda:0")
     padding_mask = torch.BoolTensor(feats.shape).fill_(False).to("cuda:0")
     with torch.no_grad():
-        out = m.final_proj(m.extract_features(source=feats, padding_mask=padding_mask, output_layer=9)[0])
+        out = m.final_proj(
+            m.extract_features(source=feats, padding_mask=padding_mask, output_layer=9)[0]
+        )
     got = out[0].float().cpu().numpy()
     expected = oracle["goku_v1"]
     assert got.shape == expected.shape

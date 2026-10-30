@@ -134,9 +134,15 @@ def test_discard_drops_open_utterance() -> None:
 
 
 class _Ingress:
+    """Ingress double: known users come from the buffers the ingress holds."""
+
     def __init__(self) -> None:
         self.queues: dict[int, list[np.ndarray]] = {}
         self.drained: list[int] = []
+        self.users: set[int] = set()
+
+    def known_user_ids(self) -> frozenset[int]:
+        return frozenset(self.users)
 
     def drain(self, user_id: int) -> np.ndarray:
         self.drained.append(user_id)
@@ -145,19 +151,27 @@ class _Ingress:
             return np.zeros(0, dtype=np.float32)
         return q.pop(0)
 
+    def forget(self, user_id: int) -> None:
+        """What ``ListenIngress.remove_user`` does when a member leaves."""
+        self.users.discard(user_id)
+        self.queues.pop(user_id, None)
 
-def test_thread_polls_only_opted_in_and_discards_opted_out() -> None:
+
+def test_thread_discards_a_user_forgotten_by_the_ingress() -> None:
     ep, clock, events = _make()
     ingress = _Ingress()
-    opted = {1}
-    th = EndpointerThread(ingress, ep, lambda: set(opted))
+    ingress.users.add(1)
     ingress.queues[1] = [_tone(1.0)]
+    th = EndpointerThread(ingress, ep)
     clock.advance(1.0)
     assert th.poll_once() == SR
-    assert set(ingress.drained) == {1}
-    opted.clear()  # opt-out: the open utterance must vanish silently
+    assert ingress.drained == [1]
+    # The member left: the ingress forgot the buffer and the open utterance
+    # must vanish silently (no UtteranceEvent, and the user is not polled again).
+    ingress.forget(1)
     clock.advance(5.0)
     th.poll_once()
+    assert ingress.drained == [1]
     assert not any(isinstance(e, UtteranceEvent) for e in events)
 
 
@@ -176,8 +190,9 @@ def test_thread_start_stop_delivers_events() -> None:
 
     ep = Endpointer(EnergyVad, ListenVadSettings(), time.monotonic, emit)
     ingress = _Ingress()
+    ingress.users.add(3)
     ingress.queues[3] = [_pad(np.concatenate([_tone(1.0), _sil(0.8)]))]
-    th = EndpointerThread(ingress, ep, lambda: {3}, poll_interval_s=0.001)
+    th = EndpointerThread(ingress, ep, poll_interval_s=0.001)
     th.start()
     try:
         assert done.wait(5.0)

@@ -263,14 +263,12 @@ async def test_failed_start_cleans_up(rig: Rig) -> None:
 
 async def test_stop_is_idempotent_and_leaves_no_tasks(rig: Rig) -> None:
     await rig.session.start()
-    rig.session.opt_in(1)
     await rig.session.stop()
     await rig.session.stop()
     assert rig.vc.disconnects == 1
     assert not rig.vc.listening
-    assert rig.session._consent.opted_in() == frozenset()
     assert rig.session._conversation.history() == []
-    assert rig.session.status().endswith("State: STOPPED.")
+    assert rig.session.status() == "Listening in general-voice. State: STOPPED."
     assert _extra_tasks() == []
 
 
@@ -286,11 +284,10 @@ def _send(rig: Rig, user_id: int, payload: bytes, count: int) -> None:
         sink.write(SimpleNamespace(id=user_id), SimpleNamespace(opus=payload))
 
 
-async def test_opt_out_clears_buffer_and_pending_utterance(rig: Rig) -> None:
+async def test_member_left_drops_buffer_and_half_finished_utterance(rig: Rig) -> None:
     await rig.session.start()
     try:
         s = rig.session
-        s.opt_in(1)
         _send(rig, 1, b"T", 5)
         assert s._ingress.pending_samples(1) > 0
         # A half-finished utterance sits in the endpointer.
@@ -300,38 +297,44 @@ async def test_opt_out_clears_buffer_and_pending_utterance(rig: Rig) -> None:
         s.on_member_left(1)
         assert s._ingress.pending_samples(1) == 0
         assert 1 not in s._endpointer._users
-        # Packets after leaving are dropped (and joining again does not opt in).
-        _send(rig, 1, b"T", 5)
-        assert s._ingress.pending_samples(1) == 0
+        # The dropped half-utterance must never reach ASR or the LLM.
+        s._poller.poll_once()
+        await s._turns.wait_idle()
+        assert rig.transcriber.calls == []
+        assert rig.provider.calls == []
     finally:
         await rig.session.stop()
 
 
-async def test_unconsented_users_leave_no_trace(rig: Rig) -> None:
+async def test_none_and_bot_leave_no_trace_but_every_human_is_heard(rig: Rig) -> None:
     await rig.session.start()
     try:
-        rig.session.opt_in(1)
-        _send(rig, 2, b"T", 20)
+        s = rig.session
+        rig.vc.sink.write(None, SimpleNamespace(opus=b"T"))
         _send(rig, BOT_ID, b"T", 20)
-        assert rig.session._ingress.pending_samples(2) == 0
-        assert rig.session._ingress.pending_samples(BOT_ID) == 0
+        assert s._ingress.pending_samples(BOT_ID) == 0
+        assert BOT_ID not in s._ingress.known_user_ids()
+        _send(rig, 2, b"T", 20)  # no opt-in: any human is decoded
+        assert s._ingress.pending_samples(2) > 0
+        assert 2 in s._ingress.known_user_ids()
     finally:
         await rig.session.stop()
 
 
-async def test_voice_state_update_leave_opts_out_and_bot_loss_stops(rig: Rig) -> None:
+async def test_voice_state_update_member_left_drops_audio_and_bot_loss_stops(rig: Rig) -> None:
     await rig.session.start()
     here, elsewhere = SimpleNamespace(id=55), SimpleNamespace(id=56)
     s = rig.session
-    s.opt_in(1)
+    _send(rig, 1, b"T", 5)
+    assert s._ingress.pending_samples(1) > 0
     s.handle_voice_state_update(
         SimpleNamespace(id=2), SimpleNamespace(channel=elsewhere), SimpleNamespace(channel=here)
     )  # someone joining elsewhere: untouched
-    assert s._consent.allowed(1)
+    assert s._ingress.pending_samples(1) > 0
     s.handle_voice_state_update(
         SimpleNamespace(id=1), SimpleNamespace(channel=here), SimpleNamespace(channel=elsewhere)
     )
-    assert not s._consent.allowed(1)
+    assert s._ingress.pending_samples(1) == 0
     s.handle_voice_state_update(
         SimpleNamespace(id=BOT_ID), SimpleNamespace(channel=here), SimpleNamespace(channel=None)
     )
@@ -339,25 +342,32 @@ async def test_voice_state_update_leave_opts_out_and_bot_loss_stops(rig: Rig) ->
     assert rig.vc.disconnects == 1
 
 
-async def test_status_lists_names_but_never_transcripts(rig: Rig) -> None:
+async def test_status_reports_channel_and_state_but_never_transcripts(rig: Rig) -> None:
     await rig.session.start()
     try:
-        rig.session.opt_in(1)
         rig.session._conversation.add_user("Alice", "my secret words")
         text = rig.session.status()
-        assert "general-voice" in text
-        assert "Alice" in text
-        assert "IDLE" in text
+        assert text == "Listening in general-voice. State: IDLE."
         assert "secret" not in text
     finally:
         await rig.session.stop()
+
+
+def test_member_left_before_start_is_a_noop(rig: Rig) -> None:
+    assert rig.session._ingress is None  # nothing to clear before the pipeline exists
+    rig.session.on_member_left(1)
+
+
+def test_session_has_no_consent_surface() -> None:
+    assert hasattr(ListenSession, "on_member_left")
+    assert not hasattr(ListenSession, "opt_in")
+    assert not hasattr(ListenSession, "opt_out")
 
 
 async def _full_turn(rig: Rig, *, rvc_fails: bool = False) -> None:
     rig.synth.fail = rvc_fails
     await rig.session.start()
     rig.vc.plays.clear()
-    rig.session.opt_in(1)
     _send(rig, 1, b"T", 15)  # 300 ms of tone
     _send(rig, 1, b"S", 10)  # then silence
     # The endpointer loop is parked; poll by hand a few times like the loop would.

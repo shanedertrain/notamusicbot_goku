@@ -112,16 +112,16 @@ podcast:
   host_profile: obama                  # voice profile id of the host persona
   reply_turns: 2                       # guest/host replies after the host opening (total lines = reply_turns + 1)
 
-# Voice listen mode (!glisten start|on|off|stop|status). Off by default, and an
-# empty allowed_channel_ids refuses to start even when enabled. Only users who
-# type `!glisten on` are decoded or transcribed; user audio never touches disk.
+# Voice listen mode (!glisten start|stop|status). Off by default, and an empty
+# allowed_channel_ids refuses to start even when enabled. Everyone in the
+# channel is decoded and transcribed; user audio never touches disk.
 listen:
   enabled: false
   allowed_channel_ids: []              # empty => listen refuses to start
   operator_user_ids: []                # empty => guild administrators only
   voice_profile: goku
   announce_on_join: true
-  announcement_text: "Heads up, I'm listening now. Only people who type listen on get transcribed, and nothing is saved."
+  announcement_text: "Heads up, I'm listening now. Everyone in this channel is transcribed, and nothing is saved."
   respond_to: all                      # all | wake_word
   wake_word: goku
   follow_up_window_s: 8.0              # wake_word mode: reply without it this soon after the bot spoke
@@ -167,7 +167,10 @@ listen:
     hedge_after_s: null                # thinking low only: after N s with no content, race a thinking-off request (null/0 = off)
   privacy:
     log_transcripts: false             # DEBUG transcript lines only when true
-    persist_opt_ins: false             # opt-ins last one session
+    store_transcripts: false           # owner decision: save text (no audio) of everyone in the channel + bot replies
+    transcript_dir: var/listen_logs    # gitignored (var/)
+    transcript_retention_days: 7
+    show_text_in_console: true         # speech + replies on a terminal only (never to a redirected log)
 
 discord:
   command_prefix: "!g"
