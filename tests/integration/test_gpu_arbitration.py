@@ -54,6 +54,40 @@ if not _requirements_met():
     )
 
 
+class _LeaseRecorder(set):
+    """Records exact lease-hold intervals from the coordinator holder registry.
+
+    ``InferenceCoordinator`` adds a task to ``_holders`` immediately after it
+    acquires the GPU semaphore and discards it immediately before releasing, so
+    each add/discard pair is the precise lease interval, for every entry point
+    (``slot()``, ``run_blocking``, ``run_detached``). The previous approach
+    sampled the registry every 1 ms; a fast run could miss the release and
+    re-acquire between two iterations, merge two busy periods and fail the
+    "at least one busy period per iteration" assertion on scheduler timing.
+    """
+
+    def __init__(self, intervals: list[tuple[float, float]]) -> None:
+        super().__init__()
+        self._intervals = intervals
+        self._started: dict[object, float] = {}
+
+    def add(self, task: object) -> None:
+        super().add(task)  # type: ignore[arg-type]
+        self._started[task] = time.perf_counter()
+
+    def discard(self, task: object) -> None:
+        started = self._started.pop(task, None)
+        super().discard(task)  # type: ignore[arg-type]
+        if started is not None:
+            self._intervals.append((started, time.perf_counter()))
+
+    def clear(self) -> None:
+        now = time.perf_counter()
+        for task in list(self._started):
+            self._intervals.append((self._started.pop(task), now))
+        super().clear()
+
+
 def test_shared_coordinator_serializes_llm_and_tts_rvc(tmp_path) -> None:
     import torch
 
@@ -67,33 +101,13 @@ def test_shared_coordinator_serializes_llm_and_tts_rvc(tmp_path) -> None:
     torch.cuda.reset_peak_memory_stats()
     coord = InferenceCoordinator()  # the shared slot under test
     timeline: list[tuple[str, float, float]] = []  # (stage, start, end)
-    lease_busy: list[tuple[float, float]] = []  # sampled lease-busy intervals
-    stop_sampling = asyncio.Event()
-
-    async def lease_sampler() -> None:
-        """Record intervals during which the coordinator lease was held.
-
-        Round-4 P0 note: per-stage wall spans include QUEUE WAIT (a stage's
-        submission timestamp precedes its lease acquisition), so wall spans of
-        concurrently submitted jobs legitimately overlap. The exclusivity
-        invariant is asserted on the sampled lease-busy intervals instead —
-        matching the logical-concurrency approach of the unit suite.
-        """
-        last_busy = False
-        busy_start = 0.0
-        try:
-            while not stop_sampling.is_set():
-                busy = bool(coord._holders)
-                now = time.perf_counter()
-                if busy and not last_busy:
-                    busy_start = now
-                elif not busy and last_busy:
-                    lease_busy.append((busy_start, now))
-                last_busy = busy
-                await asyncio.sleep(0.001)
-        finally:
-            if last_busy:
-                lease_busy.append((busy_start, time.perf_counter()))
+    lease_busy: list[tuple[float, float]] = []  # exact lease-hold intervals
+    # Round-4 P0 note: per-stage wall spans include QUEUE WAIT (a stage's
+    # submission timestamp precedes its lease acquisition), so wall spans of
+    # concurrently submitted jobs legitimately overlap. Exclusivity is asserted
+    # on the recorded lease-hold intervals instead — matching the
+    # logical-concurrency approach of the unit suite.
+    coord._holders = _LeaseRecorder(lease_busy)  # type: ignore[assignment]
 
     async def scenario() -> None:
         llm = LocalQwenLlmProvider(max_new_tokens=60, gpu_coordinator=coord)
@@ -137,30 +151,21 @@ def test_shared_coordinator_serializes_llm_and_tts_rvc(tmp_path) -> None:
         finally:
             await converter.shutdown()
 
-    async def _run_with_sampler() -> None:
-        sampler_task = asyncio.create_task(lease_sampler())
-        try:
-            await scenario()
-        finally:
-            stop_sampling.set()
-            await asyncio.gather(sampler_task, return_exceptions=True)
-
-    asyncio.run(_run_with_sampler())
+    asyncio.run(scenario())
 
     print(f"\n=== shared-GPU-coordinator arbitration timeline ({ITERATIONS} iterations) ===")
-    print("(stage spans include queue wait; exclusivity is asserted on lease-busy intervals)")
+    print("(stage spans include queue wait; lease intervals are recorded at acquire/release)")
     for name, s, e in sorted(timeline, key=lambda t: t[1]):
         print(f"  {name:14s} submit/enter={s:.4f} end={e:.4f} dur={e - s:.4f}s")
-    print(f"  lease-busy intervals ({len(lease_busy)}):")
+    print(f"  lease-hold intervals ({len(lease_busy)}):")
     for s, e in lease_busy:
         print(f"    busy {s:.4f} -> {e:.4f} dur={e - s:.4f}s")
 
-    # Core assertion (Round-4 P0 semantics): the sampled lease-busy intervals
-    # never overlap — at most one lease holder at any sampled instant, and
-    # merged busy periods are sequential by construction.
+    # Core assertion (Round-4 P0 semantics): the recorded lease-hold intervals
+    # never overlap — at most one task held the shared GPU slot at any instant.
     for (_s1, e1), (s2, _e2) in zip(lease_busy, lease_busy[1:], strict=False):
-        assert s2 >= e1 - 1e-4, f"lease-busy intervals overlap: {e1} > {s2}"
-    # The lease actually arbitrated: at least one busy period per iteration.
+        assert s2 >= e1 - 1e-4, f"lease-hold intervals overlap: {e1} > {s2}"
+    # The lease actually arbitrated: at least one recorded hold per iteration.
     assert len(lease_busy) >= ITERATIONS
     # Every iteration actually produced an LLM, TTS and RVC section.
     assert {n.split(":")[1] for n, _s, _e in timeline} == {"llm", "tts", "rvc"}
@@ -182,7 +187,8 @@ def test_shared_coordinator_serializes_llm_and_tts_rvc(tmp_path) -> None:
                 {"start": s, "end": e, "duration_s": e - s} for s, e in lease_busy
             ],
             "timeline_note": (
-                "stage spans include queue wait; lease_busy_intervals are the exclusivity evidence"
+                "stage spans include queue wait; lease_busy_intervals are exact "
+                "acquire/release intervals recorded from the holder registry"
             ),
             "max_new_tokens": 60,
             "pass": True,

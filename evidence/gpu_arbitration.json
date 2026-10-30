@@ -1,8 +1,8 @@
 {
-  "timestamp": "2026-10-03T05:41:54+00:00",
-  "commit": "6e011bf62136a2a7d78023f043d858bdb02c1621",
+  "timestamp": "2026-10-30T17:31:19+00:00",
+  "commit": "92bc1aadf5c665f4538ed29bc2955fa1d8a30a06",
   "gpu": "NVIDIA GeForce RTX 4070 Ti SUPER",
-  "driver": "617.14",
+  "driver": "615.78.08",
   "torch": "2.14.1+cu130",
   "cuda_available": "True",
   "test": "test_shared_coordinator_serializes_llm_and_tts_rvc",
@@ -10,77 +10,92 @@
   "timeline": [
     {
       "stage": "iter0:llm",
-      "start": 176310.511894567,
-      "end": 176335.34635014,
-      "duration_s": 24.834455573000014
+      "start": 444309.835017449,
+      "end": 444316.210354621,
+      "duration_s": 6.375337172008585
     },
     {
       "stage": "iter0:tts",
-      "start": 176310.511975367,
-      "end": 176321.246738863,
-      "duration_s": 10.734763496002415
+      "start": 444309.835082369,
+      "end": 444310.594375376,
+      "duration_s": 0.7592930070240982
     },
     {
       "stage": "iter0:rvc",
-      "start": 176321.246738863,
-      "end": 176332.021055559,
-      "duration_s": 10.774316695984453
+      "start": 444310.594375376,
+      "end": 444314.895502835,
+      "duration_s": 4.301127458980773
     },
     {
       "stage": "iter1:llm",
-      "start": 176335.34887554,
-      "end": 176346.387321811,
-      "duration_s": 11.03844627100625
+      "start": 444316.21041465,
+      "end": 444319.925455124,
+      "duration_s": 3.7150404740241356
     },
     {
       "stage": "iter1:tts",
-      "start": 176335.35058464,
-      "end": 176341.13479912,
-      "duration_s": 5.784214479994262
+      "start": 444316.21045685,
+      "end": 444316.994497627,
+      "duration_s": 0.7840407770127058
     },
     {
       "stage": "iter1:rvc",
-      "start": 176341.13479912,
-      "end": 176343.360301615,
-      "duration_s": 2.225502495013643
+      "start": 444316.994497627,
+      "end": 444318.612689604,
+      "duration_s": 1.6181919769733213
     },
     {
       "stage": "iter2:llm",
-      "start": 176346.387410511,
-      "end": 176359.33528259,
-      "duration_s": 12.947872079006629
+      "start": 444319.925512813,
+      "end": 444323.242944731,
+      "duration_s": 3.3174319180543534
     },
     {
       "stage": "iter2:tts",
-      "start": 176346.387450611,
-      "end": 176353.8540403,
-      "duration_s": 7.46658968902193
+      "start": 444319.925545473,
+      "end": 444320.544917524,
+      "duration_s": 0.6193720509763807
     },
     {
       "stage": "iter2:rvc",
-      "start": 176353.8540403,
-      "end": 176356.197033697,
-      "duration_s": 2.342993397003738
+      "start": 444320.544917524,
+      "end": 444321.99777174,
+      "duration_s": 1.4528542160405777
     }
   ],
   "lease_busy_intervals": [
     {
-      "start": 176310.513657367,
-      "end": 176335.34636604,
-      "duration_s": 24.832708672998706
+      "start": 444309.835079479,
+      "end": 444314.895513575,
+      "duration_s": 5.060434096027166
     },
     {
-      "start": 176335.35116604,
-      "end": 176343.360333515,
-      "duration_s": 8.009167475014692
+      "start": 444314.895538205,
+      "end": 444316.210330281,
+      "duration_s": 1.3147920760093257
     },
     {
-      "start": 176343.365183415,
-      "end": 176359.33789949,
-      "duration_s": 15.972716074989876
+      "start": 444316.21045609,
+      "end": 444318.612701984,
+      "duration_s": 2.4022458940162323
+    },
+    {
+      "start": 444318.612734234,
+      "end": 444319.925431364,
+      "duration_s": 1.3126971299643628
+    },
+    {
+      "start": 444319.925544653,
+      "end": 444321.99778039,
+      "duration_s": 2.072235737054143
+    },
+    {
+      "start": 444321.99779901,
+      "end": 444323.242925171,
+      "duration_s": 1.2451261609676294
     }
   ],
-  "timeline_note": "stage spans include queue wait; lease_busy_intervals are the exclusivity evidence",
+  "timeline_note": "stage spans include queue wait; lease_busy_intervals are exact acquire/release intervals recorded from the holder registry",
   "max_new_tokens": 60,
   "pass": true
 }
