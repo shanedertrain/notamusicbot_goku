@@ -19,7 +19,11 @@ tts:
     Farmer Giles Gallet. He built the windmill for his farm at a time when
     everyone else was dependent on water wheels built by a horde of vandals.
     When the water dried up, Farmer Gallet was the only man with a working mill.
-  clone_mode: xvec
+  # icl: condition on the reference AUDIO too, not just the speaker embedding - the
+  # droning cadence lives in the delivery (long flat phrases, few pauses), which
+  # xvec cannot copy. Measured vs xvec on the same line: continuous phonation 0.44 ->
+  # 2.08 s, pause fraction 37% -> 11%, f0 drift -1.2 Hz (the drone).
+  clone_mode: icl
   # The source voice is a flat synth; loose sampling lets the model drift into an
   # expressive natural read (owner: "sounds like Trump, not the Computer"). Pin
   # like obama's stable set.
