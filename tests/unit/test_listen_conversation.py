@@ -82,7 +82,7 @@ def test_prompt_includes_only_last_two_of_five_turns() -> None:
     for old in ("old-one", "old-two", "old-three"):
         assert old not in prompt
     assert "Saiyan" in prompt
-    assert "one conversational sentence of at most 18 words" in prompt
+    assert "as long or as short as the moment calls for" in prompt
     assert "no lists, no markdown, no emojis, no stage directions" in prompt
     assert "Bob just said: what is up" in prompt
 

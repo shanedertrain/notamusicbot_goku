@@ -76,6 +76,8 @@ class FakeProfiles:
                         "reference_audio": "/tmp/fake_ref.wav",
                         "reference_text": "Hi.",
                         "clone_mode": "xvec",
+                        "temperature": None,
+                        "top_k": None,
                     },
                 )(),
                 "persona": type("D", (), {"description": "host"})(),

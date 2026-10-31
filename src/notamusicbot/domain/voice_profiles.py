@@ -34,6 +34,10 @@ class TtsProfile(BaseModel):
     reference_text: str | None = None
     # xvec = speaker embedding only (no transcript needed); icl = in-context.
     clone_mode: Literal["xvec", "icl"] = "xvec"
+    # Sampling for the TTS decoder; ``None`` keeps the library default (0.9 / 50).
+    # Lower values give steadier delivery from one sentence to the next.
+    temperature: float | None = Field(default=None, gt=0.0, le=2.0)
+    top_k: int | None = Field(default=None, ge=1)
 
     @field_validator("reference_audio", mode="before")
     @classmethod
@@ -137,6 +141,8 @@ def tts_request_for(
         reference_audio=str(reference),
         reference_text=profile.tts.reference_text,
         clone_mode=profile.tts.clone_mode,
+        temperature=profile.tts.temperature,
+        top_k=profile.tts.top_k,
     )
 
 

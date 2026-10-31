@@ -31,6 +31,9 @@ class TtsRequest:
     reference_text: str | None = None
     # xvec = speaker-embedding-only clone; icl = in-context clone.
     clone_mode: Literal["xvec", "icl"] = "xvec"
+    # Decoder sampling overrides; ``None`` = library default.
+    temperature: float | None = None
+    top_k: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

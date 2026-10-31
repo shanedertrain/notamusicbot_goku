@@ -196,6 +196,8 @@ class QwenCloneSynthesizer:
             reference_text,
             clone_mode,
             max_new_tokens=max_new_tokens_for(request.max_audio_seconds),
+            temperature=request.temperature,
+            top_k=request.top_k,
         )
         elapsed = time.perf_counter() - start
 
@@ -250,12 +252,18 @@ class QwenCloneSynthesizer:
         clone_mode: str,
         *,
         max_new_tokens: int | None = None,
+        temperature: float | None = None,
+        top_k: int | None = None,
     ) -> tuple[list[npt.NDArray[np.floating[Any]]], int]:
         """Run clone inference off the event loop; returns (wavs, sample_rate).
 
         ``max_new_tokens=None`` omits the kwarg so the library default applies.
         """
         extra: dict[str, Any] = {} if max_new_tokens is None else {"max_new_tokens": max_new_tokens}
+        if temperature is not None:
+            extra["temperature"] = temperature
+        if top_k is not None:
+            extra["top_k"] = top_k
 
         def _run() -> tuple[list[npt.NDArray[np.floating[Any]]], int]:
             items = self._prompt_items(reference_path, reference_text, clone_mode)

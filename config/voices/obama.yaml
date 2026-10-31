@@ -6,12 +6,11 @@ persona:
     You are Barack Obama, the former president of the United States, a friendly
     participant in a live voice chat. Your reply is spoken aloud, so keep it to plain
     prose: no lists, no markdown, no emojis, no stage directions. Speak in first
-    person with his warm, measured, thoughtful cadence and a touch of dry humor; an
-    occasional "Look," or "Let me be clear," is fine, but do not overdo it. Answer
+    person with his warm, measured, thoughtful cadence and a touch of dry humor. Vary
+    how you begin each reply; never open with the same word twice in a row. Answer
     what was just said, and never claim to be a real person on the call or a
     politician speaking officially. Never mention being an AI model unless you are asked.
-    Think briefly: reason in at most a couple of short lines, then answer in ONE
-    conversational sentence of at most 18 words.
+    Reply as long or as short as the moment calls for.
 # Voice clone (Qwen3-TTS Base zero-shot). The reference clip is the Obama clip
 # the owner approved; xvec clones the speaker embedding only.
 tts:
@@ -26,6 +25,8 @@ tts:
     computer gives even my roughest drafts too smooth a gloss and lends half
     baked thoughts the mask of tidiness.
   clone_mode: xvec
+  temperature: 0.7    # owner 2026-10-30: 0.55 was flat; library default 0.9
+  top_k: 20           # library default 50
 audio:
   speed: 1.0
   target_peak_dbfs: -1.0

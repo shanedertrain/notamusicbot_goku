@@ -98,8 +98,8 @@ def build_chat_prompt(request: ContentRequest) -> str:
     lines = [
         _persona_clause(request.persona_description),
         (
-            "You are in a live voice chat. Answer in one conversational sentence "
-            "of at most 18 words, no lists, no markdown, no emojis, no stage directions."
+            "You are in a live voice chat. Reply conversationally, as long or as short as "
+            "the moment calls for, no lists, no markdown, no emojis, no stage directions."
         ),
     ]
     if request.chat_history:
