@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -67,11 +68,15 @@ class FakeVoiceClient:
         self.listening = False
 
     def play(self, source: Any, *, after: Any) -> None:
-        self.plays.append(source.read())
         self.playing = True
         if self.hold:
+            # A running player thread that has not finished: keep the source, read nothing.
+            self.plays.append(b"<holding>")
             self._after = after
             return
+        # Play the source to its end the way discord's player thread does.
+        while frame := source.read():
+            self.plays.append(frame)
         self.playing = False
         after(None)
 
@@ -233,6 +238,44 @@ async def test_start_posts_the_configured_listening_message(rig: Rig) -> None:
         assert rig.vc.plays == []
     finally:
         await rig.session.stop()
+
+
+async def test_listen_only_start_loads_asr_but_skips_the_reply_pipeline(rig: Rig) -> None:
+    rig.session._app.settings.listen.listen_only = True
+    preferred = rig.provider.preferred_calls
+    await rig.session.start()
+    try:
+        assert rig.order == ["offline", "asr", "asr_load"]  # ASR still loads
+        assert rig.provider.preferred_calls == preferred  # no Spark warm-up
+        assert rig.session._turns is not None
+    finally:
+        await rig.session.stop()
+
+
+async def test_listen_only_posts_timestamped_transcripts_and_nothing_is_spoken(rig: Rig) -> None:
+    rig.session._app.settings.listen.listen_only = True
+    await rig.session.start()
+    try:
+        rig.channel.sent.clear()  # drop the "Listening" notice
+        _send(rig, 1, b"T", 15)  # 300 ms of tone from Alice
+        _send(rig, 1, b"S", 10)  # then silence -> endpointed
+        for _ in range(40):
+            rig.session._poller.poll_once()
+            await asyncio.sleep(0.02)
+            if len(rig.channel.sent) == 1:
+                break
+        await rig.session._turns.wait_idle()
+        # One chat line: timestamp + speaker + text, no bot audio anywhere.
+        assert len(rig.channel.sent) == 1
+        line = rig.channel.sent[0]
+        assert rig.transcriber.calls  # ASR ran
+        assert re.fullmatch(r"`\d\d:\d\d Alice` tell me something fun", line)
+        assert rig.synth.calls == []
+        assert rig.vc.plays == []
+        assert rig.provider.calls == []  # no LLM in listen-only
+    finally:
+        await rig.session.stop()
+    assert _extra_tasks() == []  # the announce task drained with the session
 
 
 async def test_start_refuses_when_the_guild_already_has_a_voice_client(rig: Rig) -> None:

@@ -304,6 +304,9 @@ class ListenSettings(BaseModel):
     # Posted in the text channel when a listen session starts. Nothing is spoken
     # at join time (the old pre-rendered "heads up" announcement was removed).
     start_message: str = "Listening"
+    # Listen-only mode: transcribe and timestamp speech, post transcripts to the
+    # text channel, but never reply (no LLM call, no TTS, no backchannel).
+    listen_only: bool = False
     respond_to: Literal["all", "wake_word"] = "all"
     wake_word: str = "goku"
     follow_up_window_s: float = Field(default=8.0, ge=0.0)

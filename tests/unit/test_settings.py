@@ -53,6 +53,7 @@ def test_listen_defaults_pinned() -> None:
     assert listen.operator_user_ids == []
     assert listen.voice_profile == "goku"
     assert listen.start_message == "Listening"
+    assert listen.listen_only is False
     assert listen.respond_to == "all"
     assert listen.wake_word == "goku"
     assert listen.follow_up_window_s == 8.0
