@@ -309,7 +309,7 @@ def setup_commands(bot: NotAMusicBot) -> None:
 
 
 def _setup_listen_commands(bot: NotAMusicBot) -> None:
-    """``!glisten start|stop|status``: voice listen mode.
+    """``!glisten start|transcript|stop|status``: voice listen mode.
 
     Replies are short and never include transcripts. All session work goes
     through ``bot.listen_sessions`` / ``bot.make_listen_session``.
@@ -318,13 +318,12 @@ def _setup_listen_commands(bot: NotAMusicBot) -> None:
     @bot.group(
         name="listen",
         invoke_without_command=True,
-        help="Voice listen mode (!glisten start|stop|status)",
+        help="Voice listen mode (!glisten start|transcript|stop|status)",
     )
     async def listen(ctx: Context) -> None:
-        await ctx.send("Usage: !glisten start|stop|status")
+        await ctx.send("Usage: !glisten start|transcript|stop|status")
 
-    @listen.command(name="start", help="Operator: start listening in your voice channel")
-    async def listen_start(ctx: Context) -> None:
+    async def _start_listen(ctx: Context, *, listen_only: bool) -> None:
         guild = _guild(ctx)
         settings = bot.app.settings.listen
         if not settings.enabled:
@@ -349,7 +348,7 @@ def _setup_listen_commands(bot: NotAMusicBot) -> None:
             return
         # No await between the checks above and add(): two racing starts
         # cannot both register.
-        session = bot.make_listen_session(guild, channel)
+        session = bot.make_listen_session(guild, channel, listen_only=listen_only)
         bot.listen_sessions.add(session)
         try:
             await session.start()
@@ -357,6 +356,17 @@ def _setup_listen_commands(bot: NotAMusicBot) -> None:
             logger.error("Listen session failed to start in guild %s", guild.id, exc_info=True)
             await bot.stop_listen_session(guild.id)
             await ctx.send("Could not start listen mode.")
+
+    @listen.command(name="start", help="Operator: start listening in your voice channel")
+    async def listen_start(ctx: Context) -> None:
+        await _start_listen(ctx, listen_only=False)
+
+    @listen.command(
+        name="transcript",
+        help="Operator: listen-only (transcribe to local logs, never reply)",
+    )
+    async def listen_transcript(ctx: Context) -> None:
+        await _start_listen(ctx, listen_only=True)
 
     @listen.command(name="stop", help="Operator: stop listening and clear everything")
     async def listen_stop(ctx: Context) -> None:

@@ -270,7 +270,6 @@ def make_rig(
     reply: dict | None = None,
     respond_to: str = "all",
     listen_only: bool = False,
-    announce=None,  # noqa: ANN001
     transcriber: FakeTranscriber | UserTranscriber | None = None,
     provider: FakeContentProvider | None = None,
     synth: FakeReplySynth | None = None,
@@ -309,7 +308,6 @@ def make_rig(
         name_resolver=(lambda uid: (names or {}).get(uid, f"User {uid}")),
         # Most tests use 2-3 word sentences; pad no openers unless a test asks for it.
         pacer=pacer or ChunkPacer(min_opener_s=0.0),
-        announce=announce,
         character_name=character_name,
         human_count=human_count,
         address_judge=address_judge,

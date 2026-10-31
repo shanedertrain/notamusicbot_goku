@@ -15,6 +15,7 @@ from _listen_turn_fakes import FakeBackchannel, FakeReplySynth
 from conftest import FakeContentProvider, FakeTranscriber
 from notamusicbot.config import (
     AppSettings,
+    ListenPrivacySettings,
     ListenReplySettings,
     ListenSettings,
     ListenVadSettings,
@@ -179,6 +180,7 @@ def rig(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Rig:
     listen = ListenSettings(
         enabled=True,
         allowed_channel_ids=[55],
+        privacy=ListenPrivacySettings(transcript_dir=str(var / "listen_logs")),
         vad=ListenVadSettings(backend="energy", min_speech_ms=32, end_silence_ms=64, pre_roll_ms=0),
         reply=ListenReplySettings(per_user_cooldown_s=0.0),
     )
@@ -241,7 +243,7 @@ async def test_start_posts_the_configured_listening_message(rig: Rig) -> None:
 
 
 async def test_listen_only_start_loads_asr_but_skips_the_reply_pipeline(rig: Rig) -> None:
-    rig.session._app.settings.listen.listen_only = True
+    rig.session._listen_only_override = True
     preferred = rig.provider.preferred_calls
     await rig.session.start()
     try:
@@ -252,30 +254,36 @@ async def test_listen_only_start_loads_asr_but_skips_the_reply_pipeline(rig: Rig
         await rig.session.stop()
 
 
-async def test_listen_only_posts_timestamped_transcripts_and_nothing_is_spoken(rig: Rig) -> None:
-    rig.session._app.settings.listen.listen_only = True
+async def test_listen_only_writes_local_logs_and_never_touches_discord(rig: Rig) -> None:
+    listen = rig.session._app.settings.listen
+    listen.privacy.store_transcripts = False  # forced on by listen-only
+    rig.session._listen_only_override = True
     await rig.session.start()
     try:
-        rig.channel.sent.clear()  # drop the "Listening" notice
+        assert rig.channel.sent == []  # not even the start message: no Discord writes
         _send(rig, 1, b"T", 15)  # 300 ms of tone from Alice
         _send(rig, 1, b"S", 10)  # then silence -> endpointed
+        logs = rig.var / "listen_logs"  # privacy.transcript_dir, under the rig's var
         for _ in range(40):
             rig.session._poller.poll_once()
             await asyncio.sleep(0.02)
-            if len(rig.channel.sent) == 1:
+            if rig.transcriber.calls and any(logs.glob("*.log")):
                 break
         await rig.session._turns.wait_idle()
-        # One chat line: timestamp + speaker + text, no bot audio anywhere.
-        assert len(rig.channel.sent) == 1
-        line = rig.channel.sent[0]
+        await asyncio.sleep(0.05)  # let the note land
         assert rig.transcriber.calls  # ASR ran
-        assert re.fullmatch(r"`\d\d:\d\d Alice` tell me something fun", line)
+        files = list(logs.glob("*.log"))
+        assert len(files) == 1
+        content = files[0].read_text()
+        assert "Alice: tell me something fun" in content
+        assert re.search(r"^\d\d:\d\d:\d\d Alice:", content, re.MULTILINE)
         assert rig.synth.calls == []
         assert rig.vc.plays == []
         assert rig.provider.calls == []  # no LLM in listen-only
+        assert rig.channel.sent == []  # still nothing posted to the channel
     finally:
         await rig.session.stop()
-    assert _extra_tasks() == []  # the announce task drained with the session
+    assert _extra_tasks() == []
 
 
 async def test_start_refuses_when_the_guild_already_has_a_voice_client(rig: Rig) -> None:

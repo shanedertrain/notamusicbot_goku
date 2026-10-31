@@ -110,11 +110,15 @@ class NotAMusicBot(commands.Bot):
         return self._listen_sessions
 
     def make_listen_session(
-        self, guild: discord.Guild, channel: discord.VoiceChannel | discord.StageChannel
+        self,
+        guild: discord.Guild,
+        channel: discord.VoiceChannel | discord.StageChannel,
+        *,
+        listen_only: bool = False,
     ) -> ListenSession:
         from notamusicbot.discord_bot.listen_glue import ListenSession
 
-        return ListenSession(self.app, self, guild, channel)
+        return ListenSession(self.app, self, guild, channel, listen_only=listen_only)
 
     async def stop_listen_session(self, guild_id: int) -> None:
         """Stop and unregister a guild's session (idempotent; never raises).

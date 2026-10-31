@@ -65,19 +65,20 @@ async def test_metrics_line_emitted() -> None:
     assert re.fullmatch(r"listen turn guild=7 user=1 .*", rig.metrics[0])
 
 
-async def test_listen_only_posts_transcripts_and_never_replies() -> None:
-    posted: list[str] = []
+async def test_listen_only_stores_transcripts_and_never_replies(tmp_path) -> None:
+    from notamusicbot.listen.transcript_store import TranscriptStore
 
-    async def announce(line: str) -> None:
-        posted.append(line)
-
-    rig = make_rig(listen_only=True, announce=announce)
+    store = TranscriptStore(tmp_path / "logs", retention_days=7)
+    rig = make_rig(listen_only=True)
+    rig.manager._transcripts = store  # the glue wires storage for listen-only
     await rig.manager.on_utterance(utterance(1))
     await rig.manager.wait_idle()
     await spin()
-    # The line went to the channel, timestamped, with the speaker named.
-    assert len(posted) == 1
-    assert re.fullmatch(r"`\d\d:\d\d User 1` tell me something fun", posted[0])
+    # The line is in the local log, timestamped, speaker named; no reply anywhere.
+    logs = list((tmp_path / "logs").glob("*.log"))
+    assert len(logs) == 1
+    content = logs[0].read_text()
+    assert re.fullmatch(r"\d\d:\d\d:\d\d User 1: tell me something fun\n", content)
     # No reply machinery ran at all: no LLM, no audio, no history turn for the bot.
     assert rig.provider.calls == []
     assert rig.player.plays == []
@@ -86,24 +87,21 @@ async def test_listen_only_posts_transcripts_and_never_replies() -> None:
     assert rig.manager.state is TurnState.IDLE
 
 
-async def test_listen_only_still_skips_noise_and_cooldown_lines() -> None:
-    posted: list[str] = []
+async def test_listen_only_still_skips_noise_and_cooldown_lines(tmp_path) -> None:
+    from notamusicbot.listen.transcript_store import TranscriptStore
 
-    async def announce(line: str) -> None:
-        posted.append(line)
-
-    rig = make_rig(
-        listen_only=True,
-        announce=announce,
-        reply={"per_user_cooldown_s": 60.0},
-    )
+    store = TranscriptStore(tmp_path / "logs", retention_days=7)
+    rig = make_rig(listen_only=True, reply={"per_user_cooldown_s": 60.0})
+    rig.manager._transcripts = store
     await rig.manager.on_utterance(utterance(1))
     await rig.manager.wait_idle()
     await spin()
     await rig.manager.on_utterance(utterance(1))
     await rig.manager.wait_idle()
     await spin()
-    assert len(posted) == 1  # the second utterance sits in the per-user cooldown
+    logs = list((tmp_path / "logs").glob("*.log"))
+    assert len(logs) == 1
+    assert len(logs[0].read_text().splitlines()) == 1  # cooldown held the second back
 
 
 async def test_next_sentence_synthesized_while_first_plays() -> None:

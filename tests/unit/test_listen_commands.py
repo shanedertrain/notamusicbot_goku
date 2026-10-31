@@ -115,8 +115,9 @@ def make_bot(**listen_kwargs):
     bot.guild_states = GuildStateRegistry()
     bot.made: list[FakeSession] = []
 
-    def make_listen_session(guild, channel):
+    def make_listen_session(guild, channel, *, listen_only=False):
         session = FakeSession(bot.app, bot, guild, channel)
+        session.listen_only = listen_only
         session.guild_id = guild.id
         bot.made.append(session)
         return session
@@ -239,8 +240,8 @@ def test_failed_start_unregisters_and_hides_the_error() -> None:
     bot = make_bot()
     original = bot.make_listen_session
 
-    def failing(guild, channel):
-        session = original(guild, channel)
+    def failing(guild, channel, *, listen_only=False):
+        session = original(guild, channel, listen_only=listen_only)
         session.fail_start = True
         return session
 

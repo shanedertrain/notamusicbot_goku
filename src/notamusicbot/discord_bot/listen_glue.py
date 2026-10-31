@@ -12,10 +12,10 @@ self-hearing filter at the Discord boundary:
 * A member leaving the channel has their buffered audio cleared at once.
 * No audio or transcript touches disk; history lives in the in-memory
   ``Conversation`` and is cleared on stop.
-* ``listen.listen_only`` skips the reply half entirely: ASR still runs and each
-  accepted line is posted to the text channel, timestamped, via the turn
-  manager's ``announce`` hook (``_post_notice`` here). Nothing is synthesized
-  and no LLM is loaded.
+* ``listen.listen_only`` (or ``!glisten transcript``) skips the reply half
+  entirely and writes NOTHING to Discord: ASR still runs and each accepted
+  line goes to the local transcript log (storage forced on). No TTS, no LLM.
+  A listen-only start also posts no start message; the record is the log file.
 
 discord-ext-voice-recv 0.5.2a179 has no DAVE support: with ``wants_opus()``
 the frames it hands over are transport-decrypted but still DAVE-encrypted, so
@@ -317,11 +317,16 @@ class ListenSession:
         bot: NotAMusicBot,
         guild: discord.Guild,
         channel: discord.VoiceChannel | discord.StageChannel,
+        *,
+        listen_only: bool = False,
     ) -> None:
         self._app = app
         self._bot = bot
         self._guild = guild
         self._channel = channel
+        # Per-call listen-only override (``!glisten transcript``); False keeps
+        # the configured ``listen.listen_only`` default untouched.
+        self._listen_only_override: bool | None = True if listen_only else None
         self._started = False
         self._stopped = False
         self._conversation: Conversation | None = None
@@ -359,11 +364,17 @@ class ListenSession:
     async def _start(self) -> None:
         app = self._app
         listen = app.settings.listen
+        # ``!glisten transcript`` forces listen-only regardless of the config;
+        # the config flag alone keeps the standing default. The override is
+        # applied ON the settings copy so the turn manager sees it too.
+        if self._listen_only_override and not listen.listen_only:
+            listen = listen.model_copy(update={"listen_only": True})
+        listen_only = listen.listen_only
         provider = app.listen_content_provider
         pipeline = app.pipeline
         profile = app.voice_profiles.get(listen.voice_profile)
         # Listen-only needs no provider and no pipeline: it only transcribes.
-        required = (profile,) if listen.listen_only else (provider, pipeline, profile)
+        required = (profile,) if listen_only else (provider, pipeline, profile)
         if any(part is None for part in required):
             raise RuntimeError("listen mode is not ready (provider, pipeline or voice profile)")
         if self._guild.voice_client is not None:
@@ -372,7 +383,7 @@ class ListenSession:
         # Local-only: no hub lookups, then the LLM, then ASR (once).
         enforce_offline_models()
         # Listen-only never replies: no provider warm-up, no TTS, no backchannel.
-        if not listen.listen_only:
+        if not listen_only:
             await provider.ensure_spark_preferred()  # type: ignore[attr-defined]
         self._transcriber = build_transcriber(listen.asr, app.coordinator)
         load = getattr(self._transcriber, "load", None)
@@ -382,9 +393,7 @@ class ListenSession:
         reply = listen.reply
         synth: ReplySynthesizer | None = None
         backchannel = None
-        if listen.listen_only:
-            pass  # the reply synth stays None: _start builds nothing it never calls
-        else:
+        if not listen_only:
             synth = ReplySynthesizer(
                 pipeline,
                 profile,
@@ -407,7 +416,6 @@ class ListenSession:
         vad = SileroVad if listen.vad.backend == "silero" else EnergyVad
         self._endpointer = Endpointer(vad, listen.vad, time.monotonic, self._on_event)
         self._poller = EndpointerThread(self._ingress, self._endpointer, ENDPOINT_POLL_INTERVAL_S)
-        announce = self._post_notice if listen.listen_only else None
         self._turns = TurnManager(
             listen,
             MonotonicClock(),
@@ -423,8 +431,7 @@ class ListenSession:
             persona_description=profile.persona.description,
             system_prompt=profile.persona.chat_prompt,
             name_resolver=self._display_name,
-            transcript_store=self._open_transcript_store(),
-            announce=announce,
+            transcript_store=self._open_transcript_store(force=listen_only),
             character_name=profile.persona.display_name,
             human_count=self._human_count,
             address_judge=self._build_judge(
@@ -437,11 +444,12 @@ class ListenSession:
         self._vc.listen(self._sink)
         self._loop_task = asyncio.get_running_loop().create_task(self._endpoint_loop())
 
-        await self._post_notice(listen.start_message)
+        if not listen_only:
+            await self._post_notice(listen.start_message)
 
-    def _open_transcript_store(self) -> TranscriptStore | None:
+    def _open_transcript_store(self, *, force: bool = False) -> TranscriptStore | None:
         privacy = self._app.settings.listen.privacy
-        if not privacy.store_transcripts:
+        if not (force or privacy.store_transcripts):
             return None
         return TranscriptStore(Path(privacy.transcript_dir), privacy.transcript_retention_days)
 

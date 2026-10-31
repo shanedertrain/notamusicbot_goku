@@ -27,7 +27,6 @@ from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import aclosing
 from dataclasses import dataclass, field
-from datetime import datetime
 from enum import Enum, auto
 from time import monotonic
 from typing import TYPE_CHECKING, Any, Protocol
@@ -176,7 +175,6 @@ class TurnManager:
         system_prompt: str = "",
         name_resolver: Callable[[int], str] | None = None,
         transcript_store: TranscriptStore | None = None,
-        announce: Callable[[str], Awaitable[None]] | None = None,
         pacer: ChunkPacer | None = None,
         character_name: str = "",
         human_count: Callable[[], int] | None = None,
@@ -203,8 +201,6 @@ class TurnManager:
         # Recent lines of the whole room (also those not meant for the bot), for the judge.
         self._room: deque[str] = deque(maxlen=ROOM_LINES)
         self._last_answered_user: int | None = None
-        # Listen-only transcript poster (the glue's channel.send); None = no chat post.
-        self._announce = announce
         self._name_of = name_resolver or (lambda user_id: f"User {user_id}")
 
         self._state = TurnState.IDLE
@@ -227,8 +223,6 @@ class TurnManager:
         self._bc_claimed = False
         self._barge_candidates: dict[int, float] = {}
         self._barge_tasks: set[asyncio.Task[None]] = set()
-        # In-flight transcript posts (listen-only); drained on shutdown.
-        self._announce_tasks: set[asyncio.Task[None]] = set()
         # 1-based index of the sentence being played; None before audio starts.
         self._playing_sentence: int | None = None
         self._synth_task: asyncio.Task[None] | None = None
@@ -662,28 +656,6 @@ class TurnManager:
             print(f"{who}: {text}", file=sys.stderr, flush=True)
         if self._transcripts is not None:
             self._transcripts.write(who, text)
-        if self._announce is not None:
-            self._spawn_announce(f"`{self._stamp()} {who}` {text}")
-
-    def _spawn_announce(self, line: str) -> None:
-        """Post one transcript line to the text channel; failures are logged, never raised."""
-
-        async def _post() -> None:
-            try:
-                await self._announce(line)  # type: ignore[misc]
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.warning("listen: transcript announce failed", exc_info=True)
-
-        task = asyncio.get_running_loop().create_task(_post())
-        self._announce_tasks.add(task)
-        task.add_done_callback(self._announce_tasks.discard)
-
-    @staticmethod
-    def _stamp() -> str:
-        """Wall-clock HH:MM for a posted transcript line (local time)."""
-        return datetime.now().astimezone().strftime("%H:%M")
 
     def _queue_chunks(self, flow: _ReplyFlow, chunks: list[StreamChunk]) -> None:
         for chunk in chunks:
@@ -920,7 +892,6 @@ class TurnManager:
         """Cancel every task, stop the player and drop the history."""
         self._closed = True
         tasks: list[asyncio.Task[Any]] = list(self._barge_tasks)
-        tasks.extend(self._announce_tasks)
         for task in (self._reply_task, self._bc_task):
             if task is not None:
                 tasks.append(task)
@@ -929,7 +900,6 @@ class TurnManager:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._barge_candidates.clear()
-        self._announce_tasks.clear()
         self._pending.clear()
         self._bc_active = False
         self._reply_task = None
