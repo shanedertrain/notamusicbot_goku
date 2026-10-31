@@ -176,6 +176,99 @@ async def postprocess(
     )
 
 
+# Quietest reference peak the streaming gain will boost from (about -26 dBFS), so a
+# near-silent opening piece is never amplified into noise.
+_MIN_REF_PEAK = 0.05
+# Weight of the newest clip when the cross-clip peak reference is updated.
+_PEAK_EMA_ALPHA = 0.3
+
+
+class PeakTracker:
+    """Typical clip peak, shared by every clip a voice renders.
+
+    A streamed clip cannot be normalized to its own peak (the peak is unknown
+    until it ends), so it is scaled by the running reference instead, which keeps
+    level steady from one chunk of a reply to the next.
+    """
+
+    def __init__(self) -> None:
+        self.ema: float | None = None
+
+    def update(self, clip_peak: float) -> None:
+        if clip_peak <= 0.0:
+            return
+        if self.ema is None:
+            self.ema = clip_peak
+        else:
+            self.ema += _PEAK_EMA_ALPHA * (clip_peak - self.ema)
+
+
+class StreamingPostprocess:
+    """Chunk-at-a-time form of :func:`postprocess` for speed 1.0: float mono in, s16le out.
+
+    Resampling is stateful (no seam between chunks) and the gain comes from the
+    reference peak so far, never above the target, so a chunk can never clip.
+    One instance per clip; ``push`` per piece, then ``finish``.
+    """
+
+    def __init__(self, profile: AudioProcessingProfile, tracker: PeakTracker) -> None:
+        self._profile = profile
+        self._tracker = tracker
+        self._ref = tracker.ema or 0.0
+        self._clip_peak = 0.0
+        self._resampler: object | None = None
+        self._rate: int | None = None
+
+    def push(self, audio: npt.NDArray[np.floating], sample_rate: int) -> bytes:
+        return self._emit(self._resample(audio, sample_rate, last=False))
+
+    def finish(self) -> bytes:
+        import numpy as np
+
+        tail = self._resample(np.zeros(0, dtype=np.float32), self._rate or 0, last=True)
+        out = self._emit(tail)
+        self._tracker.update(self._clip_peak)
+        return out
+
+    def _resample(
+        self, audio: npt.NDArray[np.floating], sample_rate: int, *, last: bool
+    ) -> npt.NDArray[np.float32]:
+        import numpy as np
+
+        mono = np.asarray(audio, dtype=np.float32)
+        if mono.ndim > 1:
+            mono = mono.mean(axis=-1)
+        mono = mono.reshape(-1)
+        target = self._profile.target_sample_rate_hz
+        if self._rate is None:
+            self._rate = sample_rate
+            if sample_rate != target:
+                import soxr
+
+                self._resampler = soxr.ResampleStream(sample_rate, target, 1, dtype="float32")
+        if self._resampler is None:
+            return mono
+        return np.asarray(
+            self._resampler.resample_chunk(mono, last=last),  # type: ignore[attr-defined]
+            dtype=np.float32,
+        ).reshape(-1)
+
+    def _emit(self, mono: npt.NDArray[np.float32]) -> bytes:
+        import numpy as np
+
+        if mono.size == 0:
+            return b""
+        peak = float(np.max(np.abs(mono)))
+        self._ref = max(self._ref, peak)
+        self._clip_peak = max(self._clip_peak, peak)
+        target = 10.0 ** (min(self._profile.target_peak_dbfs, 0.0) / 20.0)
+        scaled = np.clip(mono * (target / max(self._ref, _MIN_REF_PEAK)), -1.0, 1.0)
+        pcm = np.rint(scaled * 32767.0).astype("<i2")
+        if self._profile.channels > 1:
+            pcm = np.repeat(pcm[:, None], self._profile.channels, axis=1)
+        return pcm.tobytes()
+
+
 def peak_dbfs(path: Path) -> float:
     """Read a WAV file and return its peak level in dBFS (for tests/tools)."""
     data, _ = _load(path)

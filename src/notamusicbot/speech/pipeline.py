@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 import time
 import uuid
+from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 import soundfile as sf
 
@@ -32,7 +34,13 @@ from notamusicbot.speech.coordinator import InferenceCoordinator
 from notamusicbot.speech.postprocess import postprocess
 from notamusicbot.speech.tts.base import SpeechSynthesizer
 
+if TYPE_CHECKING:
+    import numpy as np
+    import numpy.typing as npt
+
 logger = logging.getLogger(__name__)
+
+_STREAM_DONE = object()
 
 
 class PipelineClock(Protocol):
@@ -67,6 +75,55 @@ class SpeechPipeline:
         # ``keep_artifacts=True`` (debug/benchmark mode) retains everything.
         self._keep_artifacts = keep_artifacts
         self._failed_job_retention_hours = failed_job_retention_hours
+
+    @property
+    def can_stream(self) -> bool:
+        """True when the synthesizer can hand audio over piece by piece."""
+        return bool(getattr(self._synthesizer, "supports_chunk_streaming", False))
+
+    async def stream(
+        self, request: TtsRequest
+    ) -> AsyncIterator[tuple[npt.NDArray[np.float32], int]]:
+        """Yield raw ``(mono float32 audio, sample_rate)`` pieces as they are generated.
+
+        Generation runs inside a detached lease-holder like :meth:`run`: the GPU
+        lease is taken before the first piece and released only after the
+        synthesizer's worker thread has really stopped, including when this
+        iterator is closed or its consumer cancelled early (which asks the
+        worker to stop at its next piece).
+        """
+        stop = threading.Event()
+        pieces: asyncio.Queue[Any] = asyncio.Queue()
+
+        async def chain() -> None:
+            source = self._synthesizer.stream(request, stop)  # type: ignore[attr-defined]
+            try:
+                async for piece in source:
+                    pieces.put_nowait(piece)
+                    if stop.is_set():
+                        break
+            finally:
+                await source.aclose()
+
+        task = asyncio.get_running_loop().create_task(self._coordinator.run_detached(chain))
+
+        def _ended(finished: asyncio.Task[Any]) -> None:
+            if finished.cancelled():
+                pieces.put_nowait(asyncio.CancelledError())
+            else:
+                pieces.put_nowait(finished.exception() or _STREAM_DONE)
+
+        task.add_done_callback(_ended)
+        try:
+            while True:
+                item = await pieces.get()
+                if item is _STREAM_DONE:
+                    return
+                if isinstance(item, BaseException):
+                    raise item
+                yield item
+        finally:
+            stop.set()
 
     def _paths(self, job_id: str) -> tuple[Path, Path]:
         job_dir = self._output_dir / job_id

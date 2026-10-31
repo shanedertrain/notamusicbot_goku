@@ -7,9 +7,10 @@ hard-coded.
 
 A voice is a reference clip plus (for ICL cloning) its transcript: the clone
 prompt is built once per voice and cached in memory, and every later utterance
-for that voice reuses it (the documented production pattern). There is no
-streaming in v1: ``supports_streaming`` is False and callers synthesize whole
-sentences through the speech pipeline.
+for that voice reuses it (the documented production pattern). ``synthesize``
+renders a whole utterance to a WAV; ``stream`` yields the audio as it is
+generated (about a second at a time) when the faster-qwen3-tts wrapper is loaded.
+``supports_streaming`` stays False: it describes the WAV contract, not ``stream``.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ import contextlib
 import logging
 import threading
 import time
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -38,6 +40,9 @@ REFERENCE_SAMPLE_RATE_HZ = 24000
 
 # faster-qwen3-tts CUDA-graph static cache length (prompt + generated frames).
 FAST_MAX_SEQ_LEN = 1024
+
+# Codec steps per streamed piece (12 Hz codec: 12 steps is about one second of audio).
+STREAM_CHUNK_STEPS = 12
 
 # xvec clones only the speaker embedding; icl additionally conditions on the
 # reference speech codes and therefore needs the reference transcript.
@@ -63,7 +68,7 @@ class QwenCloneSynthesizer:
     class never constructs heavyweight objects at import time.
     """
 
-    # Whole-sentence only in v1 (no CUDA-graph streaming backend).
+    # ``synthesize`` is whole-utterance (WAV); piecewise output is ``stream``.
     supports_streaming = False
 
     def __init__(
@@ -80,6 +85,10 @@ class QwenCloneSynthesizer:
         # prompt items to ``generate_voice_clone``.
         self._prompt_model = getattr(model, "model", model) if fast else model
         self.default_language = default_language
+        # Only the faster-qwen3-tts wrapper can hand audio over while it generates.
+        self.supports_chunk_streaming = fast and callable(
+            getattr(model, "generate_voice_clone_streaming", None)
+        )
         # (resolved reference path, reference text, clone mode) -> prompt items.
         self._prompts: dict[tuple[str, str, str], Any] = {}
         self._prompt_lock = threading.Lock()
@@ -166,33 +175,13 @@ class QwenCloneSynthesizer:
         blocking call actually finishes even if the pipeline caller is
         cancelled.
         """
-        text = normalize_text(request.text)
-        if not text:
-            msg = "TTS request text is empty"
-            raise ValueError(msg)
-        reference_audio = request.reference_audio
-        if not reference_audio:
-            msg = "TTS request has no reference audio (clone backend)"
-            raise ValueError(msg)
-        reference_path = Path(reference_audio)
-        if not reference_path.is_file():
-            msg = f"Voice reference audio not found: {reference_path}"
-            raise ValueError(msg)
-        clone_mode = request.clone_mode
-        if clone_mode not in CLONE_MODES:
-            msg = f"Unknown clone mode {clone_mode!r} (expected one of {CLONE_MODES})"
-            raise ValueError(msg)
-        reference_text = (request.reference_text or "").strip()
-        if clone_mode == "icl" and not reference_text:
-            msg = "clone_mode 'icl' requires the reference transcript"
-            raise ValueError(msg)
-        language = request.language or self.default_language
+        text, language, reference_path, reference_text, clone_mode = self._validated(request)
 
         start = time.perf_counter()
         wavs, sample_rate = await self._generate(
             text,
             language,
-            reference_path.resolve(),
+            reference_path,
             reference_text,
             clone_mode,
             max_new_tokens=max_new_tokens_for(request.max_audio_seconds),
@@ -216,6 +205,99 @@ class QwenCloneSynthesizer:
             elapsed,
         )
         return AudioArtifact(path=output_path, sample_rate_hz=int(sample_rate), duration_s=duration)
+
+    async def stream(
+        self, request: TtsRequest, stop: threading.Event
+    ) -> AsyncIterator[tuple[npt.NDArray[np.float32], int]]:
+        """Yield ``(mono float32 audio, sample_rate)`` pieces while the model generates.
+
+        The pieces join seamlessly (the library decodes each with left context).
+        Setting ``stop`` ends generation at the next piece; this generator returns
+        only once the worker thread has, so a caller holding the GPU lease can
+        release it as soon as the generator is closed.
+        """
+        if not self.supports_chunk_streaming:
+            msg = "this Qwen3-TTS model cannot stream (faster-qwen3-tts wrapper required)"
+            raise RuntimeError(msg)
+        text, language, reference_path, reference_text, clone_mode = self._validated(request)
+        extra: dict[str, Any] = {}
+        max_new_tokens = max_new_tokens_for(request.max_audio_seconds)
+        if max_new_tokens is not None:
+            extra["max_new_tokens"] = max_new_tokens
+        if request.temperature is not None:
+            extra["temperature"] = request.temperature
+        if request.top_k is not None:
+            extra["top_k"] = request.top_k
+
+        loop = asyncio.get_running_loop()
+        pieces: asyncio.Queue[Any] = asyncio.Queue()
+        done = object()
+
+        def _put(item: Any) -> None:
+            with contextlib.suppress(RuntimeError):  # loop already closed
+                loop.call_soon_threadsafe(pieces.put_nowait, item)
+
+        def _run() -> None:
+            try:
+                items = self._prompt_items(reference_path, reference_text, clone_mode)
+                generator = self._model.generate_voice_clone_streaming(
+                    text=text,
+                    language=language,
+                    voice_clone_prompt=items,
+                    chunk_size=STREAM_CHUNK_STEPS,
+                    **extra,
+                )
+                try:
+                    for audio, sample_rate, _timing in generator:
+                        if stop.is_set():
+                            break
+                        _put((audio, int(sample_rate)))
+                finally:
+                    generator.close()
+            except BaseException as exc:  # noqa: BLE001 - relayed to the consumer
+                _put(exc)
+            finally:
+                _put(done)
+
+        worker = asyncio.ensure_future(asyncio.to_thread(_run))
+        try:
+            while True:
+                item = await pieces.get()
+                if item is done:
+                    return
+                if isinstance(item, BaseException):
+                    raise item
+                yield item
+        finally:
+            stop.set()
+            # Never leave the lease while the model is still generating.
+            await asyncio.shield(worker)
+
+    def _validated(self, request: TtsRequest) -> tuple[str, str, Path, str, str]:
+        """Check ``request``; return (text, language, reference path, reference text, mode)."""
+        text = normalize_text(request.text)
+        if not text:
+            msg = "TTS request text is empty"
+            raise ValueError(msg)
+        reference_audio = request.reference_audio
+        if not reference_audio:
+            msg = "TTS request has no reference audio (clone backend)"
+            raise ValueError(msg)
+        reference_path = Path(reference_audio)
+        if not reference_path.is_file():
+            msg = f"Voice reference audio not found: {reference_path}"
+            raise ValueError(msg)
+        clone_mode = request.clone_mode
+        if clone_mode not in CLONE_MODES:
+            msg = f"Unknown clone mode {clone_mode!r} (expected one of {CLONE_MODES})"
+            raise ValueError(msg)
+        reference_text = (request.reference_text or "").strip()
+        if clone_mode == "icl" and not reference_text:
+            msg = "clone_mode 'icl' requires the reference transcript"
+            raise ValueError(msg)
+        language = request.language or self.default_language
+
+        return text, language, reference_path.resolve(), reference_text, clone_mode
 
     def _prompt_items(
         self,

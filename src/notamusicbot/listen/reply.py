@@ -5,7 +5,8 @@ postprocess), reads ``final.wav`` into memory and removes the job artifact, so
 a spoken reply never outlives its synthesis call on disk. There is no
 passthrough fallback: if the pipeline fails :class:`ReplySynthesisError` is
 raised and the CALLER says nothing (owner decision, plan section 10).
-Whole-sentence synthesis only (v1: the clone backend does not stream).
+``synthesize_sentence`` returns a whole clip; ``stream_sentence`` yields the PCM
+while the model is still generating, so playback can start on the first piece.
 Discord-free.
 """
 
@@ -16,6 +17,8 @@ import hashlib
 import logging
 import random
 import shutil
+import time
+from collections.abc import AsyncGenerator, AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
@@ -26,6 +29,7 @@ import soundfile as sf
 from notamusicbot.domain.speech import AudioArtifact
 from notamusicbot.domain.voice_profiles import to_processing_profile, tts_request_for
 from notamusicbot.speech.artifacts import FAILED_MARKER_NAME, cleanup_temp_artifact
+from notamusicbot.speech.postprocess import PeakTracker, StreamingPostprocess
 
 if TYPE_CHECKING:
     from notamusicbot.domain.speech import AudioProcessingProfile, TtsRequest
@@ -66,6 +70,32 @@ class ReplyAudio:
     truncated: bool = False
 
 
+_BYTES_PER_SECOND = REPLY_SAMPLE_RATE_HZ * _BYTES_PER_FRAME
+
+
+class StreamedReply:
+    """One chunk's PCM that is still being synthesized.
+
+    The producer ``push``es pieces and calls ``end`` (always, even on failure);
+    the player iterates ``pieces``. ``duration_s`` grows as audio arrives.
+    """
+
+    def __init__(self) -> None:
+        self._queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+        self.duration_s = 0.0
+
+    def push(self, pcm: bytes) -> None:
+        self.duration_s += len(pcm) / _BYTES_PER_SECOND
+        self._queue.put_nowait(pcm)
+
+    def end(self) -> None:
+        self._queue.put_nowait(None)
+
+    async def pieces(self) -> AsyncIterator[bytes]:
+        while (piece := await self._queue.get()) is not None:
+            yield piece
+
+
 def tts_cap_seconds(
     text: str,
     *,
@@ -96,11 +126,30 @@ def _cap_audio(
 
 
 class _Pipeline(Protocol):
+    def stream(self, request: TtsRequest) -> AsyncIterator[tuple[Any, int]]: ...
+
     async def run(
         self,
         request: TtsRequest,
         processing: AudioProcessingProfile | None = None,
     ) -> tuple[AudioArtifact, Any]: ...
+
+
+def _within_cap(pcm: bytes, sent: int, cap_frames: int) -> tuple[bytes, int, bool]:
+    """Trim ``pcm`` so the reply holds at most ``cap_frames`` frames.
+
+    Returns (pcm to emit, total frames after it, whether the cap cut it). A cut
+    piece gets the same linear fade-out as :func:`_cap_audio`.
+    """
+    frames = len(pcm) // _BYTES_PER_FRAME
+    if sent + frames <= cap_frames:
+        return pcm, sent + frames, False
+    keep = max(0, cap_frames - sent)
+    clip = np.frombuffer(pcm, dtype="<i2").reshape(-1, REPLY_CHANNELS)[:keep].astype(np.float64)
+    fade = min(int(round(TTS_CAP_FADE_OUT_S * REPLY_SAMPLE_RATE_HZ)), keep)
+    if fade > 0:
+        clip[-fade:] *= np.linspace(1.0, 0.0, fade)[:, None]
+    return np.ascontiguousarray(np.rint(clip), dtype="<i2").tobytes(), cap_frames, True
 
 
 def _read_pcm(path: Path) -> ReplyAudio:
@@ -149,6 +198,18 @@ class ReplySynthesizer:
         # FAILED call leaves behind (the pipeline keeps them for diagnosis)
         # are removed, so a dropped reply leaves no files.
         self._artifact_root = artifact_root
+        self._peaks = PeakTracker()
+
+    @property
+    def can_stream(self) -> bool:
+        """True when replies can be played while still being generated."""
+        pipeline = self._pipeline
+        return (
+            bool(getattr(pipeline, "can_stream", False))
+            and self._processing.speed == 1.0  # the time-stretch needs the whole clip
+            and self._processing.target_sample_rate_hz == REPLY_SAMPLE_RATE_HZ
+            and self._processing.channels == REPLY_CHANNELS
+        )
 
     @property
     def profile_id(self) -> str:
@@ -188,6 +249,55 @@ class ReplySynthesizer:
             if artifact is not None:
                 await asyncio.to_thread(cleanup_temp_artifact, artifact.path)
             await asyncio.to_thread(self._remove_failed_jobs, before)
+
+    async def stream_sentence(self, text: str) -> AsyncGenerator[bytes, None]:
+        """Yield ``text`` as 48 kHz stereo s16le pieces while it is being generated.
+
+        Same length cap and failure contract as :meth:`synthesize_sentence`
+        (:class:`ReplySynthesisError`; cancellation propagates). Leaving the
+        iterator early stops generation and frees the GPU.
+        """
+        cap_s = tts_cap_seconds(
+            text,
+            seconds_per_word=self._tts_seconds_per_word,
+            floor_seconds=self._tts_cap_floor_s,
+        )
+        request = tts_request_for(self._profile, text, max_audio_seconds=cap_s)
+        cap_frames = int(round(cap_s * REPLY_SAMPLE_RATE_HZ))
+        post = StreamingPostprocess(self._processing, self._peaks)
+        source = self._pipeline.stream(request)
+        sent = 0
+        started = time.perf_counter()
+        try:
+            async for audio, sample_rate in source:
+                pcm = post.push(audio, sample_rate)
+                if not pcm:
+                    continue
+                if sent == 0:
+                    logger.info("TTS first audio after %.2fs", time.perf_counter() - started)
+                piece, sent, capped = _within_cap(pcm, sent, cap_frames)
+                if piece:
+                    yield piece
+                if capped:
+                    logger.warning(
+                        "TTS over-generated: %d words cut to the %.2fs cap",
+                        len(text.split()),
+                        cap_s,
+                    )
+                    return
+            tail, sent, _capped = _within_cap(post.finish(), sent, cap_frames)
+            if tail:
+                yield tail
+        except asyncio.CancelledError:
+            raise
+        except ReplySynthesisError:
+            raise
+        except Exception as exc:
+            logger.warning("Reply synthesis failed (%s); reply dropped", type(exc).__name__)
+            msg = f"reply synthesis failed: {exc}"
+            raise ReplySynthesisError(msg) from exc
+        finally:
+            await source.aclose()  # type: ignore[attr-defined]
 
     def _remove_failed_jobs(self, before: set[Path]) -> None:
         for job_dir in _job_dirs(self._artifact_root) - before:
