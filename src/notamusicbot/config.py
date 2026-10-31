@@ -52,94 +52,6 @@ class SecretsSettings(BaseSettings):
     spotify_client_secret: str | None = Field(default=None, alias="SPOTIFY_CLIENT_SECRET")
 
 
-class VoiceConversionSettings(BaseModel):
-    """Voice-conversion tuning that overrides the profile YAMLs.
-
-    ``f0_method_override`` replaces the RVC f0 extraction method carried by
-    the model YAMLs (``rvc_cli/models/*/``), which ship ``harvest`` — the
-    slow CPU pitch extractor. ``pm`` (parselmouth) is the fast option
-    (typically 3-10x faster); ``crepe``/``crepe-tiny`` run on the GPU.
-    ``None`` (default) keeps each profile yaml's own value — no silent
-    quality change for existing installs.
-    """
-
-    f0_method_override: str | None = Field(
-        default=None,
-        pattern="^(pm|harvest|dio|crepe|crepe-tiny|rmvpe)$",
-    )
-    # RVC output-quality knobs (docs/RVC_QUALITY_PLAN.md 3.3). Every default
-    # reproduces the previous behaviour; ``use_index``, ``auto_pitch`` and the
-    # ``rmvpe`` f0 methods need the quality work and the RMVPE weights.
-    use_index: bool = False
-    index_rate: float | None = Field(default=None, ge=0.0, le=1.0)
-    index_nprobe: int | None = Field(default=None, ge=1, le=256)
-    protect: float | None = Field(default=None, ge=0.0, le=0.5)
-    rms_mix_rate: float | None = Field(default=None, ge=0.0, le=1.0)
-    pitch_shift_offset: int = Field(default=0, ge=-24, le=24)
-    auto_pitch: bool = False
-    auto_pitch_strength: float = Field(default=1.0, ge=0.0, le=1.0)
-    auto_pitch_max: int = Field(default=12, ge=0, le=24)
-    # RVC model name -> target median f0 (Hz); lookup is case-insensitive.
-    target_f0_median_hz: dict[str, float] = Field(default_factory=dict)
-    f0_post_median: int = Field(default=0, ge=0, le=101)
-    f0_post_octave_repair: bool = False
-    f0_post_clamp: tuple[float, float] | None = None
-    stream_f0_algo: str = Field(default="pm", pattern="^(pm|rmvpe)$")
-    # Opt-in streaming RVC (docs/RVC_STREAMING_DESIGN.md): the reply path
-    # converts the TTS stream block by block instead of whole sentences.
-    # Streams force the ``pm`` f0 method. ``False`` keeps today's behavior.
-    streaming: bool = False
-    stream_first_block_ms: int = Field(default=100, ge=20, le=1000)
-    stream_block_ms: int = Field(default=320, ge=100, le=2000)
-    stream_context_ms: int = Field(default=1000, ge=200, le=4000)
-    stream_lookahead_ms: int = Field(default=100, ge=40, le=500)
-    stream_crossfade_ms: int = Field(default=40, ge=10, le=200)
-    stream_search_ms: int = Field(default=20, ge=0, le=100)
-
-    @field_validator("f0_post_median")
-    @classmethod
-    def _validate_median_width(cls, value: int) -> int:
-        if value != 0 and (value < 3 or value % 2 == 0):
-            msg = f"f0_post_median must be 0 or an odd number >= 3 (got {value})"
-            raise ValueError(msg)
-        return value
-
-    @field_validator("f0_post_clamp")
-    @classmethod
-    def _validate_clamp(cls, value: tuple[float, float] | None) -> tuple[float, float] | None:
-        if value is not None and not 0 < value[0] < value[1]:
-            msg = f"f0_post_clamp must satisfy 0 < min < max (got {value})"
-            raise ValueError(msg)
-        return value
-
-    @field_validator("target_f0_median_hz")
-    @classmethod
-    def _validate_targets(cls, value: dict[str, float]) -> dict[str, float]:
-        for name, hz in value.items():
-            if not 40.0 <= hz <= 600.0:
-                msg = f"target_f0_median_hz[{name!r}] must be within 40..600 Hz (got {hz})"
-                raise ValueError(msg)
-        return value
-
-    @model_validator(mode="after")
-    def _validate_stream_timing(self) -> VoiceConversionSettings:
-        for name in (
-            "stream_first_block_ms",
-            "stream_block_ms",
-            "stream_context_ms",
-            "stream_lookahead_ms",
-            "stream_crossfade_ms",
-            "stream_search_ms",
-        ):
-            if getattr(self, name) % 20 != 0:
-                msg = f"{name} must be a multiple of 20 ms (got {getattr(self, name)})"
-                raise ValueError(msg)
-        if self.stream_crossfade_ms > self.stream_block_ms:
-            msg = "stream_crossfade_ms must not exceed stream_block_ms"
-            raise ValueError(msg)
-        return self
-
-
 class SpeechSettings(BaseModel):
     """Speech pipeline configuration (non-secret)."""
 
@@ -149,10 +61,8 @@ class SpeechSettings(BaseModel):
     tts_device: str = "cuda"
     tts_dtype: str = "bfloat16"
     tts_attn_implementation: str = "sdpa"
-    tts_model_id: str = "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
-    # faster-qwen3-tts (CUDA graphs, streaming); falls back to stock on failure.
-    tts_fast: bool = True
-    tts_stream_chunk_size: int = Field(default=8, ge=1)
+    # Qwen3-TTS Base checkpoint: the shared model every voice profile clones.
+    tts_model_id: str = "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
     max_concurrent_inference: int = Field(default=1, ge=1)
     queue_size: int = Field(default=8, ge=1)
     warmup_on_start: bool = False
@@ -163,27 +73,13 @@ class SpeechSettings(BaseModel):
     # Review Round-2 P1: the commentary flow is the primary feature of this
     # rework, so fresh installs (config/app.example.yaml) start with it on.
     commentary_enabled: bool = True
-    # Debug/benchmark mode: retain tts_source.wav/converted.wav/final.wav in the
-    # job directory instead of applying the standard artifact cleanup policy.
+    # Debug/benchmark mode: retain tts_source.wav/final.wav in the job directory
+    # instead of applying the standard artifact cleanup policy.
     keep_artifacts: bool = False
     # Failed jobs keep their intermediate artifacts for diagnosis (marked with a
     # ``.failed`` timestamp); directories older than this many hours are pruned
     # opportunistically when the next speech job starts.
     failed_job_retention_hours: float = Field(default=24.0, ge=0.0)
-    # Voice-conversion backends the router may serve (see
-    # speech/voice_conversion/router.py). Profiles requesting another backend
-    # fail with a clear error instead of silently falling back.
-    voice_conversion_backends: list[str] = Field(default_factory=lambda: ["passthrough", "rvc"])
-    # What to do when a profile requests the 'rvc' backend but the RVC worker
-    # is unavailable (no GPU, missing worker runtime):
-    #   error       -> raise; commentary generation is skipped (default: never
-    #                  emit un-converted source voice)
-    #   passthrough -> degrade to passthrough with a warning
-    rvc_unavailable_policy: str = "error"
-    # Overrides for values carried by the RVC model YAMLs (see
-    # VoiceConversionSettings). Empty section = yaml values win (shipped
-    # default: f0_method harvest).
-    voice_conversion: VoiceConversionSettings = VoiceConversionSettings()
 
 
 class DiscordSettings(BaseModel):
@@ -218,7 +114,7 @@ class ContentSettings(BaseModel):
     """
 
     # Review Round-2 P1: enabled by default — a fresh setup must exercise the
-    # content -> Qwen TTS -> RVC path during ordinary music playback.
+    # content -> Qwen TTS -> speech path during ordinary music playback.
     enabled: bool = True
     provider: str = "local_qwen"
     model_id: str = "Qwen/Qwen3-4B-Instruct-2507"
@@ -228,7 +124,7 @@ class ContentSettings(BaseModel):
     max_new_tokens: int = Field(default=120, ge=1)
     temperature: float = Field(default=0.8, ge=0.0, le=2.0)
     # Cap on spoken commentary length: generated text is trimmed to at most
-    # this many sentences BEFORE TTS (TTS/RVC cost scales with audio length).
+    # this many sentences BEFORE TTS (TTS cost scales with audio length).
     # null disables trimming. The prompt already asks for 2-3 sentences; this
     # enforces it (the LLM regularly overshoots).
     max_sentences: int | None = Field(default=3, ge=1)

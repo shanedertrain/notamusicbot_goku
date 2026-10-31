@@ -13,7 +13,7 @@ from notamusicbot.content import llm as llm_mod
 from notamusicbot.content import prompts
 from notamusicbot.content.base import ContentKind, ContentRequest
 from notamusicbot.content.llm import LocalQwenLlmProvider, resolve_local_model_path
-from notamusicbot.speech.tts.qwen_custom_voice import QwenCustomVoiceSynthesizer
+from notamusicbot.speech.tts.qwen_clone import QwenCloneSynthesizer
 
 HUB_ID = "Qwen/Qwen3-4B-Instruct-2507"
 SNAP = "/cache/snapshots/abc123"
@@ -77,8 +77,8 @@ def test_tts_loader_passes_snapshot_path_not_hub_id(monkeypatch: pytest.MonkeyPa
             return "model"
 
     monkeypatch.setitem(sys.modules, "qwen_tts", types.SimpleNamespace(Qwen3TTSModel=FakeTts))
-    synth = QwenCustomVoiceSynthesizer.from_settings(
-        "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice", "cpu", "float32", "sdpa"
+    synth = QwenCloneSynthesizer.from_settings(
+        "Qwen/Qwen3-TTS-12Hz-0.6B-Base", "cpu", "float32", "sdpa"
     )
     assert seen == [(SNAP, "cpu")]
     assert synth._model == "model"

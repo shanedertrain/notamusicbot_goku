@@ -12,16 +12,20 @@ persona:
     politician speaking officially. Never mention being an AI model unless you are asked.
     Think briefly: reason in at most a couple of short lines, then answer in ONE
     conversational sentence of at most 18 words.
+# Voice clone (Qwen3-TTS Base zero-shot). The reference clip is the Obama clip
+# the owner approved; xvec clones the speaker embedding only.
 tts:
-  backend: qwen_custom_voice
-  model: Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice
   language: English
-  speaker: Ryan
-voice_conversion:
-  backend: rvc
-  model: Obama
-  variant: obama
-  pitch_shift: 0
+  reference_audio: config/voices/refs/obama.wav
+  # Read by Obama for the official "A Promised Land" audiobook excerpt
+  # (studio recording, dry) - replaces the reverberant 2012 convention clip.
+  reference_text: >-
+    and planned for a less eventful but hopefully no less satisfying second act.
+    And by the time I was ready to get back to work and sat down with a pen and
+    yellow pad I still like writing things out in long hand, finding that a
+    computer gives even my roughest drafts too smooth a gloss and lends half
+    baked thoughts the mask of tidiness.
+  clone_mode: xvec
 audio:
   speed: 1.0
   target_peak_dbfs: -1.0

@@ -29,7 +29,6 @@ from notamusicbot.domain.voice_profiles import (
     AudioProfile,
     Persona,
     TtsProfile,
-    VoiceConversionProfileModel,
     VoiceProfile,
 )
 
@@ -133,8 +132,10 @@ def _profile() -> VoiceProfile:
     return VoiceProfile(
         id="goku",
         persona=Persona(display_name="Goku", description="a cheerful fighter"),
-        tts=TtsProfile(speaker="x"),
-        voice_conversion=VoiceConversionProfileModel(),
+        tts=TtsProfile(
+            reference_audio=Path("tests/fixtures/sine_2s.wav"),
+            reference_text="Hey, it's me, Goku!",
+        ),
         audio=AudioProfile(),
     )
 
@@ -160,12 +161,7 @@ def rig(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Rig:
         transcriber.load = lambda: order.append("asr_load")  # type: ignore[attr-defined]
         return transcriber
 
-    async def warm(pipeline: Any, profile: Any) -> bool:
-        order.append("rvc_warm")
-        return True
-
     monkeypatch.setattr(listen_glue, "build_transcriber", build_transcriber)
-    monkeypatch.setattr(listen_glue, "warm_voice_converter", warm)
     monkeypatch.setattr(listen_glue, "ReplySynthesizer", lambda *a, **k: synth)
     monkeypatch.setattr(listen_glue, "BackchannelCache", lambda *a, **k: PrerenderBackchannel())
     monkeypatch.setattr(listen_glue, "_new_opus_decoder", FakeDecoder)
@@ -212,11 +208,11 @@ def _extra_tasks() -> list[asyncio.Task[Any]]:
     return [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
 
 
-async def test_start_orders_offline_llm_asr_rvc_then_joins_and_announces(rig: Rig) -> None:
+async def test_start_orders_offline_llm_asr_then_joins_and_announces(rig: Rig) -> None:
     await rig.session.start()
     try:
-        # offline guard, then ASR load, then the RVC warm-up.
-        assert rig.order == ["offline", "asr", "asr_load", "rvc_warm"]
+        # offline guard, then ASR load (the clone TTS model is already resident).
+        assert rig.order == ["offline", "asr", "asr_load"]
         assert rig.provider.preferred_calls == 1
         assert rig.vc.listening
         assert rig.channel.sent == [rig.session._app.settings.listen.announcement_text]
@@ -364,8 +360,8 @@ def test_session_has_no_consent_surface() -> None:
     assert not hasattr(ListenSession, "opt_out")
 
 
-async def _full_turn(rig: Rig, *, rvc_fails: bool = False) -> None:
-    rig.synth.fail = rvc_fails
+async def _full_turn(rig: Rig, *, synth_fails: bool = False) -> None:
+    rig.synth.fail = synth_fails
     await rig.session.start()
     rig.vc.plays.clear()
     _send(rig, 1, b"T", 15)  # 300 ms of tone
@@ -391,13 +387,13 @@ async def test_full_fake_turn_replies_and_writes_nothing(rig: Rig) -> None:
         await rig.session.stop()
 
 
-async def test_rvc_failure_drops_the_reply_and_the_session_continues(rig: Rig) -> None:
-    await _full_turn(rig, rvc_fails=True)
+async def test_synthesis_failure_drops_the_reply_and_the_session_continues(rig: Rig) -> None:
+    await _full_turn(rig, synth_fails=True)
     try:
         assert rig.provider.calls
         assert rig.vc.plays == []  # nothing spoken, no raw-TTS fallback
         assert rig.vc.listening
-        # The next turn works once RVC is back.
+        # The next turn works once synthesis is back.
         rig.synth.fail = False
         _send(rig, 1, b"T", 15)
         _send(rig, 1, b"S", 10)

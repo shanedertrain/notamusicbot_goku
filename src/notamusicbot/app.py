@@ -19,12 +19,11 @@ from notamusicbot.config import AppSettings, SecretsSettings, load_app_settings
 from notamusicbot.content.base import ContentProvider
 from notamusicbot.domain.speech import AudioArtifact, AudioProcessingProfile, TtsRequest
 from notamusicbot.domain.users import UserProfile, UserRegistry, load_users_yaml
-from notamusicbot.domain.voice_profiles import load_voice_profiles
+from notamusicbot.domain.voice_profiles import load_voice_profiles, tts_request_for
 from notamusicbot.speech.coordinator import InferenceCoordinator
 from notamusicbot.speech.pipeline import SpeechPipeline
-from notamusicbot.speech.tts.qwen_custom_voice import QwenCustomVoiceSynthesizer
-from notamusicbot.speech.voice_conversion.base import VoiceConverter, VoiceStreamParams
-from notamusicbot.speech.voice_conversion.router import VoiceConverterRouter
+from notamusicbot.speech.tts.base import SpeechSynthesizer
+from notamusicbot.speech.tts.qwen_clone import QwenCloneSynthesizer
 
 logger = logging.getLogger(__name__)
 
@@ -47,28 +46,26 @@ class _LazySpeechSynthesizer:
 
     def __init__(self, app: Application) -> None:
         self._app = app
-        self._real: QwenCustomVoiceSynthesizer | None = None
+        self._real: QwenCloneSynthesizer | None = None
 
-    def _realize(self) -> QwenCustomVoiceSynthesizer:
+    def _realize(self) -> QwenCloneSynthesizer:
         if self._real is None:
             s = self._app.settings.speech
             logger.info("Lazy speech model load on first use (%s)", s.tts_model_id)
-            self._real = QwenCustomVoiceSynthesizer.from_settings(
+            self._real = QwenCloneSynthesizer.from_settings(
                 model_id=s.tts_model_id,
                 device=s.tts_device,
                 dtype=s.tts_dtype,
                 attn_implementation=s.tts_attn_implementation,
-                fast=s.tts_fast,
-                stream_chunk_size=s.tts_stream_chunk_size,
-                coordinator=self._app.coordinator,
             )
         return self._real
 
     async def synthesize(self, request: TtsRequest, output_path: Path) -> AudioArtifact:
         return await self._realize().synthesize(request, output_path)
 
-    def warmup(self, output_path: Path) -> AudioArtifact:
-        return self._realize().warmup(output_path)
+    async def shutdown(self) -> None:
+        if self._real is not None:
+            await self._real.shutdown()
 
     def __getattr__(self, name: str):
         return getattr(self._realize(), name)
@@ -85,7 +82,7 @@ class Application:
         settings: AppSettings,
         secrets: SecretsSettings | None = None,
         *,
-        rvc_factory: Callable[[], VoiceConverter] | None = None,
+        synthesizer_factory: Callable[[], SpeechSynthesizer] | None = None,
     ) -> None:
         self.settings = settings
         self.secrets = secrets or SecretsSettings()
@@ -99,25 +96,16 @@ class Application:
             max_concurrent=settings.speech.max_concurrent_inference,
             queue_size=settings.speech.queue_size,
         )
-        self._synthesizer: QwenCustomVoiceSynthesizer | _LazySpeechSynthesizer | None = None
-        # Composition-root dependency injection: tests install a spy/fake RVC
-        # adapter factory here instead of the real worker-spawning adapter.
-        self.converter: VoiceConverter = VoiceConverterRouter(
-            enabled_backends=settings.speech.voice_conversion_backends,
-            rvc_factory=rvc_factory,
-            rvc_unavailable_policy=settings.speech.rvc_unavailable_policy,
-            rvc_stream_params=VoiceStreamParams.from_settings(settings.speech.voice_conversion),
-        )
+        self._synthesizer: (
+            QwenCloneSynthesizer | SpeechSynthesizer | _LazySpeechSynthesizer | None
+        ) = None
+        # Composition-root dependency injection: tests install a fake
+        # synthesizer factory here instead of loading the real clone model.
+        self._synthesizer_factory = synthesizer_factory
         self.pipeline: SpeechPipeline | None = None
         self._content_provider: ContentProvider | None = None
         self._listen_provider: ContentProvider | None = None
         self._warmup_task: asyncio.Task[None] | None = None
-
-    @property
-    def converter_router(self) -> VoiceConverterRouter:
-        """The typed router behind :attr:`converter` (lifecycle entry point)."""
-        assert isinstance(self.converter, VoiceConverterRouter)
-        return self.converter
 
     @property
     def speech_features_enabled(self) -> bool:
@@ -151,7 +139,7 @@ class Application:
             from notamusicbot.content.llm import LocalQwenLlmProvider
 
             # Review Round-3 P1: hand the LLM the SAME shared GPU coordinator
-            # the speech pipeline uses, so LLM generation and TTS/RVC inference
+            # the speech pipeline uses, so LLM generation and TTS inference
             # are serialized on the one GPU.
             self._content_provider = LocalQwenLlmProvider.from_settings(
                 content, gpu_coordinator=self.coordinator
@@ -216,7 +204,6 @@ class Application:
             artifact_root=Path(self.settings.speech.output_dir),
             tts_max_seconds_per_word=reply.tts_max_seconds_per_word,
             tts_cap_floor_seconds=reply.tts_cap_floor_seconds,
-            stream_converter=self.converter,
         )
 
     def build_listen_content_provider(self) -> ContentProvider | None:
@@ -281,7 +268,9 @@ class Application:
                 )
                 self._content_provider = StaticTemplateProvider()
 
-    def load_speech_model(self) -> QwenCustomVoiceSynthesizer | _LazySpeechSynthesizer:
+    def load_speech_model(
+        self,
+    ) -> QwenCloneSynthesizer | SpeechSynthesizer | _LazySpeechSynthesizer:
         """Load the persistent Qwen model once (call during startup, not import).
 
         When no enabled feature needs speech, a lazy proxy is installed that
@@ -289,19 +278,18 @@ class Application:
         expensive components).
         """
         if self._synthesizer is None:
-            if not self.speech_features_enabled:
+            if self._synthesizer_factory is not None:
+                self._synthesizer = self._synthesizer_factory()
+            elif not self.speech_features_enabled:
                 self._synthesizer = _LazySpeechSynthesizer(self)
                 logger.info("Speech features disabled; TTS model load deferred to first use")
             else:
                 s = self.settings.speech
-                self._synthesizer = QwenCustomVoiceSynthesizer.from_settings(
+                self._synthesizer = QwenCloneSynthesizer.from_settings(
                     model_id=s.tts_model_id,
                     device=s.tts_device,
                     dtype=s.tts_dtype,
                     attn_implementation=s.tts_attn_implementation,
-                    fast=s.tts_fast,
-                    stream_chunk_size=s.tts_stream_chunk_size,
-                    coordinator=self.coordinator,
                 )
         return self._synthesizer
 
@@ -318,14 +306,11 @@ class Application:
         )
         self.pipeline = SpeechPipeline(
             self._synthesizer,
-            self.converter,
             processing,
             coordinator=self.coordinator,
             output_dir=Path(s.output_dir),
             keep_artifacts=s.keep_artifacts,
             failed_job_retention_hours=s.failed_job_retention_hours,
-            f0_method_override=s.voice_conversion.f0_method_override,
-            quality=s.voice_conversion,
         )
         return self.pipeline
 
@@ -333,23 +318,20 @@ class Application:
         """Application lifecycle entry point (call from the bot's ``setup_hook``).
 
         Review Round-4 P1 (startup ordering): the content LLM model is loaded
-        to completion BEFORE the voice-conversion router starts (RVC worker
-        spawn + health check + model load) and before the warmup task is
-        scheduled. LLM weight loading is GPU/VRAM-heavy and is NOT itself
-        arbitrated through the coordinator (it happens once, outside any
-        slot), so with ``warmup_on_start: true`` the warmup or RVC startup
-        could otherwise acquire the GPU while the LLM weights are still
-        streaming onto it. Reordering makes load → RVC start → warmup
-        strictly sequential; the startup-order test
+        to completion BEFORE the speech (clone TTS) model and before the
+        warmup task is scheduled. LLM weight loading is GPU/VRAM-heavy and is
+        NOT itself arbitrated through the coordinator (it happens once,
+        outside any slot), so with ``warmup_on_start: true`` the warmup could
+        otherwise acquire the GPU while the LLM weights are still streaming
+        onto it. Loading the LLM first makes load -> TTS load -> warmup strictly
+        sequential; the startup-order test
         (``test_startup_load_and_warmup_do_not_overlap``) pins this.
-
-        RVC start failure is logged, not raised, so a missing GPU/worker
-        runtime degrades per the configured ``rvc_unavailable_policy`` instead
-        of killing startup.
         """
         # Content LLM loads first (fail-soft, off the event loop).
         await asyncio.to_thread(self.load_content_model)
-        await self.converter_router.startup()
+        # Then the persistent clone model (idempotent: setup_hook may have
+        # loaded it already), still off the event loop.
+        await asyncio.to_thread(self.load_speech_model)
         # Warmup only when a feature will actually use the synthesizer and the
         # setting asks for it; scheduled as a task so it never blocks startup.
         # At most one warmup task is scheduled per startup cycle.
@@ -370,10 +352,9 @@ class Application:
         2. ``coordinator.close()`` — stop accepting new inference submissions
            (CoordinatorClosedError), cancel queued-not-started jobs, and AWAIT
            already-started detached GPU jobs to completion;
-        3. ``converter_router.shutdown()`` — only now is the RVC worker torn
-           down, and since no pipeline job can be running, no late
-           ``convert()`` can lazily restart it (the router also refuses
-           converts with RouterClosedError as defense in depth);
+        3. drop the clone synthesizer — only now is the persistent model
+           released, and since no pipeline job can be running no generation
+           can be left holding it;
         4. remaining resources (none yet at this layer).
         """
         task = self._warmup_task
@@ -396,23 +377,45 @@ class Application:
                 "Inference drain timed out after %ss; proceeding with backend teardown",
                 self.SHUTDOWN_DRAIN_TIMEOUT_S,
             )
-        # Use the backing attribute: tests inject protocol-level converter
-        # spies that satisfy shutdown() but are not VoiceConverterRouter.
-        await self.converter.shutdown()
+        # Drop the persistent clone model (frees its VRAM). The synthesizer may
+        # be a test fake without shutdown(); the pipeline cannot be running now.
+        synthesizer = self._synthesizer
+        self._synthesizer = None
+        if synthesizer is not None:
+            shutdown = getattr(synthesizer, "shutdown", None)
+            if callable(shutdown):
+                try:
+                    await shutdown()
+                except Exception:
+                    logger.warning("Speech model teardown failed", exc_info=True)
+
+    def _warmup_request(self) -> TtsRequest | None:
+        """A clone request for warmup, built from an existing voice profile."""
+        if not self.voice_profiles:
+            return None
+        preferred = self.settings.interstitial.voice_profile
+        profile = self.voice_profiles.get(preferred) or next(iter(self.voice_profiles.values()))
+        return tts_request_for(profile, "Warmup.")
 
     async def warmup(self) -> None:
         """Best-effort model warmup; failures are logged and never fatal."""
-        if self._synthesizer is None:
+        synthesizer = self._synthesizer
+        if synthesizer is None:
+            return
+        request = self._warmup_request()
+        if request is None:
+            logger.info("No voice profiles configured; speech warmup skipped")
             return
         try:
             # Review Round-3 P1 startup case: TTS warmup is GPU inference too,
             # so it arbitrates through the same shared coordinator as LLM
             # generation and pipeline jobs (never overlaps them on the GPU).
-            # Review Round-4 P0: run_blocking (not slot + to_thread) so a
-            # cancelled warmup task cannot release the GPU lease while the
-            # warmup synthesis thread is still running.
-            await self.coordinator.run_blocking(
-                self._synthesizer.warmup,
+            # Review Round-4 P0: the detached lease holder (run_detached, not
+            # slot + create_task) so a cancelled warmup task cannot release the
+            # GPU lease while the warmup synthesis is still running.
+            await self.coordinator.run_detached(
+                synthesizer.synthesize,
+                request,
                 Path(self.settings.speech.output_dir) / "warmup.wav",
             )
         except Exception:
@@ -441,8 +444,7 @@ def main() -> None:
     app = Application(load_app_settings())
     # Live-shutdown hardening (user report): a second Ctrl+C during the
     # bounded close means the user wants OUT now. Force-exit instead of
-    # unwinding through teardown that may itself block; the RVC worker is
-    # reaped by its atexit hook either way.
+    # unwinding through teardown that may itself block.
     _sigint_count = 0
 
     def _on_sigint(signum: int, frame: Any) -> None:

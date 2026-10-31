@@ -1,9 +1,10 @@
 # notamusicbot (Goku)
 
 A Discord music bot with a local AI speech pipeline: it announces songs and
-talks in voice channels using **Qwen3-TTS** converted to a target voice with
-**RVC**, plus the usual `!gplay`-style media playback (YouTube / Spotify
-search). Everything runs locally on your GPU — **no LLM API key required**.
+talks in voice channels using **Qwen3-TTS zero-shot voice cloning** from a
+reference clip, plus the usual `!gplay`-style media playback (YouTube /
+Spotify search). Everything runs locally on your GPU — **no LLM API key
+required**.
 
 ## Architecture
 
@@ -12,15 +13,13 @@ Discord commands / content providers (news, local LLM commentary)
         |
         v
 SpeechPipeline            src/notamusicbot/speech/pipeline.py
-        |                 synthesize -> voice-convert -> post-process
+        |                 synthesize -> post-process
         v
 SpeechSynthesizer         protocol; backend:
-Qwen3-TTS 0.6B            Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice (persistent, bf16/sdpa/CUDA)
-        |
-        v
-VoiceConverter            protocol; backend:
-RVC adapter               JSON IPC -> legacy/rvc_worker.py (isolated Python 3.10 env) -> rvc_cli
-        |
+Qwen3-TTS 0.6B clone      Qwen/Qwen3-TTS-12Hz-0.6B-Base (persistent, bf16/sdpa/CUDA;
+                          faster-qwen3-tts CUDA-graph wrapper when installed,
+                          stock qwen_tts fallback)
+        |                 clone prompt built once per voice profile, cached in memory
         v
 Post-processing           speed (time-stretch), resample, peak normalize (WAV/PCM throughout)
         |
@@ -33,14 +32,12 @@ Key layout:
 - `src/notamusicbot/` — the application package (`app.py` composition root,
   `config.py` typed settings, `discord_bot/`, `media/`, `content/`, `speech/`,
   `domain/`, `tools/`).
-- `config/` — voice profiles (`config/voices/goku.yaml`) and
-  `config/users.example.yaml` (the live `users.yaml` stays in the working
-  deployment only and is excluded from review packages).
-- `legacy/` — the isolated legacy RVC worker (JSON over stdin/stdout).
-- `rvc_cli/` — vendored legacy RVC stack (Python 3.10, fairseq), never imported
-  by the application.
+- `config/` — voice profiles (`config/voices/*.yaml`, each pointing at a
+  reference clip under `config/voices/refs/`) and `config/users.example.yaml`
+  (the live `users.yaml` stays in the working deployment only and is excluded
+  from review packages).
 - `scripts/setup.sh` — one-command setup for a fresh machine.
-- `benchmark/` — retained voice-conversion benchmark runs.
+- `benchmark/` — retained voice benchmark runs.
 
 ## Setup
 
@@ -54,27 +51,19 @@ Prerequisites: git, curl, ffmpeg, an NVIDIA GPU (recommended), and `deno`
 
 ```bash
 ./scripts/setup.sh              # full setup + non-GPU sanity checks
-./scripts/setup.sh --gpu-check  # additionally run Qwen TTS + RVC smoke tests
-./scripts/setup.sh --no-rvc     # skip the legacy Python 3.10 RVC environment
+./scripts/setup.sh --gpu-check  # additionally run Qwen TTS + LLM smoke tests
 ```
 
-The script is idempotent: it installs uv + Python 3.12, initializes the
-`rvc_cli` git submodule (`git submodule update --init --recursive`), creates
-`.venv-main`, installs the package with the `discord` and `media` extras,
-scaffolds `config/app.yaml` from `config/app.example.yaml` (only if missing),
-downloads the Qwen TTS/LLM weights, and seeds `.env` from `.env.example`. It
-does not print or store any secret, and any failed prerequisite aborts the
-script with a non-zero exit code.
+The script is idempotent: it installs uv + Python 3.12, creates `.venv-main`,
+installs the package with the `discord` and `media` extras, scaffolds
+`config/app.yaml` from `config/app.example.yaml` (only if missing), checks that
+every configured voice has its reference clip, downloads the Qwen TTS/LLM
+weights, and seeds `.env` from `.env.example`. It does not print or store any
+secret, and any failed prerequisite aborts the script with a non-zero exit code.
 
-**Required RVC assets** (not distributed; supply locally — see the header of
-`scripts/setup.sh` for details):
-
-- `hubert_base.pt` at the repository root (HuBERT feature extractor, from the
-  Retrieval-based-Voice-Conversion project releases);
-- `rvc_cli/models/<Name>/*.pth` + `*.index` per voice (weights + FAISS index);
-- `rvc_cli/models/<Name>/*.yaml` per voice/variant (the yaml stem is the
-  legacy model name; e.g. `obama_trans.yaml` defines `OBAMA_TRANS` and shares
-  the Obama weights in `rvc_cli/models/Obama/`).
+**Voice references** are the only per-voice asset: a clean, single-speaker WAV
+(3–30 s recommended) plus its transcript. Adding a voice is dropping a clip and
+a YAML profile — there is no per-voice model to train or download.
 
 ### Configuration (`.env`)
 
@@ -108,17 +97,40 @@ scaffolds it from `config/app.example.yaml` on first run.
 
 Old user configs are migrated with the `migrate_users` tool
 (`src/notamusicbot/tools/migrate_users.py`); it resolves each legacy model
-name to a matching voice profile (e.g. `OBAMA` → `obama`) and exits non-zero
-if a referenced model has no profile — it never silently falls back to `goku`.
+name to a matching voice profile (e.g. `OBAMA` → `obama`, `OBAMA_TRANS` →
+`obama`) and exits non-zero if a referenced model has no profile — it never
+silently falls back to `goku`.
 
 ## Voice profiles
 
-A voice profile pairs a Qwen CustomVoice source speaker (e.g. `Aiden`, `Ryan`)
-with an RVC target model name and post-processing defaults
-(`config/voices/goku.yaml`). Speech is always generated from the configured
-source speaker, then converted to the target voice — the source speaker is
-per-profile, never hard-coded, and sample rates are taken from the TTS return
-value rather than assumed.
+A voice profile is a persona plus a clone reference (`config/voices/obama.yaml`):
+
+```yaml
+id: obama
+persona:
+  display_name: Obama
+  description: Barack Obama, the former president of the United States
+  chat_prompt: >-
+    ...
+tts:
+  language: English
+  reference_audio: config/voices/refs/obama.wav
+  reference_text: "..."     # transcript of the reference clip
+  clone_mode: xvec          # xvec (speaker embedding only) | icl (needs the transcript)
+audio:
+  speed: 1.0
+  target_peak_dbfs: -1.0
+```
+
+Speech is always generated by the shared Qwen3-TTS Base model from that
+profile's reference clip; the clone prompt is built once per voice and cached.
+
+Operational notes for the voice pipeline (reference requirements, the
+echo/reverb failure mode, measured RTF/VRAM, asset policy and follow-ups):
+[docs/VOICE_PIPELINE_NOTES.md](docs/VOICE_PIPELINE_NOTES.md).
+Sample rates are taken from the model return value rather than assumed.
+`clone_mode: icl` reproduces more of the reference prosody but can bleed
+reference content into the output, so the shipped profiles use `xvec`.
 
 ## Commands
 
@@ -175,48 +187,27 @@ podcast:
   reply_turns: 2       # replies after the host opening (total spoken lines = reply_turns + 1)
 ```
 
-Note: alternating voice profiles (e.g. Obama↔Goku) currently restart the
-legacy RVC worker per model switch (~5.5 s per switch, vs ~0.6 s warm
-same-model — see `TEST_RESULTS.md`); a persistent per-model worker cache is
-planned future work.
+Alternating voice profiles are cheap now: each voice is a cached clone prompt
+on the one shared TTS model, with no per-voice model switch.
 
 ## CLI tools
 
 ```bash
-.venv-main/bin/speech-test --help        # synthesize one line through the full pipeline
-.venv-main/bin/benchmark-voices --help   # RTF/latency benchmark over a corpus
+.venv-main/bin/speech-test --profile obama --text "Look, let me be clear."
+.venv-main/bin/benchmark-voices --profiles obama goku   # RTF/latency benchmark over a corpus
 .venv-main/bin/python -m notamusicbot    # run the bot
 ```
-
-## RVC legacy worker notes
-
-RVC (fairseq 0.12.2, torch 2.5.0+cu121) only runs on Python 3.10, so it is
-isolated in the repo-root `.venv` legacy environment behind
-`legacy/rvc_worker.py`. The main app speaks a line-based JSON protocol to it:
-one process, one persistently loaded model, `load-model` / `convert` /
-`health` actions. The root-level legacy modules `tts.py` and
-`configuration.py` exist solely for that worker's imports — the modernized
-bot itself lives entirely in `src/notamusicbot/`. See `LEGACY_VENV.md`.
 
 ## Testing
 
 ```bash
 .venv-main/bin/python -m pytest tests/unit                                  # full unit suite
-.venv-main/bin/python -m pytest tests/integration -m "rvc and integration"  # needs GPU + RVC models
+.venv-main/bin/python -m pytest tests/integration -m "gpu and integration"  # needs GPU + model caches
 .venv-main/bin/ruff check src tests && .venv-main/bin/ruff format --check src tests
 ```
 
 Exact pass/fail counts for a given revision are deliberately **not**
-hard-coded here — see `TEST_RESULTS.md` (it also maps the review's required
-tests and records the RVC-switching benchmark and GPU-residency run).
-
-## CLI tools
-
-Also available:
-
-```bash
-.venv-main/bin/python -m notamusicbot.tools.benchmark_rvc_switching --help  # alternating-profile RVC switch-cost benchmark
-```
+hard-coded here — see `TEST_RESULTS.md`.
 
 Evidence from the rework: `IMPLEMENTATION_REPORT.md`, `TEST_RESULTS.md`,
-`BENCHMARK_RESULTS.md`, `DEPENDENCY_NOTES.md`.
+`DEPENDENCY_NOTES.md`.

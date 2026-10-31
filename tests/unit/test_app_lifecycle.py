@@ -50,8 +50,8 @@ class _CountingSynthesizer:
     async def synthesize(self, request, output_path):  # pragma: no cover - not used here
         raise AssertionError
 
-    def warmup(self, output_path):  # pragma: no cover - not used here
-        raise AssertionError
+    async def shutdown(self) -> None:
+        return None
 
 
 class _ExplodingLlm:
@@ -151,7 +151,7 @@ def test_successful_content_load_keeps_llm_provider(monkeypatch) -> None:
 
 
 def test_no_llm_or_tts_construction_when_all_disabled(monkeypatch) -> None:
-    monkeypatch.setattr("notamusicbot.app.QwenCustomVoiceSynthesizer", _CountingSynthesizer)
+    monkeypatch.setattr("notamusicbot.app.QwenCloneSynthesizer", _CountingSynthesizer)
     monkeypatch.setattr("notamusicbot.content.llm.LocalQwenLlmProvider", _ExplodingLlm)
     _CountingSynthesizer.instances = 0
     _ExplodingLlm.instances = 0
@@ -187,7 +187,7 @@ def test_no_warmup_scheduled_when_all_disabled() -> None:
 
 
 def test_tts_loaded_but_no_llm_when_only_commentary_enabled(monkeypatch) -> None:
-    monkeypatch.setattr("notamusicbot.app.QwenCustomVoiceSynthesizer", _CountingSynthesizer)
+    monkeypatch.setattr("notamusicbot.app.QwenCloneSynthesizer", _CountingSynthesizer)
     monkeypatch.setattr("notamusicbot.content.llm.LocalQwenLlmProvider", _ExplodingLlm)
     _CountingSynthesizer.instances = 0
     _ExplodingLlm.instances = 0
@@ -255,12 +255,14 @@ def test_warmup_scheduled_exactly_once_and_non_blocking(monkeypatch) -> None:
         def __init__(self) -> None:
             self.calls = 0
 
-        def warmup(self, output_path: Path):
+        async def synthesize(self, request, output_path):
+            from notamusicbot.domain.speech import AudioArtifact
+
             self.calls += 1
             warmup_calls.append(output_path)
             # Block until the test observes startup already returned.
-            release.wait(timeout=5)
-            return None
+            await asyncio.get_running_loop().run_in_executor(None, release.wait, 5)
+            return AudioArtifact(path=output_path, sample_rate_hz=24000, duration_s=0.1)
 
     async def main() -> None:
         app = _app(commentary_enabled=True, warmup_on_start=True)
@@ -288,8 +290,11 @@ def test_warmup_scheduled_only_once_across_double_startup() -> None:
     class FastSynth:
         calls = 0
 
-        def warmup(self, output_path: Path):
+        async def synthesize(self, request, output_path):
+            from notamusicbot.domain.speech import AudioArtifact
+
             type(self).calls += 1
+            return AudioArtifact(path=output_path, sample_rate_hz=24000, duration_s=0.1)
 
     async def main() -> None:
         app = _app(commentary_enabled=True, warmup_on_start=True)

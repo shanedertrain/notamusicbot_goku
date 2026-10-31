@@ -7,9 +7,9 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import soundfile as sf
 
-from conftest import FailingSynthesizer, FakeConverter, FakeSynthesizer
-from notamusicbot.domain.speech import AudioArtifact, VoiceConversionProfile
+from conftest import FailingSynthesizer, FakeSynthesizer
 from notamusicbot.domain.voice_profiles import VoiceProfile
 from notamusicbot.listen import reply as reply_module
 from notamusicbot.listen.reply import (
@@ -18,18 +18,19 @@ from notamusicbot.listen.reply import (
     ReplySynthesisError,
     ReplySynthesizer,
     trim_backchannel,
-    warm_voice_converter,
 )
 from notamusicbot.speech.pipeline import SpeechPipeline
 
 
-def _profile(backend: str = "passthrough") -> VoiceProfile:
+def _profile(tmp_path: Path, profile_id: str = "goku") -> VoiceProfile:
+    reference = tmp_path / f"ref_{profile_id}.wav"
+    if not reference.exists():
+        sf.write(reference, np.zeros(2400, dtype=np.float32), 24000)
     return VoiceProfile.model_validate(
         {
-            "id": "goku",
-            "persona": {"display_name": "Goku"},
-            "tts": {"speaker": "Ryan"},
-            "voice_conversion": {"backend": backend},
+            "id": profile_id,
+            "persona": {"display_name": profile_id.title()},
+            "tts": {"reference_audio": str(reference), "reference_text": "Hi."},
             "audio": {},
         }
     )
@@ -39,7 +40,7 @@ class CountingPipeline(SpeechPipeline):
     """Real pipeline over the fakes, counting ``run`` calls."""
 
     def __init__(self, out: Path, synth: FakeSynthesizer | None = None) -> None:
-        super().__init__(synth or FakeSynthesizer(), FakeConverter(), output_dir=out)
+        super().__init__(synth or FakeSynthesizer(), output_dir=out)
         self.run_count = 0
 
     async def run(self, *args, **kwargs):  # type: ignore[no-untyped-def]
@@ -49,7 +50,7 @@ class CountingPipeline(SpeechPipeline):
 
 class RaisingPipeline:
     async def run(self, *args, **kwargs):  # type: ignore[no-untyped-def]
-        raise RuntimeError("rvc unavailable")
+        raise RuntimeError("tts unavailable")
 
 
 def _files(root: Path) -> list[Path]:
@@ -59,9 +60,9 @@ def _files(root: Path) -> list[Path]:
 async def test_pcm_length_and_artifact_cleanup(tmp_path: Path) -> None:
     out = tmp_path / "speech"
     pipeline = CountingPipeline(out, FakeSynthesizer(seconds=0.5))
-    reply = await ReplySynthesizer(pipeline, _profile(), artifact_root=out).synthesize_sentence(
-        "Hello there."
-    )
+    reply = await ReplySynthesizer(
+        pipeline, _profile(tmp_path), artifact_root=out
+    ).synthesize_sentence("Hello there.")
     assert isinstance(reply, ReplyAudio)
     assert reply.duration_s == pytest.approx(0.5, abs=1e-3)
     assert abs(len(reply.pcm) - round(reply.duration_s * 48000) * 2 * 2) <= 4
@@ -72,7 +73,7 @@ async def test_pcm_length_and_artifact_cleanup(tmp_path: Path) -> None:
 
 async def test_pipeline_failure_raises_and_leaves_nothing(tmp_path: Path) -> None:
     out = tmp_path / "speech"
-    synth = ReplySynthesizer(RaisingPipeline(), _profile(), artifact_root=out)
+    synth = ReplySynthesizer(RaisingPipeline(), _profile(tmp_path), artifact_root=out)
     with pytest.raises(ReplySynthesisError):
         await synth.synthesize_sentence("Hello.")
     assert _files(out) == []
@@ -81,7 +82,7 @@ async def test_pipeline_failure_raises_and_leaves_nothing(tmp_path: Path) -> Non
 async def test_real_pipeline_failure_removes_failed_job_dir(tmp_path: Path) -> None:
     out = tmp_path / "speech"
     pipeline = CountingPipeline(out, FailingSynthesizer())
-    synth = ReplySynthesizer(pipeline, _profile(), artifact_root=out)
+    synth = ReplySynthesizer(pipeline, _profile(tmp_path), artifact_root=out)
     with pytest.raises(ReplySynthesisError):
         await synth.synthesize_sentence("Hello.")
     assert pipeline.run_count == 1
@@ -92,7 +93,7 @@ async def test_backchannel_second_prerender_hits_cache(tmp_path: Path) -> None:
     out = tmp_path / "speech"
     cache_dir = tmp_path / "bc"
     pipeline = CountingPipeline(out)
-    synth = ReplySynthesizer(pipeline, _profile(), artifact_root=out)
+    synth = ReplySynthesizer(pipeline, _profile(tmp_path), artifact_root=out)
     texts = ["Hm?", "Oh yeah?", "Let me think."]
 
     cache = BackchannelCache(cache_dir, texts, synth)
@@ -118,8 +119,8 @@ async def test_backchannel_second_prerender_hits_cache(tmp_path: Path) -> None:
 async def test_backchannel_key_depends_on_profile_id(tmp_path: Path) -> None:
     out = tmp_path / "speech"
     pipeline = CountingPipeline(out)
-    other = _profile().model_copy(update={"id": "vegeta"})
-    a = BackchannelCache(tmp_path / "bc", ["Hm?"], ReplySynthesizer(pipeline, _profile()))
+    other = _profile(tmp_path, "vegeta")
+    a = BackchannelCache(tmp_path / "bc", ["Hm?"], ReplySynthesizer(pipeline, _profile(tmp_path)))
     b = BackchannelCache(tmp_path / "bc", ["Hm?"], ReplySynthesizer(pipeline, other))
     await a.prerender()
     await b.prerender()
@@ -128,37 +129,12 @@ async def test_backchannel_key_depends_on_profile_id(tmp_path: Path) -> None:
 
 
 async def test_get_random_empty_raises(tmp_path: Path) -> None:
-    cache = BackchannelCache(tmp_path, ["Hm?"], ReplySynthesizer(RaisingPipeline(), _profile()))
+    cache = BackchannelCache(
+        tmp_path, ["Hm?"], ReplySynthesizer(RaisingPipeline(), _profile(tmp_path))
+    )
     assert await cache.prerender() == 0  # failure skipped, not fatal
     with pytest.raises(LookupError):
         cache.get_random()
-
-
-async def test_warm_runs_one_conversion_on_pipeline_and_router(tmp_path: Path) -> None:
-    pipeline = CountingPipeline(tmp_path / "speech")
-    assert await warm_voice_converter(pipeline, _profile("rvc")) is True
-    conv = pipeline._converter  # noqa: SLF001
-    assert len(conv.calls) == 1
-    source, profile = conv.calls[0]
-    assert isinstance(source, AudioArtifact)
-    assert profile.backend == "rvc"
-    assert pipeline.run_count == 0  # no TTS, no pipeline job
-
-    direct = FakeConverter()
-    assert await warm_voice_converter(direct, VoiceConversionProfile(backend="rvc")) is True
-    assert len(direct.calls) == 1
-
-
-async def test_warm_skips_passthrough_and_survives_failure() -> None:
-    direct = FakeConverter()
-    assert await warm_voice_converter(direct, _profile("passthrough")) is False
-    assert direct.calls == []
-
-    class Broken:
-        async def convert(self, *a, **k):  # type: ignore[no-untyped-def]
-            raise RuntimeError("no worker")
-
-    assert await warm_voice_converter(Broken(), _profile("rvc")) is False
 
 
 RATE = 48000
@@ -211,7 +187,9 @@ def test_trim_keeps_short_clean_clip_and_all_silent_clip() -> None:
 
 async def test_cached_clip_is_trimmed(tmp_path: Path) -> None:
     out = tmp_path / "speech"
-    synth = ReplySynthesizer(CountingPipeline(out, FakeSynthesizer(seconds=2.0)), _profile())
+    synth = ReplySynthesizer(
+        CountingPipeline(out, FakeSynthesizer(seconds=2.0)), _profile(tmp_path)
+    )
     cache = BackchannelCache(tmp_path / "bc", ["Hm?"], synth)
     await cache.prerender()
     clip = cache.get_random()
@@ -224,7 +202,7 @@ async def test_backchannel_key_changes_with_trim_version(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pipeline = CountingPipeline(tmp_path / "speech")
-    synth = ReplySynthesizer(pipeline, _profile())
+    synth = ReplySynthesizer(pipeline, _profile(tmp_path))
     cache = BackchannelCache(tmp_path / "bc", ["Hm?"], synth)
     before = cache._path_for("Hm?")  # noqa: SLF001
     assert before == cache._path_for("Hm?")  # noqa: SLF001  (stable)

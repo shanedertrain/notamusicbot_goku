@@ -1,4 +1,4 @@
-"""Speech pipeline: TTS -> voice conversion -> post-processing -> final WAV.
+"""Speech pipeline: TTS -> post-processing -> final WAV.
 
 Discord and content code never performs these stages manually; they call
 :attr:`SpeechPipeline.run`. Intermediates are PCM/WAV only.
@@ -10,19 +10,16 @@ import asyncio
 import logging
 import time
 import uuid
-from dataclasses import replace
 from pathlib import Path
 from typing import Protocol
 
 import soundfile as sf
 
-from notamusicbot.config import VoiceConversionSettings
 from notamusicbot.domain.speech import (
     AudioArtifact,
     AudioProcessingProfile,
     SpeechJobMetrics,
     TtsRequest,
-    VoiceConversionProfile,
 )
 from notamusicbot.speech.artifacts import (
     mark_failed_job,
@@ -34,7 +31,6 @@ from notamusicbot.speech.artifacts import (
 from notamusicbot.speech.coordinator import InferenceCoordinator
 from notamusicbot.speech.postprocess import postprocess
 from notamusicbot.speech.tts.base import SpeechSynthesizer
-from notamusicbot.speech.voice_conversion.base import VoiceConverter
 
 logger = logging.getLogger(__name__)
 
@@ -46,29 +42,24 @@ class PipelineClock(Protocol):
 
 
 class SpeechPipeline:
-    """Owns the full TTS -> VC -> postprocess chain for one request."""
+    """Owns the TTS -> postprocess chain for one request."""
 
     def __init__(
         self,
         synthesizer: SpeechSynthesizer,
-        converter: VoiceConverter,
         processing: AudioProcessingProfile | None = None,
         coordinator: InferenceCoordinator | None = None,
         output_dir: Path = Path("var/speech"),
         *,
         keep_artifacts: bool = False,
         failed_job_retention_hours: float = 24.0,
-        f0_method_override: str | None = None,
-        quality: VoiceConversionSettings | None = None,
     ) -> None:
         self._synthesizer = synthesizer
-        self._converter = converter
         self._processing = processing or AudioProcessingProfile()
         self._coordinator = coordinator or InferenceCoordinator()
         self._output_dir = output_dir
         # Artifact cleanup policy (review P1-11):
-        #   tts_source.wav  deleted after VC succeeds
-        #   converted.wav   deleted after post-processing succeeds
+        #   tts_source.wav  deleted after post-processing succeeds
         #   final.wav       registered as play-once queue media; the Discord
         #                   player deletes it after playback (see
         #                   speech/artifacts.py + media.downloader.cleanup_media)
@@ -76,96 +67,29 @@ class SpeechPipeline:
         # ``keep_artifacts=True`` (debug/benchmark mode) retains everything.
         self._keep_artifacts = keep_artifacts
         self._failed_job_retention_hours = failed_job_retention_hours
-        # Config-selected RVC f0 extraction method (speech.voice_conversion
-        # .f0_method_override). ``None`` keeps each profile yaml's value
-        # (shipped default: harvest). Only applied to 'rvc'-backend jobs.
-        self._f0_method_override = f0_method_override
-        # RVC output-quality settings (docs/RVC_QUALITY_PLAN.md 3.3); ``None``
-        # or all-default settings leave every profile exactly as it was.
-        self._quality = quality
 
-    def _apply_f0_override(self, conversion: VoiceConversionProfile) -> VoiceConversionProfile:
-        """Merge the configured RVC overrides into an RVC conversion profile.
-
-        Applies ``f0_method_override`` and the output-quality settings. With
-        everything at its default (or a non-RVC backend) the profile is
-        returned unchanged: the model yaml's ``f0_method`` (shipped default
-        ``harvest``) applies.
-        """
-        if conversion.backend != "rvc":
-            return conversion
-        changes: dict[str, object] = {}
-        override = self._f0_method_override
-        if override is not None and conversion.f0_method != override:
-            changes["f0_method"] = override
-        changes.update(self._quality_changes(conversion))
-        return replace(conversion, **changes) if changes else conversion
-
-    def _quality_changes(self, conversion: VoiceConversionProfile) -> dict[str, object]:
-        q = self._quality
-        if q is None:
-            return {}
-        changes: dict[str, object] = {}
-        if q.pitch_shift_offset:
-            changes["pitch_shift"] = conversion.pitch_shift + q.pitch_shift_offset
-        if q.use_index:
-            changes["use_index"] = True
-        if q.index_rate is not None:
-            changes["index_rate"] = q.index_rate
-        if q.index_nprobe is not None:
-            changes["index_nprobe"] = q.index_nprobe
-        if q.protect is not None:
-            changes["protect"] = q.protect
-        if q.rms_mix_rate is not None:
-            changes["rms_mix_rate"] = q.rms_mix_rate
-        if q.auto_pitch and conversion.model:
-            targets = {k.casefold(): v for k, v in q.target_f0_median_hz.items()}
-            target = targets.get(conversion.model.casefold())
-            if target is not None:
-                changes["auto_pitch_target_hz"] = target
-                changes["auto_pitch_strength"] = q.auto_pitch_strength
-                changes["auto_pitch_max"] = q.auto_pitch_max
-        if q.f0_post_median or q.f0_post_octave_repair or q.f0_post_clamp is not None:
-            post: dict[str, float | int | bool] = {
-                "median_width": q.f0_post_median,
-                "octave_repair": q.f0_post_octave_repair,
-            }
-            if q.f0_post_clamp is not None:
-                post["clamp_min_hz"], post["clamp_max_hz"] = q.f0_post_clamp
-            changes["f0_post"] = tuple(sorted(post.items()))
-        if q.stream_f0_algo != "pm":
-            changes["stream_f0_algo"] = q.stream_f0_algo
-        return changes
-
-    def _paths(self, job_id: str) -> tuple[Path, Path, Path]:
+    def _paths(self, job_id: str) -> tuple[Path, Path]:
         job_dir = self._output_dir / job_id
-        return (
-            job_dir / "tts_source.wav",
-            job_dir / "converted.wav",
-            job_dir / "final.wav",
-        )
+        return job_dir / "tts_source.wav", job_dir / "final.wav"
 
     async def run(
         self,
         request: TtsRequest,
-        conversion: VoiceConversionProfile,
         processing: AudioProcessingProfile | None = None,
     ) -> tuple[AudioArtifact, SpeechJobMetrics]:
         """Execute one speech job and return the final artifact plus metrics.
 
-        Review Round-4 P0 (cancellation safety): the ENTIRE TTS -> VC ->
-        postprocess chain runs through ``coordinator.run_detached`` — the chain
-        coroutine executes inside a detached holder task that owns the GPU
-        lease. The lease is held from before the chain starts until it
-        actually finishes, even if the awaiting caller (e.g. the player's
-        post-song task) is cancelled mid-flight: cancellation detaches the
-        caller, and the lease stays with the holder until the RVC worker reply
-        has been consumed and the artifacts are written. No later job can
-        enter the coordinator while the cancelled job's GPU work is still
-        running.
+        Review Round-4 P0 (cancellation safety): the ENTIRE TTS -> postprocess
+        chain runs through ``coordinator.run_detached`` — the chain coroutine
+        executes inside a detached holder task that owns the GPU lease. The
+        lease is held from before the chain starts until it actually finishes,
+        even if the awaiting caller (e.g. the player's post-song task) is
+        cancelled mid-flight: cancellation detaches the caller, and the lease
+        stays with the holder until the blocking generation call returns and
+        the artifacts are written. No later job can enter the coordinator while
+        the cancelled job's GPU work is still running.
         """
         processing = processing or self._processing
-        conversion = self._apply_f0_override(conversion)
         job_id = uuid.uuid4().hex[:12]
         start = time.perf_counter()
 
@@ -196,7 +120,7 @@ class SpeechPipeline:
             # duration.
             submitted_at = time.perf_counter()
             final, timings = await self._coordinator.run_detached(
-                self._run_chain, request, conversion, processing, job_id, submitted_at
+                self._run_chain, request, processing, job_id, submitted_at
             )
         except asyncio.CancelledError:
             # Cancellation is not an error (review Round-3 P1): never swallow
@@ -229,19 +153,16 @@ class SpeechPipeline:
             job_id=job_id,
             queue_wait_s=timings["queue_wait"],
             tts_s=timings["tts"],
-            voice_conversion_s=timings["vc"],
             postprocess_s=timings["pp"],
             total_s=total_s,
             output_duration_s=out_duration,
             tts_rtf=timings["tts"] / out_duration if out_duration > 0 else 0.0,
-            voice_conversion_rtf=timings["vc"] / out_duration if out_duration > 0 else 0.0,
             total_rtf=total_s / out_duration if out_duration > 0 else 0.0,
         )
         logger.info(
-            "Speech job %s done tts=%.2fs vc=%.2fs pp=%.2fs total=%.2fs rtf=%.2f",
+            "Speech job %s done tts=%.2fs pp=%.2fs total=%.2fs rtf=%.2f",
             job_id,
             timings["tts"],
-            timings["vc"],
             timings["pp"],
             total_s,
             metrics.total_rtf,
@@ -251,51 +172,34 @@ class SpeechPipeline:
     async def _run_chain(
         self,
         request: TtsRequest,
-        conversion: VoiceConversionProfile,
         processing: AudioProcessingProfile,
         job_id: str,
         submitted_at: float,
     ) -> tuple[AudioArtifact, dict[str, float]]:
-        """TTS -> VC -> postprocess chain — the detached lease-holder body.
-
-        The RVC adapter's own worker-reply wait thread lives inside this chain
-        coroutine, so a subprocess conversion can never outlive the lease:
-        caller cancellation detaches the holder but the lease is released only
-        when this coroutine (reply wait included) actually finishes.
-        """
-        # Review Round-3 P1: the shared slot is deliberately held across
-        # TTS -> VC -> postprocess. The RVC backend runs in a separate
-        # process no in-process lock can reach, so keeping the slot for the
-        # whole VC round-trip is what prevents the RVC subprocess from
-        # overlapping main-process LLM/TTS inference on the same GPU.
-        # Round-4 P0: the lease is now owned by the coordinator's detached
-        # holder around this whole chain coroutine, so it survives caller
-        # cancellation.
+        """TTS -> postprocess chain — the detached lease-holder body."""
+        # The shared slot is deliberately held across TTS -> postprocess: the
+        # blocking generation call runs in a worker thread inside this chain
+        # coroutine, so it can never outlive the lease (caller cancellation
+        # detaches the holder but the lease is released only when this
+        # coroutine actually finishes).
         # Round-5 §7/E: this coroutine only runs inside the detached holder
         # AFTER the coordinator's semaphore was acquired, so "now" is the
         # lease-entry timestamp. queue_wait = lease entry - submission.
         lease_entry = time.perf_counter()
-        tts_path, vc_path, final_path = self._paths(job_id)
+        tts_path, final_path = self._paths(job_id)
         tts_start = time.perf_counter()
         source = await self._synthesizer.synthesize(request, tts_path)
         tts_s = time.perf_counter() - tts_start
 
-        vc_start = time.perf_counter()
-        converted = await self._converter.convert(source, conversion, vc_path)
-        vc_s = time.perf_counter() - vc_start
-        if not self._keep_artifacts:
-            tts_path.unlink(missing_ok=True)
-
         pp_start = time.perf_counter()
-        final = await postprocess(converted, final_path, processing)
+        final = await postprocess(source, final_path, processing)
         pp_s = time.perf_counter() - pp_start
         if not self._keep_artifacts:
-            vc_path.unlink(missing_ok=True)
+            tts_path.unlink(missing_ok=True)
             mark_temp_artifact(final.path)
         timings = {
             "queue_wait": lease_entry - submitted_at,
             "tts": tts_s,
-            "vc": vc_s,
             "pp": pp_s,
         }
         return final, timings

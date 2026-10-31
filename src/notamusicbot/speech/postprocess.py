@@ -1,7 +1,8 @@
 """Audio post-processing: resample/channels -> speed -> peak protection -> WAV.
 
 Intermediate audio between inference stages is always uncompressed PCM/WAV.
-Speed change is explicit here, never an opaque RVC side effect, and uses the
+Speed change is explicit here, never an opaque conversion side effect, and
+uses the
 FFmpeg ``atempo`` filter (chained for ratios outside [0.5, 2.0]) so duration
 scales without shifting pitch.
 """

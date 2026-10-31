@@ -6,7 +6,7 @@ generation runs in ``asyncio.to_thread`` behind the SHARED GPU inference
 coordinator (:mod:`notamusicbot.speech.coordinator`): at most one main-process
 GPU job runs at a time, and the event loop is never blocked. Review Round-3
 P1: the provider no longer owns a private semaphore — LLM generation and
-speech-pipeline inference (TTS/RVC) are serialized against each other on the
+speech-pipeline inference (TTS) are serialized against each other on the
 same GPU through one shared coordinator.
 """
 

@@ -8,12 +8,8 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from conftest import FakeConverter, FakeSynthesizer
-from notamusicbot.domain.speech import (
-    AudioProcessingProfile,
-    TtsRequest,
-    VoiceConversionProfile,
-)
+from conftest import FakeSynthesizer
+from notamusicbot.domain.speech import AudioProcessingProfile, TtsRequest
 from notamusicbot.speech.artifacts import (
     FAILED_MARKER_NAME,
     cleanup_temp_artifact,
@@ -24,23 +20,30 @@ from notamusicbot.speech.artifacts import (
 )
 from notamusicbot.speech.pipeline import SpeechPipeline
 
-CONVERSION = VoiceConversionProfile(backend="passthrough")
 PROCESSING = AudioProcessingProfile(target_sample_rate_hz=48000, channels=1)
 
 
-class _ExplodingConverter(FakeConverter):
-    async def convert(self, source, profile, output_path):
-        raise RuntimeError("RVC worker exploded")
-
-
-def _pipeline(tmp_path, synth, conv, **kwargs) -> SpeechPipeline:
+def _pipeline(tmp_path, synth, **kwargs) -> SpeechPipeline:
     return SpeechPipeline(
         synth,
-        conv,
         PROCESSING,
         output_dir=tmp_path / "speech",
         **kwargs,
     )
+
+
+def _request(text: str) -> TtsRequest:
+    return TtsRequest(text=text)
+
+
+def _fail_postprocess(monkeypatch) -> None:
+    """Make the postprocess stage fail (a speech job that dies after TTS)."""
+    from notamusicbot.speech import pipeline as pipeline_mod
+
+    async def boom(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise RuntimeError("postprocess exploded")
+
+    monkeypatch.setattr(pipeline_mod, "postprocess", boom)
 
 
 @pytest.fixture(autouse=True)
@@ -51,10 +54,8 @@ def _clean_registry():
 
 
 def test_successful_job_leaves_no_empty_dir_after_final_cleanup(tmp_path) -> None:
-    pipeline = _pipeline(tmp_path, FakeSynthesizer(), FakeConverter())
-    final, metrics = asyncio.run(
-        pipeline.run(TtsRequest(text="hello", language="English", speaker="Aiden"), CONVERSION)
-    )
+    pipeline = _pipeline(tmp_path, FakeSynthesizer())
+    final, metrics = asyncio.run(pipeline.run(_request("hello")))
     job_dir = tmp_path / "speech" / metrics.job_id
     assert final.path.is_file()  # survives until playback cleanup
     # Full play-once cleanup: file removed, then the emptied job dir removed.
@@ -74,12 +75,11 @@ def test_remove_empty_job_dir_only_when_empty(tmp_path) -> None:
     assert job_dir.exists()
 
 
-def test_failed_job_keeps_artifacts_and_records_timestamp(tmp_path) -> None:
-    pipeline = _pipeline(tmp_path, FakeSynthesizer(), _ExplodingConverter())
+def test_failed_job_keeps_artifacts_and_records_timestamp(tmp_path, monkeypatch) -> None:
+    _fail_postprocess(monkeypatch)
+    pipeline = _pipeline(tmp_path, FakeSynthesizer())
     with pytest.raises(RuntimeError, match="exploded"):
-        asyncio.run(
-            pipeline.run(TtsRequest(text="hello", language="English", speaker="Aiden"), CONVERSION)
-        )
+        asyncio.run(pipeline.run(_request("hello")))
     job_dirs = list((tmp_path / "speech").iterdir())
     assert len(job_dirs) == 1
     job_dir = job_dirs[0]
@@ -131,23 +131,18 @@ def test_pipeline_start_prunes_expired_dirs(tmp_path) -> None:
     stale = output / "stale"
     stale.mkdir()
     mark_failed_job(stale, timestamp=datetime.now(UTC) - timedelta(hours=48))
-    (stale / "converted.wav").write_bytes(b"x")
+    (stale / "tts_source.wav").write_bytes(b"x")
 
-    pipeline = _pipeline(tmp_path, FakeSynthesizer(), FakeConverter())
-    asyncio.run(
-        pipeline.run(TtsRequest(text="hello", language="English", speaker="Aiden"), CONVERSION)
-    )
+    pipeline = _pipeline(tmp_path, FakeSynthesizer())
+    asyncio.run(pipeline.run(_request("hello")))
     assert not stale.exists()  # pruned opportunistically at job start
 
 
 def test_keep_artifacts_mode_never_prunes_or_removes(tmp_path) -> None:
-    pipeline = _pipeline(tmp_path, FakeSynthesizer(), FakeConverter(), keep_artifacts=True)
-    final, metrics = asyncio.run(
-        pipeline.run(TtsRequest(text="hello", language="English", speaker="Aiden"), CONVERSION)
-    )
+    pipeline = _pipeline(tmp_path, FakeSynthesizer(), keep_artifacts=True)
+    final, metrics = asyncio.run(pipeline.run(_request("hello")))
     job_dir = tmp_path / "speech" / metrics.job_id
     assert (job_dir / "tts_source.wav").exists()
-    assert (job_dir / "converted.wav").exists()
     assert final.path.is_file()
     assert job_dir.exists()
 
@@ -158,10 +153,8 @@ def test_keep_artifacts_mode_never_prunes_or_removes(tmp_path) -> None:
 def test_temporary_marker_written_and_refreshed_on_success(tmp_path) -> None:
     from notamusicbot.speech.artifacts import TEMP_MARKER_NAME
 
-    pipeline = _pipeline(tmp_path, FakeSynthesizer(), FakeConverter())
-    final, metrics = asyncio.run(
-        pipeline.run(TtsRequest(text="hello", language="English", speaker="Aiden"), CONVERSION)
-    )
+    pipeline = _pipeline(tmp_path, FakeSynthesizer())
+    final, metrics = asyncio.run(pipeline.run(_request("hello")))
     marker = tmp_path / "speech" / metrics.job_id / TEMP_MARKER_NAME
     assert marker.is_file()
     data = json.loads(marker.read_text())
@@ -174,10 +167,8 @@ def test_full_cleanup_removes_file_marker_and_job_dir(tmp_path) -> None:
     """(a) normal generated playback cleanup: file gone AND job dir gone."""
     from notamusicbot.speech.artifacts import TEMP_MARKER_NAME
 
-    pipeline = _pipeline(tmp_path, FakeSynthesizer(), FakeConverter())
-    final, metrics = asyncio.run(
-        pipeline.run(TtsRequest(text="hello", language="English", speaker="Aiden"), CONVERSION)
-    )
+    pipeline = _pipeline(tmp_path, FakeSynthesizer())
+    final, metrics = asyncio.run(pipeline.run(_request("hello")))
     job_dir = tmp_path / "speech" / metrics.job_id
     assert job_dir.is_dir()  # marker keeps it alive until playback cleanup
     cleanup_temp_artifact(final.path)
@@ -243,12 +234,10 @@ def test_cancelled_speech_job_is_deterministic_not_swallowed(tmp_path) -> None:
         async def synthesize(self, request, output_path):
             await asyncio.Event().wait()  # never resolves until cancelled
 
-    pipeline = _pipeline(tmp_path, _HangingSynth(), FakeConverter())
+    pipeline = _pipeline(tmp_path, _HangingSynth())
 
     async def _run() -> None:
-        task = asyncio.ensure_future(
-            pipeline.run(TtsRequest(text="hi", language="English", speaker="Aiden"), CONVERSION)
-        )
+        task = asyncio.ensure_future(pipeline.run(_request("hi")))
         await asyncio.sleep(0.05)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):

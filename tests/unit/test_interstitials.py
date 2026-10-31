@@ -58,20 +58,16 @@ class FakeProfile:
 
         class _Tts:
             language = "English"
-            speaker = "speaker-x"
+            reference_audio = "/tmp/fake_ref.wav"
+            reference_text = "Hi."
+            clone_mode = "xvec"
 
         class _Audio:
             speed = 1.0
             target_peak_dbfs = -1.0
 
-        class _Vc:
-            backend = "passthrough"
-            model = None
-            pitch_shift = 0
-
         self.tts = _Tts()
         self.audio = _Audio()
-        self.voice_conversion = _Vc()
 
 
 class FakeVoiceProfiles:
@@ -94,7 +90,7 @@ class FakePipeline:
         self._counter = 0
         self._tmp = tmp_path
 
-    async def run(self, request, conversion, processing):
+    async def run(self, request, processing=None):
         self.calls.append(request)
         if self.fail:
             raise RuntimeError("gpu exploded")

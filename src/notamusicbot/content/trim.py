@@ -3,7 +3,7 @@
 The commentary prompt asks for 2-3 sentences, but the local LLM regularly
 runs longer (the user's real run produced 23 s of audio). Trimming the
 generated text to at most ``content.max_sentences`` sentences before TTS is
-the cheap lever: TTS and RVC time scale with audio duration.
+the cheap lever: TTS time scales with audio duration.
 """
 
 from __future__ import annotations

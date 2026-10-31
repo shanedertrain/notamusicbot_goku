@@ -5,15 +5,10 @@ persona:
   description: Test persona.
 
 tts:
-  backend: qwen_custom_voice
-  model: Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice
   language: English
-  speaker: Ryan
-
-voice_conversion:
-  backend: rvc
-  model: GOKU
-  pitch_shift: 0
+  reference_audio: sine_2s.wav
+  reference_text: "Hey, it's me, Goku!"
+  clone_mode: xvec
 
 audio:
   speed: 1.0

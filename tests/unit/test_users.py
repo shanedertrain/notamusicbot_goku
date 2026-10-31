@@ -24,7 +24,6 @@ def test_parse_dict_shape() -> None:
     users = parse_users(raw)
     assert set(users) == {"517156036445077504", "358723048557248512"}
     assert users["517156036445077504"].real_name == "Cameron"
-    assert users["517156036445077504"].legacy_model_name == "OBAMA"
 
 
 def test_parse_list_shape() -> None:

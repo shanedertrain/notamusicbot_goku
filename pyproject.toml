@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "notamusicbot-goku"
 version = "0.2.0"
-description = "Discord music bot with Qwen3-TTS speech pipeline, voice conversion, and media playback."
+description = "Discord music bot with a Qwen3-TTS voice-clone speech pipeline and media playback."
 requires-python = ">=3.12"
 dependencies = [
     "qwen-tts",
@@ -31,8 +31,8 @@ reddit = ["praw>=7.7"]
 # Voice listen mode: silero VAD (ONNX, CPU) and onnx-asr (Parakeet, CPU). Optional;
 # the energy VAD needs neither.
 listen = ["silero-vad>=6.0", "onnx-asr>=0.12"]
-# Also needed by listen mode but NOT expressible here: faster-qwen3-tts==0.3.1 (--no-deps)
-# and onnxruntime-gpu==1.31.0 replacing onnxruntime. See DEPENDENCY_NOTES.md.
+# Also needed by listen mode but NOT expressible here: onnxruntime-gpu==1.31.0
+# replacing onnxruntime. See DEPENDENCY_NOTES.md.
 dev = ["pytest>=8", "pytest-asyncio>=0.24", "ruff>=0.7", "mypy>=1.11"]
 
 [project.scripts]
@@ -47,7 +47,6 @@ testpaths = ["tests"]
 markers = [
     "integration: requires external services or model weights",
     "gpu: requires CUDA hardware",
-    "rvc: requires legacy RVC models/environment",
     "network: requires internet access",
 ]
 addopts = "-ra"
@@ -65,7 +64,6 @@ extend-exclude = [
     "logs",
     "input",
     "genai",
-    "rvc_cli",
 ]
 
 [tool.ruff.lint]
@@ -96,5 +94,9 @@ module = [
     "soundfile",
     "soxr",
     "qwen_tts",
+    "faster_qwen3_tts",
+    "praw.*",
+    "silero_vad",
+    "onnxruntime",
 ]
 ignore_missing_imports = true

@@ -11,19 +11,19 @@ reply task exists at a time. Utterances that arrive while their turn is still
 being assembled (any ASR in flight, or the turn not yet at the LLM) are merged
 into ONE LLM call; later ones wait in a depth-1 pending slot.
 
-The reply streams: the LLM text is cut into chunks as it arrives (StreamChunker),
-the first chunk is synthesized while the LLM is still writing, and playback
-drains the synthesized chunks back to back. The backchannel clip starts at end
-of speech, before ASR, for utterances that are long enough to deserve a reply.
+The reply is pipelined: the LLM text is cut into chunks as it arrives
+(StreamChunker), each chunk is synthesized whole (clone TTS, sentence granularity)
+while the LLM is still writing, and playback drains the synthesized chunks back
+to back. The backchannel clip starts at end of speech, before ASR, for
+utterances that are long enough to deserve a reply.
 """
 
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 import sys
-from collections.abc import AsyncIterator, Callable
+from collections.abc import Callable
 from contextlib import aclosing
 from dataclasses import dataclass, field
 from enum import Enum, auto
@@ -69,9 +69,6 @@ PROMPT_HISTORY_TURNS = 2
 MAX_MERGED_SPEAKERS = 3
 # Synthesized-but-not-yet-playing chunks held ahead of playback (pipeline depth).
 SYNTH_QUEUE_DEPTH = 2
-# Streamed PCM chunks buffered per sentence while an earlier sentence plays
-# (a TTS chunk is a few hundred ms, so this is far more than a sentence).
-STREAM_CHUNK_BUFFER = 256
 # The early backchannel needs at least this much speech (shorter utterances
 # are often noise or one-word asides that never get a reply).
 EARLY_BACKCHANNEL_MIN_AUDIO_S = 1.2
@@ -91,14 +88,6 @@ class ReplyPlayerPort(Protocol):
 
     async def play(self, pcm: bytes) -> None:
         """Play ``pcm``; return when it finished or was stopped."""
-        ...
-
-    async def play_stream(self, chunks: AsyncIterator[bytes]) -> None:
-        """Play PCM chunks as they arrive; return when ``chunks`` ended and drained.
-
-        Used only when the reply synthesizer reports ``can_stream``. The player
-        closes ``chunks`` when it is stopped or cancelled.
-        """
         ...
 
     def stop(self) -> None:
@@ -137,19 +126,6 @@ class _Pending:
     t_asr_done: float
 
 
-class _StreamJob:
-    """One sentence's streamed PCM: chunks, then ``_END`` or a ``_Failed`` marker."""
-
-    __slots__ = ("q",)
-
-    def __init__(self) -> None:
-        self.q: asyncio.Queue[Any] = asyncio.Queue(maxsize=STREAM_CHUNK_BUFFER)
-
-
-class _Failed:
-    """Queued after the last good chunk of a sentence whose generation failed."""
-
-
 @dataclass(slots=True)
 class _ReplyFlow:
     """Per-turn plumbing between the LLM stream, synthesis and playback."""
@@ -162,9 +138,6 @@ class _ReplyFlow:
         default_factory=lambda: asyncio.Queue(maxsize=SYNTH_QUEUE_DEPTH)
     )
     spoken: list[str] = field(default_factory=list)
-    # Streaming reply: audio_q carries (_StreamJob, text, index) instead of ReplyAudio.
-    streaming: bool = False
-    audio_started: bool = False
     t_first_chunk: float | None = None
     llm_task: asyncio.Task[None] | None = None
 
@@ -550,11 +523,6 @@ class TurnManager:
                 reply.max_sentences, reply.first_chunk_max_words, reply.later_chunk_max_words
             )
         )
-        flow.streaming = bool(getattr(self._synth, "can_stream", False))
-        if flow.streaming:
-            # Jobs are enqueued once their first PCM exists and never block on the
-            # player, so generation of sentence k+1 follows k's immediately.
-            flow.audio_q = asyncio.Queue()
         loop = asyncio.get_running_loop()
         flow.llm_task = loop.create_task(self._consume_llm(request, flow))
         self._synth_task = loop.create_task(self._synthesize_stream(flow))
@@ -562,8 +530,6 @@ class TurnManager:
             first = await flow.audio_q.get()
             if first is _END:
                 return  # LLM failed / said nothing / first chunk could not be synthesized
-            # Streaming: the first job is queued with its first PCM chunk, so this
-            # is "first PCM chunk ready" (llm_to_tts1_s) and tts1_to_audio is ~0.
             t_tts1_done = self._clock()
             assert flow.t_first_chunk is not None  # audio only exists after a chunk
             stamps = (t_eos, t_asr_done, flow.t_first_chunk, t_tts1_done)
@@ -641,65 +607,18 @@ class TurnManager:
                 if entry is _END:
                     break
                 chunk, index = entry
-                if flow.streaming:
-                    await self._generate_stream(flow, chunk, index)
-                    delivered = flow.audio_started
-                    continue
                 audio = await self._synth.synthesize_sentence(chunk)
                 await flow.audio_q.put((audio, chunk, index))
                 delivered = True
         except ReplySynthesisError:
-            self._warn_synthesis("failed", delivered or flow.audio_started)
+            self._warn_synthesis("failed", delivered)
             self._stop_llm(flow)
         except asyncio.CancelledError:
             raise
         except Exception:
-            self._warn_synthesis("crashed", delivered or flow.audio_started, exc_info=True)
+            self._warn_synthesis("crashed", delivered, exc_info=True)
             self._stop_llm(flow)
         await flow.audio_q.put(_END)
-
-    async def _generate_stream(self, flow: _ReplyFlow, chunk: str, index: int) -> None:
-        """Generate one sentence's PCM into a job (sets ``flow.audio_started``).
-
-        The job joins ``flow.audio_q`` with its first chunk. A failure after that
-        marks the job failed (playback ends there, the rest of the reply is
-        dropped) and re-raises for the caller's single warning.
-        """
-        job = _StreamJob()
-        queued = False
-        try:
-            async with aclosing(self._synth.stream_sentence(chunk)) as pcm_chunks:
-                async for pcm in pcm_chunks:
-                    await job.q.put(pcm)
-                    if not queued:
-                        queued = flow.audio_started = True
-                        flow.audio_q.put_nowait((job, chunk, index))
-            if queued:
-                job.q.put_nowait(_END)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            if queued:
-                with contextlib.suppress(asyncio.QueueFull):
-                    job.q.put_nowait(_Failed())
-            raise
-
-    async def _stream_reply(self, flow: _ReplyFlow, first: Any) -> AsyncIterator[bytes]:
-        """Every sentence's PCM back to back, as ONE stream for the player."""
-        item: Any = first
-        while item is not _END:
-            job, _chunk, index = item
-            self._playing_sentence = index
-            self._last_bot_sentence = flow.chunker.sentence_text(index)
-            self._last_spoke_at = self._clock()
-            while True:
-                pcm = await job.q.get()
-                if pcm is _END:
-                    break
-                if isinstance(pcm, _Failed):
-                    return  # generation failed mid-sentence: drop the rest
-                yield pcm
-            item = await flow.audio_q.get()
 
     @staticmethod
     def _warn_synthesis(what: str, delivered: bool, *, exc_info: bool = False) -> None:
@@ -745,15 +664,6 @@ class TurnManager:
             total_s=max(0.0, t_audio - t_eos),
         )
         self._emit_metrics(m, user_id)
-
-        if flow.streaming:
-            stream = self._stream_reply(flow, first)
-            try:
-                async with aclosing(stream):
-                    await self._player.play_stream(stream)
-            finally:
-                self._last_spoke_at = self._clock()
-            return
 
         item: Any = first
         while item is not _END:

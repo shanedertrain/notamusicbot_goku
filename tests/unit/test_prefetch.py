@@ -33,7 +33,7 @@ class FakePipeline:
         self.texts: list[str] = []
         self.hold: asyncio.Event | None = None
 
-    async def run(self, request, conversion, processing):  # noqa: ANN001
+    async def run(self, request, processing=None):  # noqa: ANN001
         from notamusicbot.speech.artifacts import mark_temp_artifact
 
         self.calls += 1
@@ -68,11 +68,17 @@ class FakeProfiles:
             "P",
             (),
             {
-                "tts": type("T", (), {"language": "English", "speaker": "Aiden"})(),
-                "persona": type("D", (), {"description": "host"})(),
-                "voice_conversion": type(
-                    "V", (), {"backend": "passthrough", "model": None, "pitch_shift": 0}
+                "tts": type(
+                    "T",
+                    (),
+                    {
+                        "language": "English",
+                        "reference_audio": "/tmp/fake_ref.wav",
+                        "reference_text": "Hi.",
+                        "clone_mode": "xvec",
+                    },
                 )(),
+                "persona": type("D", (), {"description": "host"})(),
                 "audio": type("A", (), {"speed": 1.0, "target_peak_dbfs": -1.0})(),
             },
         )()

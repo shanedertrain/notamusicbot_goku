@@ -1,24 +1,13 @@
-"""Migrate legacy ``input/users.json`` (dict- or list-shaped) to ``config/users.yaml``.
+"""Migrate a legacy ``input/users.json`` (dict- or list-shaped) to ``config/users.yaml``.
 
-Legacy model names are resolved **explicitly** to new voice-profile ids:
+Legacy model names are resolved **explicitly** to voice-profile ids:
 
 * the legacy name is uppercased and matched case-insensitively against the
-  available voice-profile ids (``OBAMA`` → ``obama``) and, failing that,
-  against the RVC model directory each profile points at
-  (``GOKU`` → ``goku`` → model dir ``Goku``);
+  available voice-profile ids (``OBAMA`` → ``obama``);
+* failing an exact match, the longest profile id that prefixes the legacy name
+  wins (``OBAMA_TRANS`` → ``obama``, ``GOKU_RAW`` → ``goku``);
 * a legacy name with no corresponding profile is a hard error: the migration
   exits non-zero with a clear message. It never silently defaults to Goku.
-
-Alias note (verified against ``rvc_cli/models.py``): legacy model names are
-keyed by the *yaml stem* uppercased inside each ``rvc_cli/models/*`` directory
-(``Model.model_name = yaml_file.stem``). There is **no** separate
-``obama_trans`` directory and no separate ``obama_trans`` weights: the
-``OBAMA_TRANS`` variant is defined by ``rvc_cli/models/Obama/obama_trans.yaml``
-and shares ``rvc_cli/models/Obama/obama.pth`` + ``obama.index`` with
-``OBAMA``. The dedicated ``obama_trans`` profile therefore points at the same
-model directory (``model: Obama``) and user entries resolved through such an
-alias carry ``voice_profile_source: legacy_alias`` so the conflation is
-explicit and auditable.
 
 The source file is never modified; a timestamped backup of the previous
 destination is written next to it before overwriting.
@@ -31,6 +20,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import shutil
 import sys
@@ -40,7 +30,7 @@ from typing import Any
 
 import yaml
 
-from notamusicbot.domain.users import load_users_json, parse_users
+from notamusicbot.domain.users import parse_users
 from notamusicbot.domain.voice_profiles import load_voice_profiles
 
 logger = logging.getLogger(__name__)
@@ -58,10 +48,9 @@ def resolve_legacy_profile(
 
     Resolution order:
 
-    1. case-insensitive match against profile ids (``OBAMA`` → ``obama``,
-       ``OBAMA_TRANS`` → ``obama_trans``);
-    2. case-insensitive match against the RVC model directory each profile's
-       ``voice_conversion.model`` points at (``GOKU`` → ``goku``).
+    1. case-insensitive match against profile ids (``OBAMA`` → ``obama``);
+    2. longest profile id that prefixes the legacy name
+       (``OBAMA_TRANS`` → ``obama``, ``GOKU_RAW`` → ``goku``).
 
     Anything else raises :class:`MigrationError` — never a silent Goku default.
     """
@@ -69,10 +58,9 @@ def resolve_legacy_profile(
     for profile_id in profiles:
         if profile_id.upper() == key:
             return profile_id
-    for profile_id, profile in profiles.items():
-        model = getattr(getattr(profile, "voice_conversion", None), "model", None)
-        if model and str(model).upper() == key:
-            return profile_id
+    prefixed = [profile_id for profile_id in profiles if key.startswith(profile_id.upper())]
+    if prefixed:
+        return max(prefixed, key=len)
     available = ", ".join(sorted(profiles)) or "<none>"
     msg = (
         f"Legacy model {legacy_model_name!r} has no corresponding voice profile. "
@@ -80,6 +68,23 @@ def resolve_legacy_profile(
         "Create the missing profile in config/voices/ and re-run the migration."
     )
     raise MigrationError(msg)
+
+
+def _raw_users(raw: Any) -> list[tuple[str, dict[str, Any]]]:
+    """Legacy JSON entries as ``(user_id, entry)``, in either supported shape."""
+    items: list[tuple[str, dict[str, Any]]] = []
+    if isinstance(raw, dict):
+        for uid, entry in raw.items():
+            if isinstance(entry, dict):
+                items.append((str(uid), entry))
+    elif isinstance(raw, list):
+        for entry in raw:
+            if not isinstance(entry, dict):
+                continue
+            uid = entry.get("id") or entry.get("user_id")
+            if uid is not None:
+                items.append((str(uid), entry))
+    return items
 
 
 def migrate_users_to_profiles(
@@ -92,47 +97,29 @@ def migrate_users_to_profiles(
     Returns the written entries keyed by user id. Raises :class:`MigrationError`
     (before touching ``dest``) if any referenced legacy model cannot be resolved.
     """
-    raw_users = load_users_json(source)
-    if not raw_users:
-        msg = f"No valid user entries found in {source}"
-        raise ValueError(msg)
+    raw = json.loads(source.read_text(encoding="utf-8"))
+    entries: dict[str, dict[str, Any]] = {}
     profiles = load_voice_profiles(voices_dir)
     if not profiles:
         msg = f"No voice profiles found in {voices_dir}"
         raise MigrationError(msg)
 
-    entries: dict[str, dict[str, Any]] = {}
-    for user_id, user in raw_users.items():
-        legacy = user.legacy_model_name
+    for user_id, user in _raw_users(raw):
+        legacy = user.get("model_name") or user.get("legacy_model_name")
         if not legacy:
             msg = f"User {user_id} has no legacy model_name; cannot resolve a voice profile"
             raise MigrationError(msg)
-        profile_id = resolve_legacy_profile(legacy, profiles)
-        entry: dict[str, Any] = {
-            "screen_name": user.screen_name,
-            "real_name": user.real_name,
-            "background": user.background,
+        profile_id = resolve_legacy_profile(str(legacy), profiles)
+        entries[user_id] = {
+            "screen_name": user.get("screen_name", ""),
+            "real_name": user.get("real_name", ""),
+            "background": user.get("background", ""),
             "voice_profile": profile_id,
-            "legacy_model_name": legacy,
         }
-        # Alias marker: mark entries whose profile does not own its own RVC
-        # weights (profile id != its voice_conversion model directory). This is
-        # the OBAMA_TRANS case: the obama_trans profile shares the Obama
-        # weights (models/Obama/obama.pth), so the sharing is recorded instead
-        # of being silently conflated.
-        vc = profiles[profile_id].voice_conversion
-        vc_model = getattr(vc, "model", None)
-        if vc_model and str(vc_model).lower() != profile_id.lower():
-            entry["voice_profile_source"] = "legacy_alias"
-        # Preserve the YAML config variant (round-3 P0): a legacy name that
-        # resolved to a profile pointing at a NON-default yaml of its model
-        # directory (OBAMA_TRANS -> obama_trans.yaml in models/Obama/) must
-        # carry the variant, otherwise the worker would load whichever yaml
-        # it happens to find first.
-        vc_variant = getattr(vc, "variant", None)
-        if vc_variant:
-            entry["variant"] = vc_variant
-        entries[user_id] = entry
+
+    if not entries:
+        msg = f"No valid user entries found in {source}"
+        raise ValueError(msg)
 
     payload = {"users": {uid: entries[uid] for uid in sorted(entries)}}
     dest.parent.mkdir(parents=True, exist_ok=True)

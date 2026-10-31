@@ -16,7 +16,7 @@ from notamusicbot.content import prompts
 from notamusicbot.content.base import ContentRequest
 from notamusicbot.content.trim import trim_sentences
 from notamusicbot.domain.media import MediaKind, PlayableMedia
-from notamusicbot.domain.speech import TtsRequest, VoiceConversionProfile
+from notamusicbot.domain.speech import TtsRequest
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +59,6 @@ def _static_for(request: ContentRequest) -> str:
 async def generate_commentary_media(
     pipeline: Any,
     request: TtsRequest,
-    conversion: VoiceConversionProfile,
     *,
     guild_id: int,
     requester: str = "bot",
@@ -67,11 +66,13 @@ async def generate_commentary_media(
 ) -> PlayableMedia | None:
     """Run one speech job and return it as queueable media, or ``None`` on failure.
 
-    ``processing`` is the voice profile's :class:`AudioProcessingProfile`
-    (speed, target peak, output format); ``None`` uses the pipeline default.
+    ``request`` carries the voice clone reference (built with
+    ``tts_request_for``); ``processing`` is the voice profile's
+    :class:`AudioProcessingProfile` (speed, target peak, output format);
+    ``None`` uses the pipeline default.
     """
     try:
-        artifact, _metrics = await pipeline.run(request, conversion, processing)
+        artifact, _metrics = await pipeline.run(request, processing)
     except Exception:
         logger.exception(
             "Commentary generation failed in guild %s; skipping commentary and continuing playback",

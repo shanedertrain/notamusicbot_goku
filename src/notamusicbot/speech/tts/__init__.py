@@ -1,6 +1,6 @@
 """Text-to-speech backends."""
 
 from notamusicbot.speech.tts.base import SpeechSynthesizer
-from notamusicbot.speech.tts.qwen_custom_voice import QwenCustomVoiceSynthesizer
+from notamusicbot.speech.tts.qwen_clone import QwenCloneSynthesizer
 
-__all__ = ["QwenCustomVoiceSynthesizer", "SpeechSynthesizer"]
+__all__ = ["QwenCloneSynthesizer", "SpeechSynthesizer"]

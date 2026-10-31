@@ -1,7 +1,7 @@
 """Whisper small.en via transformers (the GPU fallback listen ASR).
 
 fp16 on cuda, local HF cache only. The blocking call goes through the shared
-:class:`InferenceCoordinator` so it never overlaps TTS/RVC on the GPU.
+:class:`InferenceCoordinator` so it never overlaps TTS on the GPU.
 """
 
 from __future__ import annotations

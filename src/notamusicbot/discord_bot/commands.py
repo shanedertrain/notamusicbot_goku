@@ -25,9 +25,8 @@ from notamusicbot.discord_bot.commentary import (
     resolve_commentary_text,
 )
 from notamusicbot.domain.media import MediaKind, PlayableMedia
-from notamusicbot.domain.speech import TtsRequest
 from notamusicbot.domain.users import UserProfile
-from notamusicbot.domain.voice_profiles import to_conversion_profile, to_processing_profile
+from notamusicbot.domain.voice_profiles import to_processing_profile, tts_request_for
 
 if TYPE_CHECKING:
     from notamusicbot.discord_bot.bot import NotAMusicBot
@@ -155,11 +154,10 @@ async def _enqueue_commentary(
         article_text=article_text,
     )
     text = await resolve_commentary_text(bot.app.build_content_provider(), content_request)
-    request = TtsRequest(text=text, language=profile.tts.language, speaker=profile.tts.speaker)
+    request = tts_request_for(profile, text)
     media = await generate_commentary_media(
         bot.app.pipeline,
         request,
-        to_conversion_profile(profile),
         guild_id=_guild(ctx).id,
         requester=user.screen_name,
         # Per-profile audio settings (speed, target peak) — same mapping the

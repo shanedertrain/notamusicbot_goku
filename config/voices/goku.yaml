@@ -6,16 +6,19 @@ persona:
     Energetic, friendly Saiyan radio host. Casual, enthusiastic commentary
     used by the content-generation provider.
 
+# Voice clone (Qwen3-TTS Base zero-shot) from clean, isolated Sean Schemmel
+# Goku voice lines (Dragon Ball Xenoverse 2 voice-line compilation). The
+# previous reference was the 1.68 s original clip; this one is 19.8 s of dry
+# studio lines and gives a more stable clone.
 tts:
-  backend: qwen_custom_voice
-  model: Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice
   language: English
-  speaker: Ryan
-
-voice_conversion:
-  backend: rvc
-  model: GOKU
-  pitch_shift: 0
+  reference_audio: config/voices/refs/goku.wav
+  reference_text: >-
+    Hey, it's me, Goku! Alright, let's get this going. You look strong. I can't
+    wait to go at it. I'm a Saiyan raised on earth, too. No reason to go easy on
+    each other. Know what I mean? It kinda feels like I'm hanging out with
+    Piccolo. Ooh, this is gonna be fun! I'll show you what I've got.
+  clone_mode: xvec
 
 audio:
   speed: 1.0

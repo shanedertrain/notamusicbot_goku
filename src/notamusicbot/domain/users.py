@@ -18,7 +18,6 @@ class UserProfile(BaseModel):
     real_name: str = ""
     background: str = ""
     voice_profile: str = Field(default="goku", alias="voice_profile")
-    legacy_model_name: str | None = Field(default=None, alias="legacy_model_name")
 
     model_config = {"populate_by_name": True}
 
@@ -41,14 +40,12 @@ class UserRegistry:
 
 
 def _coerce_entry(user_id: str, data: dict[str, Any]) -> UserProfile:
-    legacy = data.get("model_name") or data.get("legacy_model_name")
     return UserProfile(
         user_id=str(user_id),
         screen_name=data.get("screen_name", ""),
         real_name=data.get("real_name", ""),
         background=data.get("background", ""),
         voice_profile=data.get("voice_profile") or "goku",
-        legacy_model_name=legacy,
     )
 
 
@@ -100,7 +97,6 @@ def write_users_yaml(users: dict[str, UserProfile], path: Path) -> None:
                 "real_name": u.real_name,
                 "background": u.background,
                 "voice_profile": u.voice_profile,
-                "legacy_model_name": u.legacy_model_name,
             }
             for uid, u in sorted(users.items())
         }

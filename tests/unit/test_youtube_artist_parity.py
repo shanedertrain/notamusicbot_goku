@@ -5,14 +5,13 @@ YouTube resolver must reach the commentary ContentRequest as
 ``song_name='Song'`` / ``artist_name='Artist'`` via the ``!gplay`` command
 path — instead of "an unknown artist".
 
-Self-contained harness (no cross-test-module imports): builds a minimal
-Application with an rvc voice profile and fakes at the content/speech
-boundaries — no GPU, no network, no weights.
+Self-contained harness: builds a minimal Application with a clone voice
+profile and fakes at the content/speech boundaries — no GPU, no network, no
+weights.
 """
 
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -20,8 +19,11 @@ import pytest
 
 pytest.importorskip("discord", reason="this module drives the discord command layer")
 
+import numpy as np
+import soundfile as sf
 import yaml
 
+from conftest import FakeSynthesizer
 from notamusicbot.app import Application
 from notamusicbot.config import AppSettings, SpeechSettings
 from notamusicbot.discord_bot import commands as commands_mod
@@ -31,32 +33,25 @@ from notamusicbot.domain.users import UserProfile
 
 YOUTUBE_URL = "https://www.youtube.com/watch?v=abc123"
 
-PROFILE_ID = "goku_rvc"
-PROFILE_YAML = {
-    "id": PROFILE_ID,
-    "persona": {"display_name": "Goku (RVC)"},
-    "tts": {"speaker": "Aiden", "language": "English"},
-    "voice_conversion": {"backend": "passthrough"},
-    "audio": {"speed": 1.0, "target_peak_dbfs": -1.0},
-}
-
-
-class NoopConverter:
-    """Passthrough VC adapter — never invoked here (commentary is faked)."""
-
-    async def start(self) -> None: ...
-
-    async def shutdown(self) -> None: ...
-
-    async def convert(self, source, profile, output_path):  # noqa: ANN001
-        shutil.copyfile(source.path, output_path)
-        return source
+PROFILE_ID = "goku_clone"
 
 
 def make_app(tmp_path: Path) -> Application:
+    reference = tmp_path / "ref.wav"
+    sf.write(reference, np.zeros(2400, dtype=np.float32), 24000, subtype="PCM_16")
+    profile_yaml = {
+        "id": PROFILE_ID,
+        "persona": {"display_name": "Goku (clone)"},
+        "tts": {
+            "language": "English",
+            "reference_audio": str(reference),
+            "reference_text": "Hi.",
+        },
+        "audio": {"speed": 1.0, "target_peak_dbfs": -1.0},
+    }
     voices_dir = tmp_path / "voices"
     voices_dir.mkdir(exist_ok=True)
-    (voices_dir / f"{PROFILE_ID}.yaml").write_text(yaml.safe_dump(PROFILE_YAML), encoding="utf-8")
+    (voices_dir / f"{PROFILE_ID}.yaml").write_text(yaml.safe_dump(profile_yaml), encoding="utf-8")
     settings = AppSettings(
         speech=SpeechSettings(
             voices_dir=voices_dir,
@@ -66,7 +61,7 @@ def make_app(tmp_path: Path) -> Application:
             warmup_on_start=False,
         )
     )
-    return Application(settings, rvc_factory=NoopConverter)
+    return Application(settings, synthesizer_factory=FakeSynthesizer)
 
 
 def make_bot_ctx(app: Application):

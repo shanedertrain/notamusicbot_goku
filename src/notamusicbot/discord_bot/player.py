@@ -66,9 +66,9 @@ async def stop_guild_players(states: Iterable[GuildState]) -> None:
     """Signal every guild player loop to stop and await/cancel its task.
 
     Review Round-6 §3/B shutdown boundary: guild players are stopped BEFORE
-    any converter teardown, so no player (or post-song content hook) can
-    trigger a speech chain that races — or lazily restarts — the RVC worker
-    after shutdown. Mirrors ``GuildPlayer.stop`` at the state level: request
+    any speech-backend teardown, so no player (or post-song content hook)
+    can trigger a speech chain that races the model teardown. Mirrors
+    ``GuildPlayer.stop`` at the state level: request
     stop, drain queued media (temp files cleaned), await the loop task
     briefly, then cancel it if it will not exit.
 

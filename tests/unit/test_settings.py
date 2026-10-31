@@ -9,7 +9,7 @@ def test_default_settings_are_valid() -> None:
     settings = AppSettings()
     assert settings.speech.max_concurrent_inference == 1
     assert settings.speech.queue_size >= 1
-    assert settings.speech.tts_model_id == "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
+    assert settings.speech.tts_model_id == "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
 
 
 def test_settings_reject_bad_concurrency() -> None:

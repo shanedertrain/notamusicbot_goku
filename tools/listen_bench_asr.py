@@ -203,12 +203,8 @@ async def make_clips() -> None:
 
     from notamusicbot.app import Application
     from notamusicbot.config import load_app_settings
-    from notamusicbot.domain.speech import (
-        AudioProcessingProfile,
-        TtsRequest,
-        VoiceConversionProfile,
-    )
-    from notamusicbot.domain.voice_profiles import load_voice_profiles
+    from notamusicbot.domain.speech import AudioProcessingProfile
+    from notamusicbot.domain.voice_profiles import load_voice_profiles, tts_request_for
 
     settings = load_app_settings()
     profile = load_voice_profiles(Path(settings.speech.voices_dir))["goku"]
@@ -221,19 +217,12 @@ async def make_clips() -> None:
         speed=profile.audio.speed,
         target_peak_dbfs=profile.audio.target_peak_dbfs,
     )
-    conversion = VoiceConversionProfile(
-        backend="passthrough",
-        model=profile.voice_conversion.model,
-        pitch_shift=profile.voice_conversion.pitch_shift,
-    )
     CLIPS_DIR.mkdir(parents=True, exist_ok=True)
     manifest, created = [], []
     try:
         for i, text in enumerate(ASR_SENTENCES):
-            request = TtsRequest(
-                text=text, language=profile.tts.language, speaker=profile.tts.speaker
-            )
-            final, _ = await pipeline.run(request, conversion, processing)
+            request = tts_request_for(profile, text)
+            final, _ = await pipeline.run(request, processing)
             created.append(final.path)
             data, rate = sf.read(final.path, dtype="float32", always_2d=True)
             mono = data.mean(axis=1)

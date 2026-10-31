@@ -9,7 +9,7 @@ player at the two Discord edges:
     the production listen chat provider (Application.listen_content_provider:
     FallbackChatProvider = SparkChatProvider over the loopback tunnel, streamed
     into StreamChunker caps 8/12; the in-process Qwen3-4B is NOT loaded) ->
-    ReplySynthesizer (Qwen3-TTS + RVC goku, rvc_unavailable_policy error,
+    ReplySynthesizer (Qwen3-TTS clone goku, whole-sentence replies,
     artifact_root set) -> RecordingPlayer.
 
 Local only: ``enforce_offline_models()`` runs before any model loads, nothing
@@ -20,7 +20,7 @@ one WARNING and a lazy in-process load, then checks that a healthy Spark makes
 ``ensure_spark_preferred`` unload it, and that a non-loopback base_url is
 refused before any request. User audio is synthetic TTS held in
 memory; the pre-rendered backchannel clips go under a temp dir in ``var/``
-that is deleted afterwards. Needs the models in the local HF cache and the RVC
+that is deleted afterwards. Needs the models in the local HF cache and the
 runtime (same as tools/listen_bench_models.py). Not part of pytest.
 
     .venv-main/bin/python tools/listen_pipeline_bench.py [--out PATH] [--turns 30]
@@ -110,7 +110,7 @@ NOTE = (
     "listen.reply.max_new_tokens via the production provider (no override). The "
     "in-process LLM is not loaded at startup. Stage keys keep their old names but "
     "now mean: asr->llm = ASR done to first chunk text ready (time to first chunk);"
-    " llm->tts1 = first chunk ready to its TTS+RVC audio ready; tts1->audio = audio"
+    " llm->tts1 = first chunk ready to its TTS audio ready; tts1->audio = audio"
     " ready to playback start (waits for the backchannel clip to finish); total = "
     "end of speech to first reply audio. Loaders get hub ids under "
     "HF_HUB_OFFLINE=1."
@@ -312,33 +312,6 @@ class RecordingSynth:
 
     def __getattr__(self, name: str):  # type: ignore[no-untyped-def]
         return getattr(self._inner, name)
-
-    async def stream_sentence(self, text: str):  # type: ignore[no-untyped-def]
-        """Pass-through of the streaming path; records bytes, cap and truncation."""
-        from contextlib import aclosing
-
-        from notamusicbot.listen.reply import tts_cap_seconds
-
-        self.calls.append(text)
-        n_bytes = 0
-        warn0 = self.cap_warnings.count
-        try:
-            async with aclosing(self._inner.stream_sentence(text)) as chunks:
-                async for chunk in chunks:
-                    n_bytes += len(chunk)
-                    yield chunk
-        finally:
-            # Always append (also when cancelled or failed) so results[k] stays calls[k].
-            self.results.append(
-                {
-                    "words": len(text.split()),
-                    "audio_s": round(n_bytes / (RATE_48K * 4), 3),
-                    "cap_s": tts_cap_seconds(text, **self._cap_kwargs),
-                    "truncated": self.cap_warnings.count > warn0,
-                    "completed": n_bytes > 0,
-                    "streamed": True,
-                }
-            )
 
     async def synthesize_sentence(self, text: str):  # type: ignore[no-untyped-def]
         from notamusicbot.listen.reply import tts_cap_seconds
@@ -651,10 +624,7 @@ async def run(args: argparse.Namespace) -> dict:
     from notamusicbot.listen.endpointer import Endpointer, EndpointerThread
     from notamusicbot.listen.ingress import ListenIngress
     from notamusicbot.listen.metrics import parse_turn_line
-    from notamusicbot.listen.reply import (
-        ReplySynthesizer,
-        warm_voice_converter,
-    )
+    from notamusicbot.listen.reply import ReplySynthesizer
     from notamusicbot.listen.turn_taking import MonotonicClock, TurnManager
     from notamusicbot.speech.asr.factory import build_transcriber
     from notamusicbot.speech.vad.silero import SileroVad
@@ -752,10 +722,6 @@ async def run(args: argparse.Namespace) -> dict:
         result["tts_load_s"] = round(time.perf_counter() - t, 2)
 
         t = time.perf_counter()
-        await app.converter_router.startup()
-        result["rvc_startup_s"] = round(time.perf_counter() - t, 2)
-
-        t = time.perf_counter()
         transcriber = build_transcriber(listen.asr, app.coordinator)
         await asyncio.to_thread(transcriber.load)  # type: ignore[attr-defined]
         result["asr_load_s"] = round(time.perf_counter() - t, 2)
@@ -774,13 +740,7 @@ async def run(args: argparse.Namespace) -> dict:
             tts_max_seconds_per_word=cap_kwargs["seconds_per_word"],
             tts_cap_floor_seconds=cap_kwargs["floor_seconds"],
         )
-        plain_profile = profile.model_copy(
-            update={
-                "voice_conversion": profile.voice_conversion.model_copy(
-                    update={"backend": "passthrough"}
-                )
-            }
-        )
+        plain_profile = profile
         # Input clips are the bench's own questions: never cap them.
         plain_synth = ReplySynthesizer(
             pipeline,
@@ -815,9 +775,8 @@ async def run(args: argparse.Namespace) -> dict:
             {"text": c["text"], "duration_s": round(c["duration_s"], 2)} for c in clips
         ]
 
-        # ---- warm-ups (not timed): RVC, TTS, ASR, LLM, backchannel render ------
+        # ---- warm-ups (not timed): TTS, ASR, LLM, backchannel render ----------
         sampler.phase = "warmup"
-        result["rvc_warmed"] = await warm_voice_converter(pipeline, profile)
         await synth.synthesize_sentence("Warm up sentence number one.")
         await synth.synthesize_sentence("Warm up sentence number two, a little longer.")
         samples16 = np.frombuffer(clips[0]["pcm"], dtype="<i2").reshape(-1, 2).mean(axis=1)
@@ -841,8 +800,8 @@ async def run(args: argparse.Namespace) -> dict:
         rec_synth = RecordingSynth(synth, cap_kwargs)
         backchannel = None  # reply.backchannel_enabled is false: no clips, as in production
         result["backchannel"] = {"enabled": listen.reply.backchannel_enabled}
-        result["can_stream"] = bool(rec_synth.can_stream)
-        result["tts_fast_model"] = type(getattr(pipeline, "_synthesizer", None)).__name__
+        result["can_stream"] = bool(getattr(rec_synth, "can_stream", False))
+        result["tts_backend"] = type(getattr(pipeline, "_synthesizer", None)).__name__
         result["tts_supports_streaming"] = bool(
             getattr(getattr(pipeline, "_synthesizer", None), "supports_streaming", False)
         )

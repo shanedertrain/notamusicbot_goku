@@ -24,10 +24,8 @@ import asyncio
 import contextlib
 import io
 import logging
-import threading
 import time
-from collections.abc import AsyncIterator, Coroutine
-from contextlib import aclosing
+from collections.abc import Coroutine
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -40,7 +38,7 @@ from notamusicbot.listen.conversation import Conversation
 from notamusicbot.listen.endpointer import Endpointer, EndpointerThread, ListenEvent
 from notamusicbot.listen.ingress import ListenIngress
 from notamusicbot.listen.offline import enforce_offline_models
-from notamusicbot.listen.reply import BackchannelCache, ReplySynthesizer, warm_voice_converter
+from notamusicbot.listen.reply import BackchannelCache, ReplySynthesizer
 from notamusicbot.listen.transcript_store import TranscriptStore
 from notamusicbot.listen.turn_taking import MonotonicClock, TurnManager
 from notamusicbot.speech.asr.factory import build_transcriber
@@ -127,145 +125,11 @@ class ListenDaveSink(voice_recv.AudioSink):
         self._ingress.accept_packet(user.id, payload)
 
 
-# Streamed playback: 20 ms Discord frames of 48 kHz stereo s16le.
-FRAME_BYTES = 3840
-# Start playing once this much is buffered (6 frames = 120 ms), so a late TTS
-# chunk does not stutter the first words.
-PREBUFFER_FRAMES = 6
-# The producer waits while this much is queued ahead of the player (0.5 s); it
-# bounds how far the turn manager's "now playing" bookkeeping can run ahead.
-MAX_BUFFER_FRAMES = 25
-_BUFFER_POLL_S = 0.01
-_SILENCE_FRAME = b"\x00" * FRAME_BYTES
-
-
-class _StreamSource(discord.AudioSource):
-    """Queue-fed audio source: fed by the event loop, read by discord's player thread.
-
-    An underrun yields a silent frame instead of ending the stream; the stream
-    ends only after :meth:`finish` and once the buffer has drained.
-    """
-
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._buf = bytearray()
-        self._finished = False
-        self.underruns = 0
-
-    def feed(self, pcm: bytes) -> None:
-        with self._lock:
-            self._buf += pcm
-
-    def finish(self) -> None:
-        with self._lock:
-            self._finished = True
-
-    def abort(self) -> None:
-        """End now: drop what is buffered."""
-        with self._lock:
-            self._buf.clear()
-            self._finished = True
-
-    @property
-    def buffered_frames(self) -> int:
-        with self._lock:
-            return len(self._buf) // FRAME_BYTES
-
-    @property
-    def buffered_bytes(self) -> int:
-        with self._lock:
-            return len(self._buf)
-
-    def read(self) -> bytes:
-        with self._lock:
-            if len(self._buf) >= FRAME_BYTES:
-                frame = bytes(self._buf[:FRAME_BYTES])
-                del self._buf[:FRAME_BYTES]
-                return frame
-            if self._finished:
-                if not self._buf:
-                    return b""
-                frame = bytes(self._buf).ljust(FRAME_BYTES, b"\x00")  # final partial frame
-                self._buf.clear()
-                return frame
-            self.underruns += 1
-            return _SILENCE_FRAME
-
-    def is_opus(self) -> bool:
-        return False
-
-
 class VoicePlayer:
     """``ReplyPlayerPort`` over the guild's voice client (the recv client itself)."""
 
     def __init__(self, voice_client: Any) -> None:
         self._vc = voice_client
-        self._producer: asyncio.Task[None] | None = None
-
-    async def play_stream(self, chunks: AsyncIterator[bytes]) -> None:
-        """Play ``chunks`` (48 kHz stereo s16le) as they arrive; see ``ReplyPlayerPort``.
-
-        Playback starts after a short pre-buffer, pads underruns with silence and
-        ends once ``chunks`` is exhausted and the buffer drained.
-        """
-        loop = asyncio.get_running_loop()
-        done: asyncio.Future[None] = loop.create_future()
-        source = _StreamSource()
-        errors: list[BaseException] = []
-
-        def _resolve(error: BaseException | None) -> None:
-            def _finish() -> None:
-                if done.done():
-                    return
-                if error is not None:
-                    done.set_exception(error)
-                else:
-                    done.set_result(None)
-
-            with contextlib.suppress(RuntimeError):  # loop already closed
-                loop.call_soon_threadsafe(_finish)
-
-        def _after(error: Exception | None) -> None:
-            _resolve(error)  # runs on discord's player thread
-
-        async def _pump() -> None:
-            started = False
-            try:
-                async with aclosing(chunks):
-                    async for pcm in chunks:
-                        source.feed(pcm)
-                        if not started and source.buffered_frames >= PREBUFFER_FRAMES:
-                            self._vc.play(source, after=_after)
-                            started = True
-                        while started and source.buffered_frames > MAX_BUFFER_FRAMES:
-                            await asyncio.sleep(_BUFFER_POLL_S)
-                source.finish()
-                if not started and source.buffered_bytes:
-                    self._vc.play(source, after=_after)  # short reply: below the pre-buffer
-                    started = True
-            except BaseException as exc:
-                source.abort()
-                if not isinstance(exc, asyncio.CancelledError):
-                    errors.append(exc)
-                raise
-            finally:
-                if not started:
-                    _resolve(None)  # nothing will ever play: release play_stream
-
-        producer = loop.create_task(_pump())
-        self._producer = producer
-        try:
-            await done
-        except asyncio.CancelledError:
-            self.stop()
-            raise
-        finally:
-            producer.cancel()
-            await asyncio.gather(producer, return_exceptions=True)
-            if self._producer is producer:
-                self._producer = None
-        if errors:
-            raise errors[0]
 
     async def play(self, pcm: bytes) -> None:
         loop = asyncio.get_running_loop()
@@ -292,9 +156,6 @@ class VoicePlayer:
             raise
 
     def stop(self) -> None:
-        producer = self._producer
-        if producer is not None and not producer.done():
-            producer.cancel()  # a stream in flight: stop feeding it
         # VoiceRecvClient.stop() also stops RECEIVING; stop only the playback.
         stop = getattr(self._vc, "stop_playing", None) or self._vc.stop
         stop()
@@ -366,14 +227,13 @@ class ListenSession:
         if self._guild.voice_client is not None:
             raise RuntimeError("the bot is already in a voice channel in this guild")
 
-        # Local-only: no hub lookups, then the LLM, then ASR (once), then RVC.
+        # Local-only: no hub lookups, then the LLM, then ASR (once).
         enforce_offline_models()
         await provider.ensure_spark_preferred()  # type: ignore[attr-defined]
         self._transcriber = build_transcriber(listen.asr, app.coordinator)
         load = getattr(self._transcriber, "load", None)
         if load is not None:
             await asyncio.to_thread(load)
-        await warm_voice_converter(pipeline, profile)
 
         reply = listen.reply
         synth = ReplySynthesizer(
@@ -398,9 +258,7 @@ class ListenSession:
         self._ingress = ListenIngress(bot_id, _new_opus_decoder, listen.vad.ring_buffer_s)
         vad = SileroVad if listen.vad.backend == "silero" else EnergyVad
         self._endpointer = Endpointer(vad, listen.vad, time.monotonic, self._on_event)
-        self._poller = EndpointerThread(
-            self._ingress, self._endpointer, ENDPOINT_POLL_INTERVAL_S
-        )
+        self._poller = EndpointerThread(self._ingress, self._endpointer, ENDPOINT_POLL_INTERVAL_S)
         self._turns = TurnManager(
             listen,
             MonotonicClock(),

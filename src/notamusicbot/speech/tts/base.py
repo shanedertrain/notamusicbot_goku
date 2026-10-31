@@ -1,8 +1,8 @@
 """SpeechSynthesizer protocol.
 
 Backends implement :class:`SpeechSynthesizer` so callers never depend on a
-concrete engine (Qwen 0.6B CustomVoice now; VoiceDesign / cloning / remote TTS
-later).
+concrete engine (Qwen3-TTS 0.6B Base zero-shot cloning now; VoiceDesign /
+remote TTS later).
 """
 
 from __future__ import annotations

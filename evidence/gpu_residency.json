@@ -1,65 +1,59 @@
 {
-  "timestamp": "2026-10-03T05:43:58+00:00",
-  "commit": "80e6146d1d653e39d4340cc5f581ff81ec9d4504",
+  "timestamp": "2026-10-30T22:47:45+00:00",
+  "commit": "da6eda5b5a5353bd8bf768f00927d4641f0a5e65",
   "gpu": "NVIDIA GeForce RTX 4070 Ti SUPER",
-  "driver": "617.14",
+  "driver": "615.78.08",
   "torch": "2.14.1+cu130",
   "cuda_available": "True",
   "test": "test_full_gpu_residency_no_oom",
   "stages": [
     {
       "name": "idle_after_llm_load",
-      "vram_used_mib": 15933,
-      "vram_total_mib": 16375,
-      "peak_allocated_mib": 7726
+      "vram_used_mib": 11487,
+      "vram_total_mib": 16004,
+      "peak_allocated_mib": 7758
     },
     {
       "name": "idle_after_tts_load",
-      "vram_used_mib": 11200,
-      "vram_total_mib": 16375,
-      "peak_allocated_mib": 9780
+      "vram_used_mib": 13725,
+      "vram_total_mib": 16004,
+      "peak_allocated_mib": 9976
     },
     {
-      "name": "idle_after_all_three_loaded",
-      "vram_used_mib": 11262,
-      "vram_total_mib": 16375,
-      "peak_allocated_mib": 9833
+      "name": "idle_after_clone_prompt_built",
+      "vram_used_mib": 13760,
+      "vram_total_mib": 16004,
+      "peak_allocated_mib": 10138
     },
     {
       "name": "content_generation_peak",
-      "vram_used_mib": 11296,
-      "vram_total_mib": 16375,
-      "peak_allocated_mib": 9833
+      "vram_used_mib": 13796,
+      "vram_total_mib": 16004,
+      "peak_allocated_mib": 10138
     },
     {
       "name": "tts_generation_peak",
-      "vram_used_mib": 11296,
-      "vram_total_mib": 16375,
-      "peak_allocated_mib": 9854
-    },
-    {
-      "name": "rvc_conversion_peak",
-      "vram_used_mib": 11296,
-      "vram_total_mib": 16375,
-      "peak_allocated_mib": 9854
+      "vram_used_mib": 13796,
+      "vram_total_mib": 16004,
+      "peak_allocated_mib": 10138
     },
     {
       "name": "end_to_end_peak",
-      "vram_used_mib": 11296,
-      "vram_total_mib": 16375,
-      "peak_allocated_mib": 9854
+      "vram_used_mib": 13796,
+      "vram_total_mib": 16004,
+      "peak_allocated_mib": 10138
     },
     {
       "name": "final",
-      "vram_used_mib": 11296,
-      "vram_total_mib": 16375,
-      "peak_allocated_mib": 9854
+      "vram_used_mib": 11534,
+      "vram_total_mib": 16004,
+      "peak_allocated_mib": 10138
     }
   ],
   "model_ids": {
     "content_llm": "Qwen/Qwen3-4B-Instruct-2507",
-    "tts": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
-    "rvc": "Goku (legacy worker subprocess)"
+    "tts": "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
   },
+  "voice_reference": "/home/cbash23/projects/software/notamusicbot_goku/config/voices/refs/obama.wav",
   "pass": true
 }

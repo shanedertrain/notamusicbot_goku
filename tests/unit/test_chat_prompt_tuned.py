@@ -78,4 +78,3 @@ def test_obama_profile_carries_its_own_chat_prompt() -> None:
     profile = VoiceProfile(**yaml.safe_load(path.read_text()))
     assert "Barack Obama" in profile.persona.chat_prompt
     assert "Goku" not in profile.persona.chat_prompt
-    assert profile.voice_conversion.model == "Obama"

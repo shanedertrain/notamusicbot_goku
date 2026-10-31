@@ -238,7 +238,7 @@ class NotAMusicBot(commands.Bot):
         Invoked by the player ONLY after a STREAM item ended NATURAL (see
         ``player.run``), with the outcome of that attempt; the bot-side caller
         double-checks ``outcome is NATURAL`` before generating post-song
-        content, so skip/stop/failure never start an LLM → TTS → RVC run.
+        content, so skip/stop/failure never start an LLM → TTS run.
         LOCAL/generated items never reach this hook (the player gates on
         ``media.kind == STREAM``), so generated audio cannot recurse into more
         post-song content.
@@ -273,12 +273,11 @@ class NotAMusicBot(commands.Bot):
         # shared speech pipeline that commands use for generated commentary.
         await asyncio.to_thread(self.app.load_speech_model)
         self.app.build_pipeline()
-        # Start the voice-conversion router (RVC worker spawn + health check)
-        # and the optional non-blocking warmup; both fail soft (logged).
+        # Load the content LLM and the clone TTS model, then schedule the
+        # optional non-blocking warmup; both fail soft (logged).
         await self.app.startup()
-        # Local LLM (content provider) is loaded inside app.startup() — before
-        # RVC start / warmup scheduling — so model loading and warmup can never
-        # overlap GPU ownership; a second call here is an idempotent no-op.
+        # Both models are loaded inside app.startup() BEFORE warmup scheduling,
+        # so model loading and warmup can never overlap GPU ownership.
         setup_commands(self)
         logger.info("Commands registered with prefix %r", self.command_prefix)
 
@@ -286,9 +285,9 @@ class NotAMusicBot(commands.Bot):
         """discord.py teardown: players first, then gateway, then application.
 
         Review Round-6 §3/B: guild player tasks are stopped BEFORE the
-        application's converter teardown, so a player (or its post-song
-        content hook) can never trigger a speech chain that races — or lazily
-        restarts — the RVC worker after shutdown.
+        application's speech-model teardown, so a player (or its post-song
+        content hook) can never trigger a speech chain that races the model
+        teardown after shutdown.
         """
         await self.stop_all_listen_sessions()
         await self._stop_guild_players()
@@ -299,7 +298,7 @@ class NotAMusicBot(commands.Bot):
             await self.app.shutdown()
 
     async def _stop_guild_players(self) -> None:
-        """Stop every guild player task BEFORE converter teardown (§3/B)."""
+        """Stop every guild player task BEFORE speech-model teardown (§3/B)."""
         await stop_guild_players(self.guild_states.all_states())
 
     async def on_ready(self) -> None:

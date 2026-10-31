@@ -1,11 +1,12 @@
 """Background prefetch of post-song commentary while a STREAM song plays.
 
 The user-visible win: post-song commentary (``content.max_sentences``-capped
-LLM text → Qwen TTS → RVC) takes ~60-80 s on this machine. Instead of
+LLM text → Qwen clone TTS → postprocess) takes ~60-80 s on this machine.
+Instead of
 generating it AFTER the song finishes (a long silent gap before the next
 dequeue), generation starts when the song starts (``on_now_playing`` hook)
 and runs through the shared :class:`InferenceCoordinator` — so it serializes
-with every other GPU job and never overlaps TTS/RVC inference.
+with every other GPU job and never overlaps TTS inference.
 
 Lifecycle (review-critical invariants preserved):
 
@@ -47,7 +48,7 @@ from notamusicbot.discord_bot.commentary import (
 )
 from notamusicbot.discord_bot.player import cleanup_media_item
 from notamusicbot.domain.media import MediaKind, PlayableMedia
-from notamusicbot.domain.voice_profiles import to_conversion_profile, to_processing_profile
+from notamusicbot.domain.voice_profiles import to_processing_profile, tts_request_for
 
 logger = logging.getLogger(__name__)
 
@@ -233,13 +234,10 @@ class CommentaryPrefetcher:
         if profile is None:
             logger.warning("No voice profile %r; skipping prefetched commentary", voice_profile_id)
             return None
-        from notamusicbot.domain.speech import TtsRequest
-
-        request = TtsRequest(text=text, language=profile.tts.language, speaker=profile.tts.speaker)
+        request = tts_request_for(profile, text)
         return await generate_commentary_media(
             pipeline,
             request,
-            to_conversion_profile(profile),
             guild_id=guild_id,
             requester=requester,
             processing=to_processing_profile(

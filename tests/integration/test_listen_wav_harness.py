@@ -2,7 +2,7 @@
 
     FakePacketSource -> ListenIngress (pass-through "decoder") -> Endpointer
     (EnergyVad) -> TurnManager (scripted transcriber / content provider,
-    ReplySynthesizer over the FakeSynthesizer/FakeConverter pipeline, recording
+    ReplySynthesizer over the FakeSynthesizer pipeline, recording
     player).
 
 No GPU, no models, no network, no Discord, nothing written outside ``tmp_path``.
@@ -53,7 +53,6 @@ def _load_unit_fakes():
 
 
 _fakes = _load_unit_fakes()
-FakeConverter = _fakes.FakeConverter
 FakeSynthesizer = _fakes.FakeSynthesizer
 FakeContentProvider = _fakes.FakeContentProvider
 FakeTranscriber = _fakes.FakeTranscriber
@@ -156,8 +155,11 @@ def _profile() -> VoiceProfile:
         {
             "id": "goku",
             "persona": {"display_name": "Goku"},
-            "tts": {"speaker": "Ryan"},
-            "voice_conversion": {"backend": "passthrough"},
+            "tts": {
+                "language": "English",
+                "reference_audio": str(REPO_ROOT / "tests" / "fixtures" / "sine_2s.wav"),
+                "reference_text": "Hi.",
+            },
             "audio": {},
         }
     )
@@ -187,7 +189,7 @@ class Harness:
         self.poller = EndpointerThread(self.ingress, self.endpointer)
 
         out = tmp_path / "speech"
-        pipeline = SpeechPipeline(FakeSynthesizer(seconds=0.4), FakeConverter(), output_dir=out)
+        pipeline = SpeechPipeline(FakeSynthesizer(seconds=0.4), output_dir=out)
         self.synth = TimedSynthesizer(pipeline, _profile(), artifact_root=out)
         self.transcriber = DelayedTranscriber([QUESTION], ASR_DELAY_S)
         self.provider = FakeContentProvider([REPLY], delay_s=LLM_DELAY_S)

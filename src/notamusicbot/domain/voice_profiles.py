@@ -1,12 +1,20 @@
-"""Typed voice-profile model loaded from ``config/voices/*.yaml``."""
+"""Typed voice-profile model loaded from ``config/voices/*.yaml``.
+
+Clone-only (owner decision 2026-10-30): a voice profile carries the reference
+clip and transcript that Qwen3-TTS Base zero-shot cloning renders. There is no
+trained model per voice and no voice-conversion stage — adding a voice is
+dropping a WAV plus a transcript.
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
+
+from notamusicbot.domain.speech import AudioProcessingProfile, TtsRequest
 
 
 class Persona(BaseModel):
@@ -17,19 +25,30 @@ class Persona(BaseModel):
 
 
 class TtsProfile(BaseModel):
-    backend: str = "qwen_custom_voice"
-    model: str = "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
+    """Voice-clone settings for the shared Qwen3-TTS Base model."""
+
     language: str = "English"
-    speaker: str
+    # Reference clip path (absolute, or relative to the repo root / profile dir).
+    reference_audio: Path
+    # Transcript of the reference clip; required for icl cloning.
+    reference_text: str | None = None
+    # xvec = speaker embedding only (no transcript needed); icl = in-context.
+    clone_mode: Literal["xvec", "icl"] = "xvec"
 
+    @field_validator("reference_audio", mode="before")
+    @classmethod
+    def _reference_audio_is_set(cls, value: Any) -> Any:
+        if value is None or not str(value).strip():
+            msg = "tts.reference_audio is required (path to the voice reference clip)"
+            raise ValueError(msg)
+        return value
 
-class VoiceConversionProfileModel(BaseModel):
-    backend: str = "passthrough"
-    model: str | None = None
-    # YAML config variant inside the model directory (``rvc_cli/models/<model>/
-    # <variant>.yaml``). ``None`` means the directory's default configuration.
-    variant: str | None = None
-    pitch_shift: int = 0
+    @model_validator(mode="after")
+    def _icl_requires_reference_text(self) -> TtsProfile:
+        if self.clone_mode == "icl" and not (self.reference_text or "").strip():
+            msg = "tts.reference_text is required when tts.clone_mode is 'icl'"
+            raise ValueError(msg)
+        return self
 
 
 class AudioProfile(BaseModel):
@@ -38,13 +57,11 @@ class AudioProfile(BaseModel):
 
 
 class VoiceProfile(BaseModel):
-    """A full voice/persona profile. Persona data is intentionally separate
-    from any RVC model configuration."""
+    """A full voice/persona profile: persona text plus its clone reference."""
 
     id: str
     persona: Persona
     tts: TtsProfile
-    voice_conversion: VoiceConversionProfileModel
     audio: AudioProfile
 
 
@@ -52,17 +69,44 @@ class VoiceProfileError(ValueError):
     """Raised when a voice profile file is missing or invalid."""
 
 
+def resolve_reference_audio(reference_audio: Path | str, profile_path: Path | None = None) -> Path:
+    """Existing absolute path for a profile's reference clip.
+
+    Relative paths are resolved against the repo working directory first and
+    then against the profile file's directory, so both ``config/voices/refs``
+    and a profile-local ``refs/`` layout work. Raises ``VoiceProfileError``
+    when no candidate exists.
+    """
+    path = Path(reference_audio)
+    candidates = [path] if path.is_absolute() else []
+    if not path.is_absolute():
+        candidates.append(Path.cwd() / path)
+        if profile_path is not None:
+            candidates.insert(0, profile_path.parent / path)
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate.resolve()
+    msg = f"Voice reference audio not found: {path}"
+    raise VoiceProfileError(msg)
+
+
 def load_voice_profile(path: Path) -> VoiceProfile:
-    """Load and validate one voice profile YAML file."""
+    """Load and validate one voice profile YAML file.
+
+    The reference clip must exist; its absolute path replaces the configured
+    value so every later request points at a real file.
+    """
     if not path.is_file():
         msg = f"Voice profile file not found: {path}"
         raise VoiceProfileError(msg)
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
-        return VoiceProfile.model_validate(data)
+        profile = VoiceProfile.model_validate(data)
     except (yaml.YAMLError, ValidationError, TypeError) as exc:
         msg = f"Invalid voice profile {path}: {exc}"
         raise VoiceProfileError(msg) from exc
+    profile.tts.reference_audio = resolve_reference_audio(profile.tts.reference_audio, path)
+    return profile
 
 
 def load_voice_profiles(dir_path: Path) -> dict[str, VoiceProfile]:
@@ -76,23 +120,30 @@ def load_voice_profiles(dir_path: Path) -> dict[str, VoiceProfile]:
     return profiles
 
 
-def to_conversion_profile(profile: VoiceProfile) -> Any:
-    """Map a voice profile's VC section to the domain VoiceConversionProfile."""
-    from notamusicbot.domain.speech import VoiceConversionProfile
-
-    return VoiceConversionProfile(
-        backend=profile.voice_conversion.backend,
-        model=profile.voice_conversion.model,
-        # getattr: duck-typed test fakes may not carry the new field.
-        variant=getattr(profile.voice_conversion, "variant", None),
-        pitch_shift=profile.voice_conversion.pitch_shift,
+def tts_request_for(
+    profile: VoiceProfile,
+    text: str,
+    *,
+    max_audio_seconds: float | None = None,
+) -> TtsRequest:
+    """Build the clone TTS request for ``profile`` (absolute reference path)."""
+    reference = Path(profile.tts.reference_audio)
+    if not reference.is_absolute():
+        reference = (Path.cwd() / reference).resolve()
+    return TtsRequest(
+        text=text,
+        language=profile.tts.language,
+        max_audio_seconds=max_audio_seconds,
+        reference_audio=str(reference),
+        reference_text=profile.tts.reference_text,
+        clone_mode=profile.tts.clone_mode,
     )
 
 
-def to_processing_profile(profile: VoiceProfile, *, sample_rate_hz: int, channels: int) -> Any:
+def to_processing_profile(
+    profile: VoiceProfile, *, sample_rate_hz: int, channels: int
+) -> AudioProcessingProfile:
     """Map a voice profile's audio section to the domain AudioProcessingProfile."""
-    from notamusicbot.domain.speech import AudioProcessingProfile
-
     return AudioProcessingProfile(
         target_sample_rate_hz=sample_rate_hz,
         channels=channels,

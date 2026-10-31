@@ -8,42 +8,33 @@ import threading
 import pytest
 import soundfile as sf
 
-from conftest import FakeConverter, FakeSynthesizer
-from notamusicbot.domain.speech import (
-    AudioProcessingProfile,
-    TtsRequest,
-    VoiceConversionProfile,
-)
+from conftest import FakeSynthesizer
+from notamusicbot.domain.speech import AudioProcessingProfile, TtsRequest
 from notamusicbot.speech.coordinator import InferenceCoordinator
 from notamusicbot.speech.pipeline import SpeechPipeline
 
-CONVERSION = VoiceConversionProfile(backend="passthrough")
 PROCESSING = AudioProcessingProfile(target_sample_rate_hz=48000, channels=1)
 
 
-def _pipeline(tmp_path, synth, conv) -> SpeechPipeline:
+def _request(text: str = "Hello there") -> TtsRequest:
+    return TtsRequest(text=text)
+
+
+def _pipeline(tmp_path, synth) -> SpeechPipeline:
     return SpeechPipeline(
         synth,
-        conv,
         PROCESSING,
         output_dir=tmp_path / "speech",
     )
 
 
-def test_pipeline_sequence_tts_vc_postprocess(tmp_path) -> None:
-    synth, conv = FakeSynthesizer(), FakeConverter()
-    pipeline = _pipeline(tmp_path, synth, conv)
-    final, metrics = asyncio.run(
-        pipeline.run(TtsRequest(text="Hello there", language="English", speaker="Ryan"), CONVERSION)
-    )
-    # Sequencing: TTS ran before VC with the same request
+def test_pipeline_sequence_tts_postprocess(tmp_path) -> None:
+    synth = FakeSynthesizer()
+    pipeline = _pipeline(tmp_path, synth)
+    final, metrics = asyncio.run(pipeline.run(_request()))
+    # TTS ran with the request
     assert len(synth.calls) == 1
     assert synth.calls[0].text == "Hello there"
-    assert len(conv.calls) == 1
-    source_artifact, conversion_used = conv.calls[0]
-    assert conversion_used.backend == "passthrough"
-    assert source_artifact.sample_rate_hz == 24000
-    assert source_artifact.path.name == "tts_source.wav"
     # Final artifact is a valid WAV at the post-processed rate
     info = sf.info(final.path)
     assert info.samplerate == 48000
@@ -55,40 +46,34 @@ def test_pipeline_sequence_tts_vc_postprocess(tmp_path) -> None:
 
 
 def test_artifact_naming_deterministic_layout(tmp_path) -> None:
-    pipeline = _pipeline(tmp_path, FakeSynthesizer(), FakeConverter())
-    final, metrics = asyncio.run(
-        pipeline.run(TtsRequest(text="x", language="English", speaker="Aiden"), CONVERSION)
-    )
+    pipeline = _pipeline(tmp_path, FakeSynthesizer())
+    final, metrics = asyncio.run(pipeline.run(_request("x")))
     assert final.path.parent == tmp_path / "speech" / metrics.job_id
     assert final.path.name == "final.wav"
-    # P1-11 cleanup: the TTS intermediate is deleted once VC has consumed it.
+    # P1-11 cleanup: the TTS intermediate is deleted once postprocess consumed it.
     assert not (tmp_path / "speech" / metrics.job_id / "tts_source.wav").exists()
-    assert not (tmp_path / "speech" / metrics.job_id / "converted.wav").exists()
 
 
 def test_queue_ordering_and_serialization(tmp_path) -> None:
     """Requests execute in submission order under a concurrency-1 coordinator."""
     synth = FakeSynthesizer()
-    conv = FakeConverter()
     coordinator = InferenceCoordinator(max_concurrent=1, queue_size=4)
     pipeline = SpeechPipeline(
-        synth, conv, PROCESSING, coordinator=coordinator, output_dir=tmp_path / "speech"
+        synth, PROCESSING, coordinator=coordinator, output_dir=tmp_path / "speech"
     )
     order: list[str] = []
 
-    original_convert = conv.convert
+    original_synthesize = synth.synthesize
 
-    async def tracking_convert(source, profile, output_path):
+    async def tracking_synthesize(request, output_path):
         order.append(output_path.parent.name)
-        return await original_convert(source, profile, output_path)
+        return await original_synthesize(request, output_path)
 
-    conv.convert = tracking_convert  # type: ignore[method-assign]
+    synth.synthesize = tracking_synthesize  # type: ignore[method-assign]
 
     async def main() -> None:
-        requests = [
-            TtsRequest(text=f"line {i}", language="English", speaker="Aiden") for i in range(3)
-        ]
-        await asyncio.gather(*(pipeline.run(r, CONVERSION) for r in requests))
+        requests = [_request(f"line {i}") for i in range(3)]
+        await asyncio.gather(*(pipeline.run(r) for r in requests))
 
     asyncio.run(main())
     assert len(order) == 3
@@ -116,7 +101,7 @@ def test_coordinator_limits_concurrency() -> None:
 
 
 def test_empty_text_raises(tmp_path) -> None:
-    from notamusicbot.speech.tts.qwen_custom_voice import normalize_text
+    from notamusicbot.speech.tts._common import normalize_text
 
     assert normalize_text("  hello   world ") == "hello world"
     # Quotes and punctuation are preserved (section 7.6)
@@ -127,21 +112,18 @@ def test_empty_text_raises(tmp_path) -> None:
 
 
 def test_pipeline_cleans_intermediates_and_marks_final_temp(tmp_path) -> None:
-    """Successful job: tts_source.wav deleted after VC, converted.wav deleted
-    after postprocess, final.wav registered as play-once queue media."""
+    """Successful job: tts_source.wav deleted after postprocess, final.wav
+    registered as play-once queue media."""
     from notamusicbot.speech.artifacts import (
         clear_registry,
         is_temp_speech_artifact,
     )
 
     clear_registry()
-    pipeline = _pipeline(tmp_path, FakeSynthesizer(), FakeConverter())
-    final, _metrics = asyncio.run(
-        pipeline.run(TtsRequest(text="x", language="English", speaker="Ryan"), CONVERSION)
-    )
+    pipeline = _pipeline(tmp_path, FakeSynthesizer())
+    final, _metrics = asyncio.run(pipeline.run(_request("x")))
     job_dir = final.path.parent
     assert not (job_dir / "tts_source.wav").exists()
-    assert not (job_dir / "converted.wav").exists()
     assert (job_dir / "final.wav").exists()
     assert is_temp_speech_artifact(final.path)
     clear_registry()
@@ -156,46 +138,34 @@ def test_pipeline_keep_artifacts_retains_everything(tmp_path) -> None:
     clear_registry()
     pipeline = SpeechPipeline(
         FakeSynthesizer(),
-        FakeConverter(),
         PROCESSING,
         output_dir=tmp_path / "speech",
         keep_artifacts=True,
     )
-    final, _metrics = asyncio.run(
-        pipeline.run(TtsRequest(text="x", language="English", speaker="Ryan"), CONVERSION)
-    )
+    final, _metrics = asyncio.run(pipeline.run(_request("x")))
     job_dir = final.path.parent
     assert (job_dir / "tts_source.wav").exists()
-    assert (job_dir / "converted.wav").exists()
     assert (job_dir / "final.wav").exists()
     assert not is_temp_speech_artifact(final.path)
     clear_registry()
 
 
-def test_pipeline_vc_failure_retains_tts_source(tmp_path) -> None:
-    """Failure policy: when VC fails, tts_source.wav is retained for
+def test_pipeline_postprocess_failure_retains_tts_source(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Failure policy: when postprocess fails, tts_source.wav is retained for
     diagnostics (the only reproducible input for the failed stage)."""
+    from notamusicbot.speech import pipeline as pipeline_mod
     from notamusicbot.speech.artifacts import clear_registry
 
-    class FailingConverter:
-        def __init__(self) -> None:
-            self.calls = 0
+    async def boom(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise RuntimeError("postprocess boom")
 
-        async def convert(self, source, profile, output_path):  # noqa: ANN001
-            self.calls += 1
-            raise RuntimeError("vc boom")
-
+    monkeypatch.setattr(pipeline_mod, "postprocess", boom)
     clear_registry()
-    failing = FailingConverter()
-    pipeline = _pipeline(tmp_path, FakeSynthesizer(), failing)
-    try:
-        asyncio.run(
-            pipeline.run(TtsRequest(text="x", language="English", speaker="Ryan"), CONVERSION)
-        )
-        raised = False
-    except RuntimeError:
-        raised = True
-    assert raised and failing.calls == 1
+    pipeline = _pipeline(tmp_path, FakeSynthesizer())
+    with pytest.raises(RuntimeError, match="postprocess boom"):
+        asyncio.run(pipeline.run(_request("x")))
     job_dir = tmp_path / "speech"
     sources = list(job_dir.glob("*/tts_source.wav"))
     assert len(sources) == 1 and sources[0].exists()
@@ -209,11 +179,11 @@ def test_pipeline_vc_failure_retains_tts_source(tmp_path) -> None:
 
 def test_pipeline_cancelled_while_queued_never_runs(tmp_path) -> None:
     """A pipeline.run cancelled while still waiting for the coordinator
-    must never call TTS or VC and must leave no job artifacts."""
+    must never call TTS and must leave no job artifacts."""
     coordinator = InferenceCoordinator(max_concurrent=1, queue_size=4)
-    synth, conv = FakeSynthesizer(), FakeConverter()
+    synth = FakeSynthesizer()
     pipeline = SpeechPipeline(
-        synth, conv, PROCESSING, coordinator=coordinator, output_dir=tmp_path / "speech"
+        synth, PROCESSING, coordinator=coordinator, output_dir=tmp_path / "speech"
     )
     release = threading.Event()
 
@@ -223,9 +193,7 @@ def test_pipeline_cancelled_while_queued_never_runs(tmp_path) -> None:
     async def main() -> None:
         job_a = asyncio.create_task(coordinator.run_blocking(hold_a))
         await asyncio.sleep(0.05)  # A acquires the lease
-        job_b = asyncio.create_task(
-            pipeline.run(TtsRequest(text="q", language="English", speaker="Aiden"), CONVERSION)
-        )
+        job_b = asyncio.create_task(pipeline.run(_request("q")))
         await asyncio.sleep(0.1)  # B queues behind A (has NOT started)
         assert coordinator.pending == 2
         job_b.cancel()
@@ -237,7 +205,6 @@ def test_pipeline_cancelled_while_queued_never_runs(tmp_path) -> None:
 
     asyncio.run(main())
     assert len(synth.calls) == 0, "TTS ran for a job cancelled before lease acquisition"
-    assert len(conv.calls) == 0, "VC ran for a job cancelled before lease acquisition"
     # Only the empty job dir with its pending .temporary marker may exist
     # (created before submission; retention pruning ages it out). No media.
     job_dirs = list((tmp_path / "speech").glob("*")) if (tmp_path / "speech").exists() else []
@@ -256,18 +223,16 @@ def test_queue_wait_measures_lease_wait_not_synthesis(tmp_path) -> None:
     """Deliberately occupy the coordinator, then verify queue_wait_s
     reflects the intentional wait rather than the synthesis duration."""
     coordinator = InferenceCoordinator(max_concurrent=1, queue_size=4)
-    synth, conv = FakeSynthesizer(), FakeConverter()
+    synth = FakeSynthesizer()
     pipeline = SpeechPipeline(
-        synth, conv, PROCESSING, coordinator=coordinator, output_dir=tmp_path / "speech"
+        synth, PROCESSING, coordinator=coordinator, output_dir=tmp_path / "speech"
     )
     OCCUPANCY_S = 0.4
 
     async def main() -> None:
         occupier = asyncio.create_task(coordinator.run_detached(asyncio.sleep, OCCUPANCY_S))
         await asyncio.sleep(0.05)  # occupier holds the lease
-        final, metrics = await pipeline.run(
-            TtsRequest(text="wait me", language="English", speaker="Aiden"), CONVERSION
-        )
+        final, metrics = await pipeline.run(_request("wait me"))
         await asyncio.wait_for(occupier, 10)
         return final, metrics
 

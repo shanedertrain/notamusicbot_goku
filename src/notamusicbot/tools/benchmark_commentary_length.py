@@ -2,10 +2,9 @@
 
 Evidence tool for the commentary-pipeline performance pass. Generates song
 commentary twice with the real local LLM (Qwen3-4B) and synthesizes both
-texts with the real Qwen TTS — once uncapped, once trimmed to
+texts with the real Qwen clone TTS — once uncapped, once trimmed to
 ``--max-sentences`` sentences — and reports the timing delta (LLM generation
-time is sample-dependent; TTS + RVC cost scale with audio duration, and RVC
-time scales with TTS output length).
+time is sample-dependent; TTS cost scales with audio duration).
 
     .venv-main/bin/python -m notamusicbot.tools.benchmark_commentary_length \
         --song "Bohemian Rhapsody" --artist Queen --max-sentences 3
@@ -54,6 +53,18 @@ def gpu_name() -> str | None:
     return None
 
 
+def _voice_profile(profile_id: str):
+    from notamusicbot.config import load_app_settings
+    from notamusicbot.domain.voice_profiles import load_voice_profiles
+
+    settings = load_app_settings()
+    profiles = load_voice_profiles(Path(settings.speech.voices_dir))
+    profile = profiles.get(profile_id)
+    if profile is None:
+        raise SystemExit(f"Unknown voice profile {profile_id!r} (available: {sorted(profiles)})")
+    return settings, profile
+
+
 async def run_once(
     *,
     song: str,
@@ -62,15 +73,18 @@ async def run_once(
     max_sentences: int | None,
     output_dir: Path,
     tag: str,
+    profile_id: str = "obama",
 ) -> dict[str, Any]:
     from notamusicbot.content.base import ContentKind, ContentRequest
     from notamusicbot.content.llm import LocalQwenLlmProvider
     from notamusicbot.content.trim import trim_sentences
-    from notamusicbot.domain.speech import AudioProcessingProfile, TtsRequest
+    from notamusicbot.domain.speech import AudioProcessingProfile
+    from notamusicbot.domain.voice_profiles import tts_request_for
     from notamusicbot.speech.coordinator import shared_gpu_coordinator
     from notamusicbot.speech.pipeline import SpeechPipeline
-    from notamusicbot.speech.tts.qwen_custom_voice import QwenCustomVoiceSynthesizer
-    from notamusicbot.speech.voice_conversion.passthrough import PassthroughVoiceConverter
+    from notamusicbot.speech.tts.qwen_clone import QwenCloneSynthesizer
+
+    settings, profile = _voice_profile(profile_id)
 
     request = ContentRequest(
         kind=ContentKind.SONG,
@@ -87,26 +101,21 @@ async def run_once(
 
     text = trim_sentences(raw_text, max_sentences)
 
-    synthesizer = QwenCustomVoiceSynthesizer.from_settings(
-        model_id="Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
-        device="cuda",
-        dtype="bfloat16",
-        attn_implementation="sdpa",
+    synthesizer = QwenCloneSynthesizer.from_settings(
+        model_id=settings.speech.tts_model_id,
+        device=settings.speech.tts_device,
+        dtype=settings.speech.tts_dtype,
+        attn_implementation=settings.speech.tts_attn_implementation,
     )
     pipeline = SpeechPipeline(
         synthesizer,
-        PassthroughVoiceConverter(),
         AudioProcessingProfile(),
         coordinator=shared_gpu_coordinator(),
         output_dir=output_dir,
         keep_artifacts=True,
     )
     tts_start = time.perf_counter()
-    artifact, metrics = await pipeline.run(
-        TtsRequest(text=text, language="English", speaker="Aiden"),
-        conversion_from_passthrough(),
-        None,
-    )
+    artifact, metrics = await pipeline.run(tts_request_for(profile, text), None)
     tts_s = time.perf_counter() - tts_start
     row = {
         "tag": tag,
@@ -126,18 +135,13 @@ async def run_once(
     return row
 
 
-def conversion_from_passthrough():
-    from notamusicbot.domain.speech import VoiceConversionProfile
-
-    return VoiceConversionProfile(backend="passthrough")
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--song", default="Bohemian Rhapsody")
     parser.add_argument("--artist", default="Queen")
     parser.add_argument("--requester", default="Alice")
     parser.add_argument("--max-sentences", type=int, default=3)
+    parser.add_argument("--profile", default="obama", help="Voice profile id to clone")
     parser.add_argument(
         "--output-dir", type=Path, default=REPO_ROOT / "var" / "commentary_len_bench"
     )
@@ -152,6 +156,7 @@ def main() -> None:
             max_sentences=None,
             output_dir=args.output_dir / "uncapped",
             tag="uncapped",
+            profile_id=args.profile,
         )
         capped = await run_once(
             song=args.song,
@@ -160,11 +165,13 @@ def main() -> None:
             max_sentences=args.max_sentences,
             output_dir=args.output_dir / "capped",
             tag=f"capped_{args.max_sentences}",
+            profile_id=args.profile,
         )
         return {
             "timestamp_utc": datetime.now(UTC).isoformat(),
             "commit": git_commit(),
             "gpu": gpu_name(),
+            "profile": args.profile,
             "uncapped": uncapped,
             "capped": capped,
         }

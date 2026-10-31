@@ -90,18 +90,18 @@ def test_combined_llm_and_qwen_tts_vram_headroom(provider) -> None:
     """Load the Qwen3-TTS model alongside the LLM and report VRAM headroom."""
     import torch
 
-    from notamusicbot.speech.tts.qwen_custom_voice import QwenCustomVoiceSynthesizer
+    from notamusicbot.speech.tts.qwen_clone import QwenCloneSynthesizer
 
     before_used, total = _vram_mib()
-    tts_model = QwenCustomVoiceSynthesizer.from_settings(
-        model_id="Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
+    tts_model = QwenCloneSynthesizer.from_settings(
+        model_id="Qwen/Qwen3-TTS-12Hz-0.6B-Base",
         device="cuda",
         dtype="bfloat16",
         attn_implementation="sdpa",
     )
     assert tts_model is not None
-    # Load only — synthesizer.warmup() requires a running event loop (it is
-    # normally called from async code); VRAM measurement needs just the load.
+    # Load only — VRAM measurement needs just the load (warmup would need a
+    # voice-clone request and a running event loop).
     used, total = _vram_mib()
     print(
         f"\n[combined] llm+tts loaded: vram={used}/{total} MiB "

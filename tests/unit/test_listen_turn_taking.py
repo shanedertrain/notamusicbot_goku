@@ -415,7 +415,7 @@ async def test_synthesis_error_on_second_sentence_keeps_first_only() -> None:
         async def synthesize_sentence(self, text: str):  # type: ignore[no-untyped-def]
             if self.calls:
                 self.calls.append(text)
-                raise ReplySynthesisError("rvc gone")
+                raise ReplySynthesisError("tts gone")
             return await super().synthesize_sentence(text)
 
     synth = SecondFails()

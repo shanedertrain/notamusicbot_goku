@@ -7,11 +7,9 @@ unbounded task buildup.
 
 Review Round-3 P1: one *shared* coordinator arbitrates ALL main-process GPU
 inference — the local content LLM (:mod:`notamusicbot.content.llm`) and the
-speech pipeline (TTS -> VC -> postprocess). The speech pipeline holds the
-shared slot through the voice-conversion stage, so the RVC worker subprocess
-can never overlap main-process LLM/TTS inference on the same GPU. (The RVC
-worker itself runs out of process — no in-process lock can cover it — which is
-exactly why the pipeline must keep the slot for the whole VC round-trip.)
+speech pipeline (TTS -> postprocess). The speech pipeline holds the shared
+slot for the whole chain, so LLM generation and TTS inference can never
+overlap on the same GPU.
 
 Review Round-4 P0 — cancellation safety (Option B design)
 ---------------------------------------------------------
@@ -39,7 +37,8 @@ the work:
    TTS -> VC -> postprocess chain). The coroutine runs inside the detached
    holder task itself; the caller awaits through ``asyncio.shield``. Caller
    cancellation detaches the holder, which keeps the lease until the chain
-   coroutine actually finished (including the RVC worker-reply wait). Unlike
+   coroutine actually finished (including the blocking generation thread).
+   Unlike
    ``run_blocking``, a holder cancelled at event-loop shutdown releases the
    lease as its coroutine unwinds — deterministic teardown, pinned by the
    cancelled-job artifact tests.
@@ -164,9 +163,9 @@ class InferenceCoordinator:
         The coroutine runs inside a DETACHED holder task on the running loop;
         the caller awaits it through ``asyncio.shield``. If the caller is
         cancelled, it raises ``CancelledError`` immediately while the holder
-        keeps the lease until the coroutine actually finished — so awaited
-        worker-reply threads (e.g. the RVC adapter) can never outlive the
-        lease. Unlike :meth:`run_blocking` (whose thread is shielded even
+        keeps the lease until the coroutine actually finished — so blocked
+        generation threads can never outlive the lease. Unlike
+        :meth:`run_blocking` (whose thread is shielded even
         against loop shutdown), a holder cancelled at event-loop shutdown
         releases the lease when its coroutine unwinds — the cancellation then
         propagates into any in-flight await, which is the deterministic
@@ -388,7 +387,7 @@ def shared_gpu_coordinator() -> InferenceCoordinator:
 
     The local content LLM provider falls back to this when it is not handed an
     explicit coordinator, guaranteeing that LLM generation and speech-pipeline
-    inference (TTS/RVC) are serialized against each other even when the two
+    inference (TTS) are serialized against each other even when the two
     components are composed independently (e.g. CLI tools and benchmarks).
     """
     global _shared_coordinator

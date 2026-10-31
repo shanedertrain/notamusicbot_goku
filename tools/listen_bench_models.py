@@ -1,14 +1,14 @@
 """Listen-mode P0b: local GPU micro-benchmark (no Discord).
 
 Measures, in one process, on the real production components:
-  1. TTS + RVC through the real SpeechPipeline (goku profile, RVC), cold first
+  1. clone TTS through the real SpeechPipeline (goku profile), cold first
      job then warm-up job then 5 one-sentence lines.
   2. ASR with openai/whisper-small.en and openai/whisper-base.en (transformers,
      fp16, cuda): load time, VRAM delta, per-clip latency, word error rate.
      Clips are plain-TTS (no voice conversion) of three known sentences,
      resampled to 16 kHz mono float32 in memory. Synthetic clean speech is
      optimistic compared with real microphones.
-  3. VRAM (nvidia-smi used/free MiB) at each load step: LLM, TTS, RVC worker,
+  3. VRAM (nvidia-smi used/free MiB) at each load step: LLM, TTS,
      Whisper small.en.
 
 Run from the repo root (needs the two Whisper models in the HF cache; this
@@ -37,12 +37,8 @@ import soxr
 
 from notamusicbot.app import Application
 from notamusicbot.config import load_app_settings
-from notamusicbot.domain.speech import (
-    AudioProcessingProfile,
-    TtsRequest,
-    VoiceConversionProfile,
-)
-from notamusicbot.domain.voice_profiles import load_voice_profiles
+from notamusicbot.domain.speech import AudioProcessingProfile
+from notamusicbot.domain.voice_profiles import load_voice_profiles, tts_request_for
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUT = REPO_ROOT / "evidence" / "listen_models_benchmark.json"
@@ -92,14 +88,9 @@ def wer(reference: str, hypothesis: str) -> float:
     return prev[-1] / len(ref) if ref else 0.0
 
 
-async def run_job(pipeline, text, profile, processing, *, vc: bool):
-    conversion = VoiceConversionProfile(
-        backend=profile.voice_conversion.backend if vc else "passthrough",
-        model=profile.voice_conversion.model,
-        pitch_shift=profile.voice_conversion.pitch_shift,
-    )
-    request = TtsRequest(text=text, language=profile.tts.language, speaker=profile.tts.speaker)
-    return await pipeline.run(request, conversion, processing)
+async def run_job(pipeline, text, profile, processing):
+    request = tts_request_for(profile, text)
+    return await pipeline.run(request, processing)
 
 
 def job_row(text, metrics) -> dict:
@@ -107,7 +98,6 @@ def job_row(text, metrics) -> dict:
         "text": text,
         "words": len(text.split()),
         "tts_s": round(metrics.tts_s, 3),
-        "vc_s": round(metrics.voice_conversion_s, 3),
         "pp_s": round(metrics.postprocess_s, 3),
         "total_s": round(metrics.total_s, 3),
         "audio_s": round(metrics.output_duration_s, 3),
@@ -182,7 +172,7 @@ async def main_async(out_path: Path) -> dict:
     profile = profiles["goku"]
     app = Application(settings)
 
-    # Same order as Application.startup(): LLM, then (TTS) and the RVC worker.
+    # Same order as Application.startup(): LLM, then the clone TTS model.
     t = time.perf_counter()
     await asyncio.to_thread(app.load_content_model)
     result["llm_load_s"] = round(time.perf_counter() - t, 2)
@@ -195,10 +185,7 @@ async def main_async(out_path: Path) -> dict:
     result["tts_load_s"] = round(time.perf_counter() - t, 2)
     steps["2_after_tts"] = smi()
 
-    t = time.perf_counter()
-    await app.converter_router.startup()
-    result["rvc_startup_s"] = round(time.perf_counter() - t, 2)
-    steps["3_after_rvc_startup"] = smi()
+    steps["3_after_speech_ready"] = smi()
 
     processing = AudioProcessingProfile(
         target_sample_rate_hz=settings.speech.sample_rate_hz,
@@ -208,32 +195,32 @@ async def main_async(out_path: Path) -> dict:
     )
     created: list[Path] = []
 
-    async def job(text, *, vc):
-        final, metrics = await run_job(pipeline, text, profile, processing, vc=vc)
+    async def job(text):
+        final, metrics = await run_job(pipeline, text, profile, processing)
         created.append(final.path)
         return final, metrics
 
     try:
-        # 1. TTS + RVC. Cold first job, then warm-up job, then the 5 lines.
-        _, m = await job("Hello, this is the first cold job.", vc=True)
-        result["tts_rvc_cold_first_job"] = job_row("Hello, this is the first cold job.", m)
-        steps["4_after_first_rvc_job"] = smi()
-        _, m = await job("Warm up job, here we go.", vc=True)
-        result["tts_rvc_warmup_job"] = job_row("Warm up job, here we go.", m)
+        # 1. Clone TTS. Cold first job, then warm-up job, then the 5 lines.
+        _, m = await job("Hello, this is the first cold job.")
+        result["clone_cold_first_job"] = job_row("Hello, this is the first cold job.", m)
+        steps["4_after_first_clone_job"] = smi()
+        _, m = await job("Warm up job, here we go.")
+        result["clone_warmup_job"] = job_row("Warm up job, here we go.", m)
         rows = []
         for text in LINES:
-            _, m = await job(text, vc=True)
+            _, m = await job(text)
             rows.append(job_row(text, m))
-        result["tts_rvc_warm_lines"] = rows
-        result["tts_rvc_warm_mean"] = {
+        result["clone_warm_lines"] = rows
+        result["clone_warm_mean"] = {
             k: round(sum(r[k] for r in rows) / len(rows), 3)
-            for k in ("tts_s", "vc_s", "total_s", "audio_s", "rtf")
+            for k in ("tts_s", "pp_s", "total_s", "audio_s", "rtf")
         }
 
-        # ASR clips: plain TTS, no voice conversion, 16 kHz mono float32.
+        # ASR clips: short sentences at 16 kHz mono float32.
         clips = []
         for text in ASR_SENTENCES:
-            final, _ = await job(text, vc=False)
+            final, _ = await job(text)
             clips.append((text, load_clip_16k(final.path)))
     finally:
         for p in created:
@@ -243,7 +230,7 @@ async def main_async(out_path: Path) -> dict:
             except OSError:
                 pass
 
-    # 3 (final step) + 2: Whisper small.en with LLM+TTS+RVC still resident.
+    # 3 (final step) + 2: Whisper small.en with LLM+TTS still resident.
     small, small_objs = bench_whisper(WHISPER_MODELS[0], clips, "5_after_whisper_small", steps)
     steps["5_after_whisper_small"] = smi()
     base, base_objs = bench_whisper(WHISPER_MODELS[1], clips, "6_after_whisper_base_also", steps)
@@ -252,7 +239,7 @@ async def main_async(out_path: Path) -> dict:
     result["whisper_base_en"] = base
     result["everything_resident_free_mib"] = steps["5_after_whisper_small"]["free_mib"]
     result["everything_resident_note"] = (
-        "step 5 = LLM + TTS + RVC worker + whisper small.en; step 6 additionally holds base.en"
+        "step 5 = LLM + clone TTS + whisper small.en; step 6 additionally holds base.en"
     )
     del small_objs, base_objs
 

@@ -12,11 +12,10 @@ Covers:
 - Double-acquire guard (no nested run_blocking from a slot holder).
 - A-LLM: cancelled ``LocalQwenLlmProvider.generate`` keeps the shared lease
   until the blocking ``_generate_sync`` finished.
-- A-TTS / A-RVC: cancelled ``SpeechPipeline.run`` keeps the lease until the
-  fake blocking synthesizer / RVC converter work finished (the whole
-  TTS -> VC -> postprocess chain runs inside one ``run_blocking`` lease; the
-  RVC adapter's worker-reply wait thread lives inside that chain).
-- RVC orphan replies: a late reply for a cancelled request id is discarded.
+- A-TTS: a cancelled ``SpeechPipeline.run`` keeps the lease until the fake
+  blocking synthesizer work finished (the whole TTS -> postprocess chain runs
+  inside one detached lease and the blocking generation thread cannot outlive
+  it).
 - B: post-song generation in flight, player ``stop()`` cancels it, a second
   inference request must not overlap (logical ``max_active == 1``) and the
   queue is not repopulated after stop.
@@ -32,7 +31,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import FakeConverter, FakeSynthesizer
+from conftest import FakeSynthesizer
 from notamusicbot.app import Application
 from notamusicbot.config import AppSettings, ContentSettings, SpeechSettings
 from notamusicbot.content.base import ContentKind, ContentRequest
@@ -40,18 +39,12 @@ from notamusicbot.content.llm import LocalQwenLlmProvider
 from notamusicbot.discord_bot.guild_state import GuildState
 from notamusicbot.discord_bot.player import GuildPlayer
 from notamusicbot.domain.media import MediaKind, PlayableMedia
-from notamusicbot.domain.speech import (
-    AudioProcessingProfile,
-    TtsRequest,
-    VoiceConversionProfile,
-)
+from notamusicbot.domain.speech import AudioProcessingProfile, TtsRequest
 from notamusicbot.speech.coordinator import InferenceCoordinator
 from notamusicbot.speech.pipeline import SpeechPipeline
-from notamusicbot.speech.voice_conversion.rvc import RvcVoiceConverter
 
 BLOCKING_S = 0.3
 PROCESSING = AudioProcessingProfile(target_sample_rate_hz=48000, channels=1)
-CONVERSION = VoiceConversionProfile(backend="passthrough")
 
 
 class _SlowBlocking:
@@ -236,7 +229,7 @@ async def test_cancelled_llm_generate_holds_shared_slot() -> None:
 
 
 # --------------------------------------------------------------------------
-# A-TTS / A-RVC: cancelled pipeline run keeps the lease for the whole chain
+# A-TTS: cancelled pipeline run keeps the lease for the whole chain
 # --------------------------------------------------------------------------
 
 
@@ -263,35 +256,9 @@ class _SlowSynthesizer(FakeSynthesizer):
         return AudioArtifact(path=output_path, sample_rate_hz=24000, duration_s=0.1)
 
 
-class _SlowConverter(FakeConverter):
-    """Fake RVC-style converter: blocking worker-reply wait in a thread."""
-
-    def __init__(self) -> None:
-        FakeConverter.__init__(self)
-        self.job = _SlowBlocking()
-
-    async def convert(self, source, profile, output_path):
-        self.calls.append((source, profile))
-        import shutil
-
-        # Emulates RvcVoiceConverter.convert: the worker subprocess reply is
-        # awaited in a thread INSIDE the pipeline-held lease.
-        await asyncio.to_thread(self.job.work)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        await asyncio.to_thread(shutil.copyfile, source.path, output_path)
-        from notamusicbot.domain.speech import AudioArtifact
-
-        return AudioArtifact(
-            path=output_path,
-            sample_rate_hz=source.sample_rate_hz,
-            duration_s=source.duration_s,
-        )
-
-
-def _slow_pipeline(tmp_path: Path, coord: InferenceCoordinator, synth, conv) -> SpeechPipeline:
+def _slow_pipeline(tmp_path: Path, coord: InferenceCoordinator, synth) -> SpeechPipeline:
     return SpeechPipeline(
         synth,
-        conv,
         PROCESSING,
         coordinator=coord,
         output_dir=tmp_path / "speech",
@@ -299,12 +266,12 @@ def _slow_pipeline(tmp_path: Path, coord: InferenceCoordinator, synth, conv) -> 
     )
 
 
-async def _cancelled_pipeline_holds_lease(tmp_path: Path, synth, conv, job: _SlowBlocking) -> None:
+async def _cancelled_pipeline_holds_lease(tmp_path: Path, synth, job: _SlowBlocking) -> None:
     coord = InferenceCoordinator()
-    pipeline = _slow_pipeline(tmp_path, coord, synth, conv)
-    request = TtsRequest(text="Hello there", language="English", speaker="Aiden")
+    pipeline = _slow_pipeline(tmp_path, coord, synth)
+    request = TtsRequest(text="Hello there")
 
-    task = asyncio.create_task(pipeline.run(request, CONVERSION))
+    task = asyncio.create_task(pipeline.run(request))
     await _wait_thread_event(job.started)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -328,65 +295,7 @@ async def _cancelled_pipeline_holds_lease(tmp_path: Path, synth, conv, job: _Slo
 
 async def test_cancelled_pipeline_tts_stage_holds_lease(tmp_path) -> None:
     synth = _SlowSynthesizer()
-    await _cancelled_pipeline_holds_lease(tmp_path, synth, FakeConverter(), synth.job)
-
-
-async def test_cancelled_pipeline_rvc_stage_holds_lease(tmp_path) -> None:
-    conv = _SlowConverter()
-    await _cancelled_pipeline_holds_lease(tmp_path, FakeSynthesizer(), conv, conv.job)
-
-
-# --------------------------------------------------------------------------
-# A-RVC: orphaned worker replies are discarded safely
-# --------------------------------------------------------------------------
-
-
-class _FakeStdout:
-    def __init__(self, lines: list[str]) -> None:
-        self._lines = list(lines)
-
-    def readline(self) -> str:
-        if not self._lines:
-            return ""
-        return self._lines.pop(0)
-
-
-class _FakeProcess:
-    def __init__(self, lines: list[str]) -> None:
-        self.stdout = _FakeStdout(lines)
-        self.returncode = None
-
-    def poll(self) -> int | None:
-        return None
-
-
-def test_rvc_late_reply_for_cancelled_request_is_discarded() -> None:
-    conv = RvcVoiceConverter()
-    # Request 7 was cancelled while its reply thread waited; a request 8 is
-    # reading now and first receives the late reply for 7.
-    conv._orphaned_ids.add(7)
-    process = _FakeProcess(
-        [
-            '{"id": 7, "status": "ok", "output_wav_path": "orphan.wav"}\n',
-            '{"id": 8, "status": "ok", "output_wav_path": "mine.wav"}\n',
-        ]
-    )
-    reply = conv._read_reply(process, 8)
-    assert reply["id"] == 8
-    assert reply["output_wav_path"] == "mine.wav"
-    assert 7 not in conv._orphaned_ids
-
-
-def test_rvc_mismatched_reply_is_skipped() -> None:
-    conv = RvcVoiceConverter()
-    process = _FakeProcess(
-        [
-            '{"id": 99, "status": "ok"}\n',
-            '{"id": 8, "status": "ok"}\n',
-        ]
-    )
-    reply = conv._read_reply(process, 8)
-    assert reply["id"] == 8
+    await _cancelled_pipeline_holds_lease(tmp_path, synth, synth.job)
 
 
 # --------------------------------------------------------------------------
@@ -430,7 +339,7 @@ async def test_stop_during_post_song_generation_no_overlap_no_repopulation(tmp_p
     llm_job = _SlowBlocking()
     provider = LocalQwenLlmProvider(gpu_coordinator=coord)
     provider._generate_sync = lambda _prompt: llm_job.work()  # type: ignore[method-assign]
-    pipeline = _slow_pipeline(tmp_path, coord, synth, FakeConverter())
+    pipeline = _slow_pipeline(tmp_path, coord, synth)
 
     state = GuildState(1)
     vc = _FakeVoiceClient()
@@ -438,9 +347,7 @@ async def test_stop_during_post_song_generation_no_overlap_no_repopulation(tmp_p
 
     async def post_song_hook(media, outcome) -> None:
         # In-flight post-song generation: fake TTS (pipeline) then fake LLM.
-        await pipeline.run(
-            TtsRequest(text="Post song", language="English", speaker="Aiden"), CONVERSION
-        )
+        await pipeline.run(TtsRequest(text="Post song"))
         await provider.generate(
             ContentRequest(kind=ContentKind.SONG, song_name="Song A", requester_name="tester")
         )
@@ -524,27 +431,25 @@ async def test_startup_load_and_warmup_do_not_overlap(monkeypatch) -> None:
     monkeypatch.setattr("notamusicbot.content.llm.LocalQwenLlmProvider", _FakeLlm)
 
     class _FakeSynth:
-        def warmup(self, output_path: Path) -> object:
+        async def synthesize(self, request, output_path):
             record("warmup-start")
             time.sleep(0.15)
             record("warmup-end")
-            return object()
+            from notamusicbot.domain.speech import AudioArtifact
 
-        async def synthesize(self, request, output_path):  # pragma: no cover
-            raise AssertionError("not used in startup test")
+            return AudioArtifact(path=output_path, sample_rate_hz=24000, duration_s=0.1)
 
     settings = AppSettings(
         speech=SpeechSettings(
             voices_dir=Path("tests/fixtures"),
             users_config=Path("config/does-not-exist.yaml"),
-            voice_conversion_backends=["passthrough"],
             warmup_on_start=True,
             output_dir="var/test-speech",
         ),
         content=ContentSettings(enabled=True, provider="local_qwen"),
     )
-    app = Application(settings)
-    app._synthesizer = _FakeSynth()
+    fake_synth = _FakeSynth()
+    app = Application(settings, synthesizer_factory=lambda: fake_synth)
 
     await app.startup()
     assert app._warmup_task is not None

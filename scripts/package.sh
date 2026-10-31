@@ -11,10 +11,10 @@ OUT="${1:-/tmp/notamusicbot_review_package.zip}"
 # Directories/files that are safe to ship: source, tests, config examples,
 # docs. Never: .env*, weights (*.pt/*.pth/*.index), caches, var/, .git.
 ALLOW_ARGS=(
-  src tests legacy scripts docs
+  src tests scripts docs
   README.md IMPLEMENTATION_REPORT.md TEST_RESULTS.md
-  BENCHMARK_RESULTS.md DEPENDENCY_NOTES.md REVIEW_NOTES.md REWORK_HANDOFF.md
-  pyproject.toml .gitignore .env.example LEGACY_VENV.md
+  DEPENDENCY_NOTES.md REVIEW_NOTES.md REWORK_HANDOFF.md
+  pyproject.toml .gitignore .env.example
 )
 # config: examples and voice profiles only — NEVER the live users database
 # (it contains real Discord user profile metadata).

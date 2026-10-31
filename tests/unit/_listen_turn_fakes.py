@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import heapq
-from collections.abc import AsyncIterator
-from contextlib import aclosing
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -123,7 +121,7 @@ class TimedSynth:
         self.log.append(("synth_start", self.clock(), text))
         await self.clock.sleep(self.synth_s)
         if self.fail_on_call is not None and len(self.calls) == self.fail_on_call:
-            raise ReplySynthesisError("rvc gone")
+            raise ReplySynthesisError("tts gone")
         self.log.append(("synth_end", self.clock(), text))
         return ReplyAudio(pcm=text.encode(), duration_s=self.play_s)
 
@@ -166,26 +164,8 @@ class FakePlayer:
         self.plays: list[bytes] = []
         self.stop_calls = 0
         self.fail_on: set[bytes] = set()
-        self.stream_plays: list[list[bytes]] = []
         self._playing = False
         self._release = asyncio.Event()
-
-    async def play_stream(self, chunks: AsyncIterator[bytes]) -> None:
-        """Record the chunks of one stream (``hold`` blocks after the first, like ``play``)."""
-        got: list[bytes] = []
-        self.stream_plays.append(got)
-        async with aclosing(chunks):
-            async for pcm in chunks:
-                got.append(pcm)
-                if self.hold and len(got) == 1:
-                    self._playing = True
-                    try:
-                        await self._release.wait()
-                    finally:
-                        self._playing = False
-                        self._release = asyncio.Event()
-                    return
-                await asyncio.sleep(0)
 
     async def play(self, pcm: bytes) -> None:
         self.plays.append(pcm)
@@ -223,7 +203,7 @@ class FakeReplySynth:
         self.calls.append(text)
         await asyncio.sleep(0)
         if self.fail:
-            raise ReplySynthesisError("rvc unavailable")
+            raise ReplySynthesisError("tts unavailable")
         return ReplyAudio(pcm=text.encode(), duration_s=1.0)
 
 
@@ -326,92 +306,3 @@ async def spin(times: int = 10) -> None:
     """Yield to the loop several times so ready tasks make progress."""
     for _ in range(times):
         await asyncio.sleep(0)
-
-
-# ----------------------------------------------------------- streaming fakes
-
-
-class StreamSynth:
-    """Streaming ReplySynthesizer fake: ``stream_sentence`` yields ``n_chunks`` byte chunks.
-
-    Each chunk takes ``chunk_s`` of virtual time (TimelineClock). ``log`` gets
-    ``gen_start`` / ``first_pcm`` / ``gen_end`` / ``gen_closed`` entries; chunk
-    payloads are ``b"<text>|<i>"`` so tests can tell sentences apart.
-    """
-
-    can_stream = True
-
-    def __init__(
-        self,
-        clock: TimelineClock,
-        log: list[tuple[str, float, str]],
-        n_chunks: int = 3,
-        chunk_s: float = 0.2,
-        fail_on_call: int | None = None,
-        fail_after_chunks: int = 0,
-    ) -> None:
-        self.clock, self.log = clock, log
-        self.n_chunks, self.chunk_s = n_chunks, chunk_s
-        self.fail_on_call, self.fail_after_chunks = fail_on_call, fail_after_chunks
-        self.calls: list[str] = []
-        self.closed = 0
-
-    async def synthesize_sentence(self, text: str) -> ReplyAudio:  # not used when can_stream
-        raise AssertionError("whole-sentence path used while streaming")
-
-    async def stream_sentence(self, text: str) -> AsyncIterator[bytes]:
-        self.calls.append(text)
-        call = len(self.calls)
-        self.log.append(("gen_start", self.clock(), text))
-        try:
-            for i in range(self.n_chunks):
-                if self.fail_on_call == call and i == self.fail_after_chunks:
-                    raise ReplySynthesisError("tts gone")
-                await self.clock.sleep(self.chunk_s)
-                if i == 0:
-                    self.log.append(("first_pcm", self.clock(), text))
-                yield f"{text}|{i}".encode()
-            self.log.append(("gen_end", self.clock(), text))
-        finally:
-            self.closed += 1
-            self.log.append(("gen_closed", self.clock(), text))
-
-
-class StreamPlayer:
-    """Records ``play_stream`` chunks; each chunk "plays" for ``chunk_play_s`` of virtual time.
-
-    ``stop`` ends the stream early and closes the iterator, like VoicePlayer.
-    """
-
-    def __init__(
-        self, clock: TimelineClock, log: list[tuple[str, float, str]], chunk_play_s: float = 0.5
-    ) -> None:
-        self.clock, self.log, self.chunk_play_s = clock, log, chunk_play_s
-        self.stop_calls = 0
-        self.plays: list[bytes] = []
-        self.chunks: list[bytes] = []
-        self._stop = asyncio.Event()
-
-    async def play(self, pcm: bytes) -> None:
-        self.plays.append(pcm)
-        await asyncio.sleep(0)
-
-    async def play_stream(self, chunks: AsyncIterator[bytes]) -> None:
-        self._stop = asyncio.Event()
-        async with aclosing(chunks):
-            async for pcm in chunks:
-                if self._stop.is_set():
-                    break
-                if not self.chunks:
-                    self.log.append(("stream_start", self.clock(), pcm.decode()))
-                self.chunks.append(pcm)
-                self.log.append(("play_chunk", self.clock(), pcm.decode()))
-                await self.clock.sleep(self.chunk_play_s)
-        self.log.append(("stream_end", self.clock(), ""))
-
-    def stop(self) -> None:
-        self.stop_calls += 1
-        self._stop.set()
-
-    def is_playing(self) -> bool:
-        return False

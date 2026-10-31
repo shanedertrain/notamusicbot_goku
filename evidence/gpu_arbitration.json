@@ -1,98 +1,80 @@
 {
-  "timestamp": "2026-10-30T17:31:19+00:00",
-  "commit": "92bc1aadf5c665f4538ed29bc2955fa1d8a30a06",
+  "timestamp": "2026-10-30T22:47:39+00:00",
+  "commit": "da6eda5b5a5353bd8bf768f00927d4641f0a5e65",
   "gpu": "NVIDIA GeForce RTX 4070 Ti SUPER",
   "driver": "615.78.08",
   "torch": "2.14.1+cu130",
   "cuda_available": "True",
-  "test": "test_shared_coordinator_serializes_llm_and_tts_rvc",
+  "test": "test_shared_coordinator_serializes_llm_and_tts",
   "iterations": 3,
   "timeline": [
     {
       "stage": "iter0:llm",
-      "start": 444309.835017449,
-      "end": 444316.210354621,
-      "duration_s": 6.375337172008585
+      "start": 463295.504600123,
+      "end": 463298.746166182,
+      "duration_s": 3.241566059004981
     },
     {
       "stage": "iter0:tts",
-      "start": 444309.835082369,
-      "end": 444310.594375376,
-      "duration_s": 0.7592930070240982
-    },
-    {
-      "stage": "iter0:rvc",
-      "start": 444310.594375376,
-      "end": 444314.895502835,
-      "duration_s": 4.301127458980773
+      "start": 463295.504653103,
+      "end": 463297.551316463,
+      "duration_s": 2.046663359971717
     },
     {
       "stage": "iter1:llm",
-      "start": 444316.21041465,
-      "end": 444319.925455124,
-      "duration_s": 3.7150404740241356
+      "start": 463298.750323619,
+      "end": 463300.592184159,
+      "duration_s": 1.84186053997837
     },
     {
       "stage": "iter1:tts",
-      "start": 444316.21045685,
-      "end": 444316.994497627,
-      "duration_s": 0.7840407770127058
-    },
-    {
-      "stage": "iter1:rvc",
-      "start": 444316.994497627,
-      "end": 444318.612689604,
-      "duration_s": 1.6181919769733213
+      "start": 463298.750363659,
+      "end": 463299.411598194,
+      "duration_s": 0.6612345349858515
     },
     {
       "stage": "iter2:llm",
-      "start": 444319.925512813,
-      "end": 444323.242944731,
-      "duration_s": 3.3174319180543534
+      "start": 463300.595959377,
+      "end": 463302.263373044,
+      "duration_s": 1.667413667018991
     },
     {
       "stage": "iter2:tts",
-      "start": 444319.925545473,
-      "end": 444320.544917524,
-      "duration_s": 0.6193720509763807
-    },
-    {
-      "stage": "iter2:rvc",
-      "start": 444320.544917524,
-      "end": 444321.99777174,
-      "duration_s": 1.4528542160405777
+      "start": 463300.595990897,
+      "end": 463301.07972611,
+      "duration_s": 0.48373521299799904
     }
   ],
   "lease_busy_intervals": [
     {
-      "start": 444309.835079479,
-      "end": 444314.895513575,
-      "duration_s": 5.060434096027166
+      "start": 463295.504651693,
+      "end": 463297.551326963,
+      "duration_s": 2.0466752700158395
     },
     {
-      "start": 444314.895538205,
-      "end": 444316.210330281,
-      "duration_s": 1.3147920760093257
+      "start": 463297.551352073,
+      "end": 463298.746142582,
+      "duration_s": 1.1947905090055428
     },
     {
-      "start": 444316.21045609,
-      "end": 444318.612701984,
-      "duration_s": 2.4022458940162323
+      "start": 463298.750362099,
+      "end": 463299.411606644,
+      "duration_s": 0.6612445450155064
     },
     {
-      "start": 444318.612734234,
-      "end": 444319.925431364,
-      "duration_s": 1.3126971299643628
+      "start": 463299.411625564,
+      "end": 463300.592161689,
+      "duration_s": 1.180536125029903
     },
     {
-      "start": 444319.925544653,
-      "end": 444321.99778039,
-      "duration_s": 2.072235737054143
+      "start": 463300.595989417,
+      "end": 463301.07973279,
+      "duration_s": 0.4837433730135672
     },
     {
-      "start": 444321.99779901,
-      "end": 444323.242925171,
-      "duration_s": 1.2451261609676294
+      "start": 463301.07975283,
+      "end": 463302.263353064,
+      "duration_s": 1.1836002340423875
     }
   ],
   "timeline_note": "stage spans include queue wait; lease_busy_intervals are exact acquire/release intervals recorded from the holder registry",

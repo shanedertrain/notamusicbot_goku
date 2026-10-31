@@ -29,8 +29,8 @@ class ContentRequest:
     """Everything a content provider may need to write one commentary line.
 
     ``persona_description`` comes from the voice profile's persona section
-    (handoff section 14.3) — never from an RVC model object. Only the fields
-    relevant to ``kind`` are populated; the rest stay empty.
+    (handoff section 14.3). Only the fields relevant to ``kind`` are
+    populated; the rest stay empty.
     """
 
     kind: ContentKind

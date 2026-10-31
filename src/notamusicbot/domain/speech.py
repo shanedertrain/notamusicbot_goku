@@ -4,23 +4,33 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 
 @dataclass(frozen=True, slots=True)
 class TtsRequest:
     """A single text-to-speech request.
 
-    ``instruction`` is kept in the interface for future backends (e.g. Qwen 1.7B
-    CustomVoice); the current 0.6B CustomVoice backend must not depend on it.
+    The only backend is Qwen3-TTS voice cloning: ``reference_audio`` is the
+    absolute path of the target voice's reference clip, ``reference_text`` its
+    transcript (required for ``clone_mode="icl"``) and ``clone_mode`` selects
+    x-vector-only (``xvec``) or in-context (``icl``) cloning. ``instruction``
+    is kept in the interface for future backends; the clone backend ignores it.
     """
 
     text: str
-    language: str
-    speaker: str
+    language: str = "English"
+    speaker: str | None = None
     instruction: str | None = None
     # Upper bound on generated audio, in seconds. ``None`` = unbounded (the
     # model's own limit). Backends turn it into a generation-length bound.
     max_audio_seconds: float | None = None
+    # Absolute path to the voice-clone reference clip (mono, any rate).
+    reference_audio: str | None = None
+    # Transcript of the reference clip; required for ``clone_mode="icl"``.
+    reference_text: str | None = None
+    # xvec = speaker-embedding-only clone; icl = in-context clone.
+    clone_mode: Literal["xvec", "icl"] = "xvec"
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,40 +43,8 @@ class AudioArtifact:
 
 
 @dataclass(frozen=True, slots=True)
-class VoiceConversionProfile:
-    """Parameters for the voice-conversion stage of a job."""
-
-    backend: str
-    model: str | None = None
-    # YAML config variant inside the RVC model directory (obama vs
-    # obama_trans share the Obama weights). None = directory default.
-    variant: str | None = None
-    pitch_shift: int = 0
-    # Optional per-request override of the RVC f0 extraction method carried by
-    # the model YAML (pm | harvest | dio | crepe | crepe-tiny). ``None`` keeps
-    # the yaml value (harvest in the shipped profiles). Applied by the speech
-    # pipeline from ``speech.voice_conversion.f0_method_override``.
-    f0_method: str | None = None
-    # RVC output-quality options (docs/RVC_QUALITY_PLAN.md 3.2/3.3). Defaults
-    # equal the previous behaviour; the adapter only sends a field when it is
-    # set. ``f0_post`` is a sorted tuple of (key, value) items (hashable form
-    # of the worker's f0_post dict: median_width, octave_repair, clamp_min_hz,
-    # clamp_max_hz).
-    use_index: bool = False
-    index_rate: float | None = None
-    index_nprobe: int | None = None
-    protect: float | None = None
-    rms_mix_rate: float | None = None
-    auto_pitch_target_hz: float | None = None
-    auto_pitch_strength: float = 1.0
-    auto_pitch_max: int = 12
-    f0_post: tuple[tuple[str, float | int | bool], ...] | None = None
-    stream_f0_algo: str = "pm"
-
-
-@dataclass(frozen=True, slots=True)
 class AudioProcessingProfile:
-    """Post-processing parameters applied after voice conversion."""
+    """Post-processing parameters applied after speech synthesis."""
 
     target_sample_rate_hz: int = 48000
     channels: int = 2
@@ -81,10 +59,8 @@ class SpeechJobMetrics:
     job_id: str
     queue_wait_s: float = 0.0
     tts_s: float = 0.0
-    voice_conversion_s: float = 0.0
     postprocess_s: float = 0.0
     total_s: float = 0.0
     output_duration_s: float = 0.0
     tts_rtf: float = 0.0
-    voice_conversion_rtf: float = 0.0
     total_rtf: float = 0.0

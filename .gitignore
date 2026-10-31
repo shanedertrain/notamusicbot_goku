@@ -2,8 +2,6 @@
 input/*
 logs/*
 output/*
-hubert_base.pt
-hubert_base.state_dict.pt
 .env
 .cache
 genai/logs/*
@@ -15,3 +13,23 @@ benchmark/
 # Local runtime config (copy of the tracked config/app.example.yaml)
 config/app.yaml
 __pycache__/
+
+# Local audio and model assets (not tracked): voice reference clips and any
+# weights/fixtures that live on disk. See config/voices/refs/README.md.
+*.wav
+*.mp3
+*.flac
+*.ogg
+*.m4a
+*.aac
+*.opus
+*.webm
+*.pt
+*.pth
+*.onnx
+*.safetensors
+*.ckpt
+*.bin
+*.npy
+*.npz
+*.gguf

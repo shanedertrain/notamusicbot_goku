@@ -62,9 +62,7 @@ def test_no_session_is_raw() -> None:
     assert dave_decrypt(None, 1, 42, b"raw") == b"raw"
 
 
-def _sink(
-    session: FakeDaveSession, *, version: int = 1
-) -> tuple[ListenDaveSink, FakeIngress]:
+def _sink(session: FakeDaveSession, *, version: int = 1) -> tuple[ListenDaveSink, FakeIngress]:
     ingress = FakeIngress()
     conn = SimpleNamespace(dave_session=session, dave_protocol_version=version)
     sink = ListenDaveSink(ingress, BOT_ID, lambda: conn)  # type: ignore[arg-type]

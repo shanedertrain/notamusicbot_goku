@@ -9,35 +9,35 @@ from typing import Any
 
 import numpy as np
 import pytest
+import soundfile as sf
 
-from conftest import FakeConverter, FakeSynthesizer
+from conftest import FakeSynthesizer
 from notamusicbot.domain.speech import TtsRequest
 from notamusicbot.domain.voice_profiles import VoiceProfile
 from notamusicbot.listen.reply import ReplyAudio, ReplySynthesizer, tts_cap_seconds
 from notamusicbot.speech.pipeline import SpeechPipeline
-from notamusicbot.speech.tts.qwen_custom_voice import (
-    QwenCustomVoiceSynthesizer,
-    max_new_tokens_for,
-)
+from notamusicbot.speech.tts._common import max_new_tokens_for
+from notamusicbot.speech.tts.qwen_clone import QwenCloneSynthesizer
 
 _RATE = 48000
 
 
-def _profile() -> VoiceProfile:
+def _profile(tmp_path: Path) -> VoiceProfile:
+    reference = tmp_path / "ref.wav"
+    sf.write(reference, np.zeros(2400, dtype=np.float32), 24000)
     return VoiceProfile.model_validate(
         {
             "id": "goku",
             "persona": {"display_name": "Goku"},
-            "tts": {"speaker": "Ryan"},
-            "voice_conversion": {"backend": "passthrough"},
+            "tts": {"reference_audio": str(reference), "reference_text": "Hi."},
             "audio": {},
         }
     )
 
 
 def _synth(tmp_path: Path, fake: FakeSynthesizer) -> ReplySynthesizer:
-    pipeline = SpeechPipeline(fake, FakeConverter(), output_dir=tmp_path / "speech")
-    return ReplySynthesizer(pipeline, _profile(), artifact_root=tmp_path / "speech")
+    pipeline = SpeechPipeline(fake, output_dir=tmp_path / "speech")
+    return ReplySynthesizer(pipeline, _profile(tmp_path), artifact_root=tmp_path / "speech")
 
 
 def _frames(audio: ReplyAudio) -> np.ndarray:
@@ -94,33 +94,44 @@ async def test_within_cap_untouched(tmp_path: Path, caplog: pytest.LogCaptureFix
 
 async def test_no_cap_leaves_long_audio_untouched(tmp_path: Path) -> None:
     fake = FakeSynthesizer(seconds=12.4)
-    pipeline = SpeechPipeline(fake, FakeConverter(), output_dir=tmp_path / "speech")
-    request = TtsRequest(text="hi", language="English", speaker="Ryan")
+    pipeline = SpeechPipeline(fake, output_dir=tmp_path / "speech")
+    request = TtsRequest(text="hi")
     assert request.max_audio_seconds is None
-    artifact, _ = await pipeline.run(request, _synth(tmp_path, fake)._conversion)
+    artifact, _ = await pipeline.run(request)
     assert fake.calls[0].max_audio_seconds is None
     assert artifact.duration_s == pytest.approx(12.4, abs=0.01)
 
 
-class _FakeModel:
+class _FakeCloneModel:
+    """Records generate_voice_clone kwargs (prompt building is exercised in
+    test_qwen_clone_tts.py)."""
+
     def __init__(self) -> None:
         self.kwargs: dict[str, Any] = {}
+        self.prompts = 0
 
-    def generate_custom_voice(self, **kwargs: Any) -> tuple[list[np.ndarray], int]:
+    def create_voice_clone_prompt(self, **kwargs: Any) -> list[object]:
+        self.prompts += 1
+        return [object()]
+
+    def generate_voice_clone(self, **kwargs: Any) -> tuple[list[np.ndarray], int]:
         self.kwargs = kwargs
         return [np.zeros(2400, dtype=np.float32)], 24000
 
 
 @pytest.mark.parametrize(("cap", "expected"), [(5.0, 76), (None, None)])
-def test_qwen_passes_max_new_tokens(
+def test_qwen_clone_passes_max_new_tokens(
     tmp_path: Path, cap: float | None, expected: int | None
 ) -> None:
-    model = _FakeModel()
-    synth = QwenCustomVoiceSynthesizer(model)
-    request = TtsRequest(text="Hi.", language="English", speaker="Ryan", max_audio_seconds=cap)
+    reference = tmp_path / "ref.wav"
+    sf.write(reference, np.zeros(2400, dtype=np.float32), 24000)
+    model = _FakeCloneModel()
+    synth = QwenCloneSynthesizer(model)
+    request = TtsRequest(text="Hi.", max_audio_seconds=cap, reference_audio=str(reference))
     asyncio.run(synth.synthesize(request, tmp_path / "o.wav"))
     if expected is None:
         assert "max_new_tokens" not in model.kwargs
     else:
         assert model.kwargs["max_new_tokens"] == expected
     assert model.kwargs["text"] == "Hi."
+    assert model.kwargs["language"] == "English"

@@ -1,9 +1,8 @@
-"""Review Round-6 §3/B: application inference shutdown — drain, no RVC
-restart after shutdown, and the Discord close boundary.
+"""Review Round-6 §3/B: application inference shutdown — drain, no restart
+after shutdown, and the Discord close boundary.
 
 Deterministic fakes only: the TTS synthesizer parks on an explicit asyncio
-Event after the job acquired the GPU lease; the RVC converter is a spy that
-counts starts/shutdowns.
+Event after the job acquired the GPU lease; its shutdown() records teardown.
 """
 
 from __future__ import annotations
@@ -18,15 +17,9 @@ from notamusicbot.app import Application
 from notamusicbot.config import AppSettings, SpeechSettings
 from notamusicbot.discord_bot.guild_state import GuildState
 from notamusicbot.discord_bot.player import stop_guild_players
-from notamusicbot.domain.speech import (
-    AudioArtifact,
-    AudioProcessingProfile,
-    TtsRequest,
-    VoiceConversionProfile,
-)
+from notamusicbot.domain.speech import AudioArtifact, AudioProcessingProfile, TtsRequest
 from notamusicbot.speech.coordinator import CoordinatorClosedError
 from notamusicbot.speech.pipeline import SpeechPipeline
-from notamusicbot.speech.voice_conversion.router import RouterClosedError
 
 
 def _write_wav(path: Path, seconds: float = 0.1) -> None:
@@ -40,7 +33,7 @@ def _write_wav(path: Path, seconds: float = 0.1) -> None:
     sf.write(path, 0.4 * np.sin(2 * np.pi * 440 * np.arange(n) / rate), rate, subtype="PCM_16")
 
 
-def _app() -> Application:
+def _app(synth: Any | None = None) -> Application:
     settings = AppSettings(
         speech=SpeechSettings(
             voices_dir=Path("tests/fixtures"),
@@ -48,29 +41,8 @@ def _app() -> Application:
             commentary_enabled=True,
         )
     )
-    return Application(settings)
-
-
-class _CountingConverter:
-    """Spy RVC converter counting starts/shutdowns/converts."""
-
-    def __init__(self) -> None:
-        self.starts = 0
-        self.shutdowns = 0
-        self.converts = 0
-
-    async def start(self) -> None:
-        self.starts += 1
-
-    async def shutdown(self) -> None:
-        self.shutdowns += 1
-
-    async def convert(
-        self, source: AudioArtifact, profile: VoiceConversionProfile, output_path: Path
-    ) -> AudioArtifact:
-        self.converts += 1
-        _write_wav(output_path)
-        return AudioArtifact(path=output_path, sample_rate_hz=16000, duration_s=0.1)
+    factory = (lambda: synth) if synth is not None else None
+    return Application(settings, synthesizer_factory=factory)
 
 
 class _BlockingSynthesizer:
@@ -84,6 +56,7 @@ class _BlockingSynthesizer:
         self.entered = asyncio.Event()
         self.release = asyncio.Event()
         self.calls = 0
+        self.shutdowns = 0
 
     async def synthesize(self, request: TtsRequest, output_path: Path) -> AudioArtifact:
         self.calls += 1
@@ -92,74 +65,45 @@ class _BlockingSynthesizer:
         _write_wav(output_path)
         return AudioArtifact(path=output_path, sample_rate_hz=16000, duration_s=0.1)
 
+    async def shutdown(self) -> None:
+        self.shutdowns += 1
 
-def _request() -> TtsRequest:
-    return TtsRequest(text="hello", language="en", speaker="default")
 
-
-def _pipeline(
-    app: Application, synth: Any, converter: _CountingConverter, tmp_path: Path
-) -> SpeechPipeline:
-    app._synthesizer = synth  # noqa: SLF001 - test injection boundary
-    router = app.converter_router
-    router._rvc = converter  # noqa: SLF001
-    router._rvc_available = True  # noqa: SLF001
-    router._rvc_start_attempted = True  # noqa: SLF001
+def _pipeline(app: Application, synth: Any, tmp_path: Path) -> SpeechPipeline:
+    app.load_speech_model()  # install the injected synthesizer for teardown
     return SpeechPipeline(
         synth,
-        app.converter,  # the real router; delegates to the injected spy
         AudioProcessingProfile(),
         coordinator=app.coordinator,
         output_dir=tmp_path / "speech",
     )
 
 
-async def test_pipeline_during_application_shutdown_retires_before_rvc_shutdown(
-    tmp_path: Path,
-) -> None:
+async def test_pipeline_job_drains_before_synthesizer_teardown(tmp_path: Path) -> None:
     """A running pipeline job parked in TTS is drained to completion BEFORE
-    the RVC router is shut down — and the RVC start count never increases
-    after shutdown (no lazy restart of a dead worker)."""
-    app = _app()
-    converter = _CountingConverter()
+    the synthesizer is shut down; afterwards no new job can start."""
     synth = _BlockingSynthesizer()
-    pipeline = _pipeline(app, synth, converter, tmp_path)
+    app = _app(synth)
+    pipeline = _pipeline(app, synth, tmp_path)
 
-    job = asyncio.create_task(
-        pipeline.run(_request(), VoiceConversionProfile(backend="rvc", model="Goku"))
-    )
+    job = asyncio.create_task(pipeline.run(TtsRequest(text="hello")))
     # Deterministic: the job holds the GPU lease and is parked inside TTS.
     await synth.entered.wait()
 
     shutdown_task = asyncio.create_task(app.shutdown())
     # Deterministic: shutdown stopped accepting new work (closed flag set
-    # first), but drain cannot finish while the job is parked in TTS.
+    # first), but the drain cannot finish while the job is parked in TTS.
     while not app.coordinator.closed:
         await asyncio.sleep(0)
     await asyncio.sleep(0)
     assert not shutdown_task.done(), "shutdown drained past a still-running job"
+    assert synth.shutdowns == 0, "synthesizer torn down while a job was running"
 
-    synth.release.set()  # let TTS finish; the chain proceeds to RVC
+    synth.release.set()  # let the job finish
     result = await asyncio.wait_for(job, 10)
     assert result[0].path.is_file()
     await asyncio.wait_for(shutdown_task, 10)
-
-    # Running job retired BEFORE RVC shutdown: its convert ran to completion,
-    # exactly one shutdown, and the start count NEVER increased after
-    # shutdown (the spy is pre-marked available, so starts stays 0 — the
-    # post-shutdown assertions below prove no lazy restart either).
-    assert converter.converts == 1
-    assert converter.shutdowns == 1
-    starts_before = converter.starts
-
-    # Post-shutdown convert: explicit closed error, no restart.
-    with pytest.raises(RouterClosedError):
-        await app.converter_router.convert(
-            AudioArtifact(path=result[0].path, sample_rate_hz=16000, duration_s=0.1),
-            VoiceConversionProfile(backend="rvc", model="Goku"),
-            result[0].path.with_name("late.wav"),
-        )
-    assert converter.starts == starts_before, "RVC restarted after application shutdown"
+    assert synth.shutdowns == 1
 
     # The coordinator now rejects new submissions outright.
     with pytest.raises(CoordinatorClosedError):
@@ -173,33 +117,11 @@ async def test_coordinator_drain_via_app_rejects_new_submission() -> None:
     assert app.coordinator.closed is True
     with pytest.raises(CoordinatorClosedError):
         await app.coordinator.run_detached(asyncio.sleep, 0)
-    with pytest.raises(RouterClosedError):
-        await app.converter_router.convert(
-            AudioArtifact(path="x.wav", sample_rate_hz=16000, duration_s=0.1),
-            VoiceConversionProfile(backend="rvc", model="Goku"),
-            Path("out.wav"),
-        )
 
 
 # ---------------------------------------------------------------------------
 # Discord close boundary (review Round-6 §3/B): players stop before teardown
 # ---------------------------------------------------------------------------
-
-
-class _FakeTask:
-    def __init__(self) -> None:
-        self.stopped = asyncio.Event()
-        self.cancelled = False
-        self.done_flag = False
-
-    def done(self) -> bool:
-        return self.done_flag
-
-    def cancel(self) -> None:
-        self.cancelled = True
-
-    def __await__(self):  # pragma: no cover - only used when done
-        return self
 
 
 async def test_stop_guild_players_signals_and_awaits_player_tasks() -> None:
@@ -252,9 +174,10 @@ class _FakeMedia:  # minimal duck-typed queue item for drain/cleanup
 async def test_shutdown_drain_is_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
     """Live-shutdown hardening: if the coordinator drain stalls (a long TTS
     clip in flight), app.shutdown() must not wait forever — it proceeds to
-    router teardown after the (shortened, injected) drain timeout."""
-    app = _app()
-    app.converter = _CountingConverter()  # type: ignore[assignment]
+    synthesizer teardown after the (shortened, injected) drain timeout."""
+    synth = _BlockingSynthesizer()
+    app = _app(synth)
+    app.load_speech_model()  # install the injected synthesizer for teardown
 
     class _StalledCoordinator:
         def __init__(self) -> None:
@@ -273,28 +196,28 @@ async def test_shutdown_drain_is_bounded(monkeypatch: pytest.MonkeyPatch) -> Non
     await asyncio.wait_for(app.shutdown(), 10)
 
     assert app.coordinator.close_calls == 1
-    assert app.converter.shutdowns == 1  # teardown happened despite the stall
+    assert synth.shutdowns == 1  # teardown happened despite the stall
 
 
 @pytest.mark.asyncio
 async def test_shutdown_still_drains_when_job_finishes_in_time() -> None:
     """The normal path is unchanged: a coordinator that closes promptly is
-    awaited to completion before router teardown."""
-    app = _app()
-    app.converter = _CountingConverter()  # type: ignore[assignment]
+    awaited to completion before synthesizer teardown."""
     order: list[str] = []
+
+    class _OrderingSynth(_BlockingSynthesizer):
+        async def shutdown(self) -> None:
+            order.append("synth-shutdown")
+            await super().shutdown()
+
+    synth = _OrderingSynth()
+    app = _app(synth)
+    app.load_speech_model()  # install the injected synthesizer for teardown
 
     class _PromptCoordinator:
         async def close(self) -> None:
             order.append("drained")
 
     app.coordinator = _PromptCoordinator()  # type: ignore[assignment]
-
-    class _OrderingConverter(_CountingConverter):
-        async def shutdown(self) -> None:
-            order.append("rvc-shutdown")
-            await super().shutdown()
-
-    app.converter = _OrderingConverter()  # type: ignore[assignment]
     await app.shutdown()
-    assert order == ["drained", "rvc-shutdown"]
+    assert order == ["drained", "synth-shutdown"]

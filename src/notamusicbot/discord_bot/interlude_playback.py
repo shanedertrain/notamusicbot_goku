@@ -22,7 +22,7 @@ from notamusicbot.discord_bot.commentary import (
     generate_commentary_media,
     resolve_commentary_text,
 )
-from notamusicbot.domain.voice_profiles import to_conversion_profile, to_processing_profile
+from notamusicbot.domain.voice_profiles import to_processing_profile, tts_request_for
 
 logger = logging.getLogger(__name__)
 
@@ -57,13 +57,10 @@ async def enqueue_profile_commentary(
     if profile is None:
         logger.warning("No voice profile %r; skipping generated commentary", voice_profile_id)
         return False
-    from notamusicbot.domain.speech import TtsRequest
-
-    request = TtsRequest(text=text, language=profile.tts.language, speaker=profile.tts.speaker)
+    request = tts_request_for(profile, text)
     media = await generate_commentary_media(
         pipeline,
         request,
-        to_conversion_profile(profile),
         guild_id=guild_id,
         requester=requester,
         processing=to_processing_profile(

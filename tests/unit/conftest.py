@@ -1,4 +1,4 @@
-"""Shared pytest fixtures: fakes at the TTS/VC and listen-mode boundaries
+"""Shared pytest fixtures: fakes at the TTS and listen-mode boundaries
 (no GPU, no weights, no Discord)."""
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ import soundfile as sf
 
 from notamusicbot.content.base import ContentRequest
 from notamusicbot.domain.listen import AudioChunk, Transcript
-from notamusicbot.domain.speech import AudioArtifact, TtsRequest, VoiceConversionProfile
+from notamusicbot.domain.speech import AudioArtifact, TtsRequest
 
 
 class FakeSynthesizer:
@@ -39,28 +39,6 @@ class FakeSynthesizer:
             path=output_path,
             sample_rate_hz=self.sample_rate,
             duration_s=n / self.sample_rate,
-        )
-
-
-class FakeConverter:
-    """Copies the source artifact, recording calls, to emulate a VC backend."""
-
-    def __init__(self) -> None:
-        self.calls: list[tuple[AudioArtifact, VoiceConversionProfile]] = []
-
-    async def convert(
-        self, source: AudioArtifact, profile: VoiceConversionProfile, output_path: Path
-    ) -> AudioArtifact:
-        import asyncio
-        import shutil
-
-        self.calls.append((source, profile))
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        await asyncio.to_thread(shutil.copyfile, source.path, output_path)
-        return AudioArtifact(
-            path=output_path,
-            sample_rate_hz=source.sample_rate_hz,
-            duration_s=source.duration_s,
         )
 
 
@@ -193,8 +171,29 @@ def fake_synthesizer() -> FakeSynthesizer:
 
 
 @pytest.fixture()
-def fake_converter() -> FakeConverter:
-    return FakeConverter()
+def voice_profile(tmp_path: Path) -> Callable[..., dict]:
+    """A valid clone voice-profile dict pointing at a real temp reference WAV."""
+
+    def _make(profile_id: str = "goku", *, seconds: float = 0.4, **tts: object) -> dict:
+        reference = tmp_path / f"ref_{profile_id}.wav"
+        n = int(24000 * seconds)
+        wave = 0.3 * np.sin(2 * np.pi * 220 * np.arange(n) / 24000)
+        sf.write(reference, wave, 24000, subtype="PCM_16")
+        data: dict = {
+            "id": profile_id,
+            "persona": {"display_name": profile_id.title()},
+            "tts": {
+                "language": "English",
+                "reference_audio": str(reference),
+                "reference_text": "Hello there.",
+                "clone_mode": "xvec",
+            },
+            "audio": {"speed": 1.0, "target_peak_dbfs": -1.0},
+        }
+        data["tts"].update(tts)
+        return data
+
+    return _make
 
 
 @pytest.fixture()
