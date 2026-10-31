@@ -34,6 +34,8 @@ from collections.abc import AsyncIterator, Coroutine
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
+
 import davey
 import discord
 from discord.ext import voice_recv
@@ -132,6 +134,8 @@ class ListenDaveSink(voice_recv.AudioSink):
 
 # One Discord audio frame: 20 ms of 48 kHz stereo s16le.
 FRAME_BYTES = 3840
+# Barge-in fade: buffered audio decays over this long instead of cutting mid-word.
+FADE_OUT_MS = 40
 # How long the source keeps emitting silence for the next chunk before it ends.
 SOURCE_GRACE_FRAMES = 25
 
@@ -170,7 +174,15 @@ class ChunkedSource(discord.AudioSource):
         self._consumed = 0
         self._idle = 0
         self._pending: deque[tuple[int, asyncio.Future[None]]] = deque()
+        # Set when the play is to stop: the remaining buffered frames fade to
+        # silence over FADE_FRAMES before the source ends (no click mid-word).
+        self._stopping = False
         self.closed = False
+
+    def stop_faded(self) -> None:
+        """Ask the player thread to fade the tail out instead of cutting it."""
+        with self._lock:
+            self._stopping = True
 
     def feed(self, pcm: bytes) -> asyncio.Future[None]:
         """Queue frame-aligned ``pcm``; the future resolves when its last frame is read."""
@@ -193,12 +205,26 @@ class ChunkedSource(discord.AudioSource):
                 self._idle = 0
                 while self._pending and self._pending[0][0] <= self._consumed:
                     self._settle(self._pending.popleft()[1], None)
+                if self._stopping:
+                    self._fade_tail_locked()
                 return frame
             self._idle += 1
-            if self._idle > self._grace:
+            if self._idle > self._grace or (self._stopping and not self._buf):
                 self.closed = True
                 return b""
             return b"\x00" * FRAME_BYTES
+
+    def _fade_tail_locked(self) -> None:
+        """Linear-fade whatever buffered audio remains, then mark the buffer done."""
+        fade_frames = FADE_OUT_MS * 1000 // 20  # 20 ms per frame
+        remaining = len(self._buf) // FRAME_BYTES
+        if remaining == 0:
+            return
+        if remaining <= fade_frames:
+            ramp = np.linspace(1.0, 0.0, remaining, dtype=np.float32)[:, None]
+            pcm = np.frombuffer(bytes(self._buf), dtype="<i2").reshape(-1, 2)
+            faded = np.rint(pcm.astype(np.float32) * ramp).astype("<i2")
+            self._buf = bytearray(faded.tobytes())
 
     def is_opus(self) -> bool:
         return False
@@ -296,6 +322,11 @@ class VoicePlayer:
             raise
 
     def stop(self) -> None:
+        # Fade the buffered tail over ~40 ms first: a bare stop cuts mid-sample and
+        # the Discord encoder turns the discontinuity into an audible click.
+        source = self._source
+        if source is not None and not source.closed:
+            source.stop_faded()
         # VoiceRecvClient.stop() also stops RECEIVING; stop only the playback.
         stop = getattr(self._vc, "stop_playing", None) or self._vc.stop
         stop()
