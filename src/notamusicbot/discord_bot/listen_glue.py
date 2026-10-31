@@ -324,9 +324,9 @@ class ListenSession:
         self._bot = bot
         self._guild = guild
         self._channel = channel
-        # Per-call listen-only override (``!glisten transcript``); False keeps
-        # the configured ``listen.listen_only`` default untouched.
-        self._listen_only_override: bool | None = True if listen_only else None
+        # Per-call listen-only override (``!glisten transcript`` vs ``start``);
+        # None keeps the configured ``listen.listen_only`` default untouched.
+        self._listen_only_override: bool | None = listen_only
         self._started = False
         self._stopped = False
         self._conversation: Conversation | None = None
@@ -364,11 +364,13 @@ class ListenSession:
     async def _start(self) -> None:
         app = self._app
         listen = app.settings.listen
-        # ``!glisten transcript`` forces listen-only regardless of the config;
-        # the config flag alone keeps the standing default. The override is
-        # applied ON the settings copy so the turn manager sees it too.
-        if self._listen_only_override and not listen.listen_only:
-            listen = listen.model_copy(update={"listen_only": True})
+        # ``!glisten transcript`` forces listen-only and ``!glisten start`` forces
+        # full mode, both regardless of the config; no command flag keeps the
+        # configured default. The override is applied ON the settings copy so the
+        # turn manager sees it too.
+        override = self._listen_only_override
+        if override is not None and override != listen.listen_only:
+            listen = listen.model_copy(update={"listen_only": override})
         listen_only = listen.listen_only
         provider = app.listen_content_provider
         pipeline = app.pipeline

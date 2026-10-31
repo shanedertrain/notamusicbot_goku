@@ -254,6 +254,20 @@ async def test_listen_only_start_loads_asr_but_skips_the_reply_pipeline(rig: Rig
         await rig.session.stop()
 
 
+async def test_start_overrides_a_listen_only_config_to_full_mode(rig: Rig) -> None:
+    # The standing config is listen-only; an explicit !glisten start must speak.
+    rig.session._app.settings.listen.listen_only = True
+    rig.session._listen_only_override = False
+    await rig.session.start()
+    try:
+        assert rig.session._turns is not None
+        assert rig.session._turns._settings.listen_only is False
+        assert rig.channel.sent == ["Listening"]  # full mode posts the notice
+        assert rig.synth.calls == []  # nothing spoken yet, but the synth exists
+    finally:
+        await rig.session.stop()
+
+
 async def test_listen_only_writes_local_logs_and_never_touches_discord(rig: Rig) -> None:
     listen = rig.session._app.settings.listen
     listen.privacy.store_transcripts = False  # forced on by listen-only
