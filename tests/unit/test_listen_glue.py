@@ -208,27 +208,29 @@ def _extra_tasks() -> list[asyncio.Task[Any]]:
     return [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
 
 
-async def test_start_orders_offline_llm_asr_then_joins_and_announces(rig: Rig) -> None:
+async def test_start_orders_offline_llm_asr_then_joins_and_posts_listening(rig: Rig) -> None:
     await rig.session.start()
     try:
         # offline guard, then ASR load (the clone TTS model is already resident).
         assert rig.order == ["offline", "asr", "asr_load"]
         assert rig.provider.preferred_calls == 1
         assert rig.vc.listening
-        assert rig.channel.sent == [rig.session._app.settings.listen.announcement_text]
-        assert rig.synth.calls == [rig.session._app.settings.listen.announcement_text]
-        assert len(rig.vc.plays) == 1  # the announcement clip
+        assert rig.channel.sent == ["Listening"]
+        # Nothing is spoken at join time any more: no TTS, no playback.
+        assert rig.synth.calls == []
+        assert rig.vc.plays == []
         assert rig.session.channel_id == 55
     finally:
         await rig.session.stop()
 
 
-async def test_announcement_is_skipped_when_disabled(rig: Rig) -> None:
-    rig.session._app.settings.listen.announce_on_join = False
+async def test_start_posts_the_configured_listening_message(rig: Rig) -> None:
+    rig.session._app.settings.listen.start_message = "🎧 Listening"
     await rig.session.start()
     try:
+        assert rig.channel.sent == ["🎧 Listening"]
+        assert rig.synth.calls == []
         assert rig.vc.plays == []
-        assert rig.channel.sent  # the text notice is still posted
     finally:
         await rig.session.stop()
 

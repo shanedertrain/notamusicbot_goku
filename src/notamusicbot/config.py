@@ -282,8 +282,7 @@ class ListenPrivacySettings(BaseModel):
     # stderr is a TTY (never to a redirected log file, so nothing reaches disk).
     show_text_in_console: bool = True
     # Owner decision 2026-10-26: save the text of what people say (never audio)
-    # and the bot's replies to daily files. Off until turned on; the join notice
-    # changes with it.
+    # and the bot's replies to daily files. Off until turned on.
     store_transcripts: bool = False
     transcript_dir: str = "var/listen_logs"
     transcript_retention_days: int = Field(default=7, ge=1)
@@ -302,16 +301,9 @@ class ListenSettings(BaseModel):
     # Empty -> guild administrators only.
     operator_user_ids: list[int] = Field(default_factory=list)
     voice_profile: str = "goku"
-    announce_on_join: bool = True
-    announcement_text: str = (
-        "Heads up, I'm listening now. Everyone in this channel is transcribed, "
-        "and nothing is saved."
-    )
-    announcement_text_stored: str = (
-        "Heads up, I'm listening now. Everyone in this channel is transcribed. "
-        "The text of what you say and what I reply is saved for {days} days "
-        "(no audio)."
-    )
+    # Posted in the text channel when a listen session starts. Nothing is spoken
+    # at join time (the old pre-rendered "heads up" announcement was removed).
+    start_message: str = "Listening"
     respond_to: Literal["all", "wake_word"] = "all"
     wake_word: str = "goku"
     follow_up_window_s: float = Field(default=8.0, ge=0.0)

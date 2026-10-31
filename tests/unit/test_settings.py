@@ -52,15 +52,7 @@ def test_listen_defaults_pinned() -> None:
     assert listen.allowed_channel_ids == []
     assert listen.operator_user_ids == []
     assert listen.voice_profile == "goku"
-    assert listen.announce_on_join is True
-    assert listen.announcement_text == (
-        "Heads up, I'm listening now. Everyone in this channel is transcribed, "
-        "and nothing is saved."
-    )
-    assert listen.announcement_text_stored == (
-        "Heads up, I'm listening now. Everyone in this channel is transcribed. "
-        "The text of what you say and what I reply is saved for {days} days (no audio)."
-    )
+    assert listen.start_message == "Listening"
     assert listen.respond_to == "all"
     assert listen.wake_word == "goku"
     assert listen.follow_up_window_s == 8.0

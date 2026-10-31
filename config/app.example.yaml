@@ -75,8 +75,7 @@ listen:
   allowed_channel_ids: []              # empty => listen refuses to start
   operator_user_ids: []                # empty => guild administrators only
   voice_profile: goku                # clone voice profile (config/voices/)
-  announce_on_join: true
-  announcement_text: "Heads up, I'm listening now. Everyone in this channel is transcribed, and nothing is saved."
+  start_message: "Listening"           # posted in the text channel on start; nothing is spoken
   respond_to: all                      # all | wake_word
   wake_word: goku
   follow_up_window_s: 8.0              # wake_word mode: reply without it this soon after the bot spoke

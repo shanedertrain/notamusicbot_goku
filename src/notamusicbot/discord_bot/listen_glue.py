@@ -56,9 +56,8 @@ logger = logging.getLogger(__name__)
 PASSTHROUGH_ERROR = "UnencryptedWhenPassthroughDisabled"
 # How often the endpointer loop polls the ingress when it found no audio.
 ENDPOINT_POLL_INTERVAL_S = 0.01
-# Voice connect timeout, and the bound on the join announcement (synthesis + play).
+# Voice connect timeout.
 CONNECT_TIMEOUT_S = 30.0
-ANNOUNCEMENT_TIMEOUT_S = 60.0
 
 
 def dave_decrypt(
@@ -206,7 +205,7 @@ class ListenSession:
     # ------------------------------------------------------------------ start
 
     async def start(self) -> None:
-        """Load the models, join the channel, announce and start listening."""
+        """Load the models, join the channel, post the start message, listen."""
         if self._started:
             raise RuntimeError("listen session already started")
         self._started = True
@@ -282,18 +281,7 @@ class ListenSession:
         self._vc.listen(self._sink)
         self._loop_task = asyncio.get_running_loop().create_task(self._endpoint_loop())
 
-        notice = self._notice_text()
-        await self._post_notice(notice)
-        if listen.announce_on_join:
-            await self._announce(synth, notice)
-
-    def _notice_text(self) -> str:
-        listen = self._app.settings.listen
-        if listen.privacy.store_transcripts:
-            return listen.announcement_text_stored.format(
-                days=listen.privacy.transcript_retention_days
-            )
-        return listen.announcement_text
+        await self._post_notice(listen.start_message)
 
     def _open_transcript_store(self) -> TranscriptStore | None:
         privacy = self._app.settings.listen.privacy
@@ -305,15 +293,7 @@ class ListenSession:
         try:
             await self._channel.send(text)
         except Exception:
-            logger.warning("listen: could not post the notice in %s", self._channel.id)
-
-    async def _announce(self, synth: ReplySynthesizer, text: str) -> None:
-        try:
-            async with asyncio.timeout(ANNOUNCEMENT_TIMEOUT_S):
-                audio = await synth.synthesize_sentence(text)
-                await VoicePlayer(self._vc).play(audio.pcm)
-        except Exception:
-            logger.warning("listen: join announcement failed", exc_info=True)
+            logger.warning("listen: could not post the start message in %s", self._channel.id)
 
     # ----------------------------------------------------------- event wiring
 
