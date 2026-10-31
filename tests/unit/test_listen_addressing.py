@@ -31,7 +31,9 @@ async def test_the_request_carries_context_and_the_character() -> None:
     await AddressJudge(provider, character="Obama").addressed("Sam", "nice", ["Ann: hi"])
     request = provider.requests[0]
     assert "Obama" in request.system_prompt
-    assert request.chat_history == ("Ann: hi",)
+    # The last history line re-anchors the one-word answer format (see addressing.py).
+    assert request.chat_history[:-1] == ("Ann: hi",)
+    assert "one word" in request.chat_history[-1]
     assert (request.requester_name, request.transcript_text) == ("Sam", "nice")
 
 

@@ -64,7 +64,9 @@ class AddressJudge:
             persona_description="",
             requester_name=speaker,
             transcript_text=text,
-            chat_history=context,
+            # The chat template ends with "Your reply:"; the last history line
+            # re-anchors the format so the answer is the one word, not a scene.
+            chat_history=(*context, "(Reply with exactly one word: yes or no.)"),
             system_prompt=_SYSTEM.format(name=self._character),
         )
         try:
@@ -74,6 +76,7 @@ class AddressJudge:
         except Exception as exc:  # noqa: BLE001 - any failure means "do not answer"
             logger.warning("Address judge failed (%s); ignoring the line", type(exc).__name__)
             return False
+        # Life is short: any yes-ish first token counts ('yes', 'yeah', 'yep').
         verdict = answer.strip().lower().startswith("y")
         logger.info(
             "listen judge addressed=%s answer=%r latency=%.2fs",
