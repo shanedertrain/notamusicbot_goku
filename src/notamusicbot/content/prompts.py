@@ -98,8 +98,11 @@ def build_chat_prompt(request: ContentRequest) -> str:
     lines = [
         _persona_clause(request.persona_description),
         (
-            "You are in a live voice chat. Reply conversationally, as long or as short as "
-            "the moment calls for, no lists, no markdown, no emojis, no stage directions."
+            "You are in a live voice chat, a back-and-forth, not a speech. Match the size "
+            "and energy of what was just said to you, so a quick remark gets a quick reply. "
+            "Use no lists, no markdown, no emojis, no stage directions. "
+            "In spoken conversation people answer in a sentence or two and stop; they go "
+            "longer only when asked to explain something."
         ),
     ]
     if request.chat_history:

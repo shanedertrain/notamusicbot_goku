@@ -33,7 +33,7 @@ def test_system_prompt_keeps_persona_and_rules() -> None:
 
 def test_chat_prompt_asks_for_one_short_sentence() -> None:
     text = prompts.build_chat_prompt(_chat())
-    assert "as long or as short as the moment calls for" in text
+    assert "match the size and energy of what was just said" in text.lower()
     assert "one or two short spoken" not in text
     assert "no lists, no markdown, no emojis, no stage directions" in text
 

@@ -28,6 +28,7 @@ from _listen_turn_fakes import (
 
 from notamusicbot.config import ListenPrivacySettings
 from notamusicbot.listen.metrics import parse_turn_line
+from notamusicbot.listen.pacing import ChunkPacer
 from notamusicbot.listen.reply import ReplySynthesisError
 from notamusicbot.listen.turn_taking import TurnState
 
@@ -62,6 +63,47 @@ async def test_metrics_line_emitted() -> None:
     assert parsed["eos->asr"] == 0.5
     assert parsed["total"] == 0.5
     assert re.fullmatch(r"listen turn guild=7 user=1 .*", rig.metrics[0])
+
+
+async def test_listen_only_posts_transcripts_and_never_replies() -> None:
+    posted: list[str] = []
+
+    async def announce(line: str) -> None:
+        posted.append(line)
+
+    rig = make_rig(listen_only=True, announce=announce)
+    await rig.manager.on_utterance(utterance(1))
+    await rig.manager.wait_idle()
+    await spin()
+    # The line went to the channel, timestamped, with the speaker named.
+    assert len(posted) == 1
+    assert re.fullmatch(r"`\d\d:\d\d User 1` tell me something fun", posted[0])
+    # No reply machinery ran at all: no LLM, no audio, no history turn for the bot.
+    assert rig.provider.calls == []
+    assert rig.player.plays == []
+    assert rig.synth.calls == []
+    assert [t.render() for t in rig.conversation.history()] == []
+    assert rig.manager.state is TurnState.IDLE
+
+
+async def test_listen_only_still_skips_noise_and_cooldown_lines() -> None:
+    posted: list[str] = []
+
+    async def announce(line: str) -> None:
+        posted.append(line)
+
+    rig = make_rig(
+        listen_only=True,
+        announce=announce,
+        reply={"per_user_cooldown_s": 60.0},
+    )
+    await rig.manager.on_utterance(utterance(1))
+    await rig.manager.wait_idle()
+    await spin()
+    await rig.manager.on_utterance(utterance(1))
+    await rig.manager.wait_idle()
+    await spin()
+    assert len(posted) == 1  # the second utterance sits in the per-user cooldown
 
 
 async def test_next_sentence_synthesized_while_first_plays() -> None:
@@ -436,7 +478,11 @@ THREE_CHUNKS = (
 
 
 def _timed_rig(
-    *, fail_on_call: int | None = None, text: str = THREE_CHUNKS, max_sentences: int = 3
+    *,
+    fail_on_call: int | None = None,
+    text: str = THREE_CHUNKS,
+    max_sentences: int = 3,
+    pacer: ChunkPacer | None = None,
 ):  # type: ignore[no-untyped-def]
     clock = TimelineClock(start=100.0)
     log: list[tuple[str, float, str]] = []
@@ -447,6 +493,7 @@ def _timed_rig(
         synth=synth,  # type: ignore[arg-type]
         player=player,  # type: ignore[arg-type]
         provider=FakeContentProvider([text]),
+        pacer=pacer,
         # Pin the pre-streaming caps (10 / 18 words) so the chunk text below is unchanged.
         reply={
             "max_sentences": max_sentences,
@@ -462,7 +509,8 @@ def _starts(log: list[tuple[str, float, str]], kind: str, t0: float) -> list[flo
 
 
 async def test_pipelined_playback_has_no_gap_between_chunks() -> None:
-    # Three sentences, one chunk each (all short).
+    # Three short sentences: the first goes out alone for a fast start; while it
+    # plays (3 s) synthesis is fast enough (1 s) for the pacer to merge the rest.
     rig, clock, log, synth, _player = _timed_rig(
         text="First one here. Second one there. Third one gone."
     )
@@ -470,18 +518,51 @@ async def test_pipelined_playback_has_no_gap_between_chunks() -> None:
     await rig.manager.on_utterance(utterance(1))
     await clock.run()
     await rig.manager.wait_idle()
-    assert synth.calls == ["First one here.", "Second one there.", "Third one gone."]
-    assert _starts(log, "play_start", t0) == [1.0, 4.0, 7.0]
-    assert _starts(log, "play_end", t0) == [4.0, 7.0, 10.0]
-    assert _starts(log, "synth_start", t0) == [0.0, 1.0, 2.0]
+    assert synth.calls == ["First one here.", "Second one there. Third one gone."]
+    assert _starts(log, "play_start", t0) == [1.0, 4.0]
+    assert _starts(log, "play_end", t0) == [4.0, 7.0]
+    assert _starts(log, "synth_start", t0) == [0.0, 1.0]
     # Chunk 2 starts the instant chunk 1 ends (was +1.0 s before pipelining).
     assert abs(_starts(log, "play_start", t0)[1] - _starts(log, "play_end", t0)[0]) < 0.01
     # Call order: synth2 starts before play1 ends.
     names = [(k, x) for k, _, x in log]
-    assert names.index(("synth_start", "Second one there.")) < names.index(
+    assert names.index(("synth_start", "Second one there. Third one gone.")) < names.index(
         ("play_end", "First one here.")
     )
     assert rig.manager.state is TurnState.IDLE
+
+
+async def test_short_opener_is_merged_with_the_next_sentence() -> None:
+    # "Yes indeed." (2 words) would play for well under 1.5 s, too short to cover the
+    # next chunk's synthesis, so it goes out together with the second sentence.
+    rig, clock, log, synth, _player = _timed_rig(
+        text="Yes indeed. Second one there is here today. Third one gone.",
+        pacer=ChunkPacer(),
+    )
+    await rig.manager.on_utterance(utterance(1))
+    await clock.run()
+    await rig.manager.wait_idle()
+    assert synth.calls[0] == "Yes indeed. Second one there is here today."
+
+
+async def test_slow_synthesis_keeps_chunks_small() -> None:
+    # Synthesis (6 s) is slower than the audio it makes (3 s): the pacer's budget
+    # is too small to merge, so later sentences are not packed together.
+    clock = TimelineClock(start=100.0)
+    log: list[tuple[str, float, str]] = []
+    synth = TimedSynth(clock, log, synth_s=6.0, play_s=3.0, fail_on_call=None)
+    player = TimedPlayer(clock, log, play_s=3.0)
+    rig = make_rig(
+        clock=clock,
+        synth=synth,  # type: ignore[arg-type]
+        player=player,  # type: ignore[arg-type]
+        provider=FakeContentProvider(["First one here. Second one there. Third one gone."]),
+        reply={"max_sentences": 3, "first_chunk_max_words": 10, "later_chunk_max_words": 18},
+    )
+    await rig.manager.on_utterance(utterance(1))
+    await clock.run()
+    await rig.manager.wait_idle()
+    assert synth.calls == ["First one here.", "Second one there.", "Third one gone."]
 
 
 async def test_long_sentence_is_spoken_as_chunks_with_shared_sentence_index() -> None:
@@ -543,7 +624,8 @@ async def test_chunk_two_synthesis_error_plays_only_chunk_one(
     assert rig.manager.state is TurnState.IDLE
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert len(warnings) == 1
-    assert synth.calls == ["First one here.", "Second one there."]  # nothing after the failure
+    # The merged second chunk fails; nothing follows it.
+    assert synth.calls == ["First one here.", "Second one there. Third one gone."]
 
 
 # ------------------------------------------------------------ streaming replies
@@ -861,3 +943,106 @@ async def test_wake_word_mode_skips_the_early_backchannel_until_addressed() -> N
     await clock.run()
     await rig.manager.wait_idle()
     assert player.plays == [REPLY, BACKCHANNEL_PCM, REPLY]
+
+
+async def test_group_chat_replies_only_when_called_by_name() -> None:
+    humans = {"n": 2}
+    rig = make_rig(
+        transcriber=FakeTranscriber(["what a day", "hey Obama, what a day"]),
+        character_name="Obama",
+        human_count=lambda: humans["n"],
+    )
+    await rig.manager.on_utterance(utterance(1))
+    await rig.manager.wait_idle()
+    assert rig.player.plays == []  # two humans, no name: stays quiet
+    await rig.manager.on_utterance(utterance(1))
+    await rig.manager.wait_idle()
+    assert rig.player.plays == [REPLY]
+
+
+async def test_one_on_one_needs_no_name() -> None:
+    rig = make_rig(
+        transcriber=FakeTranscriber(["what a day"]),
+        character_name="Obama",
+        human_count=lambda: 1,
+    )
+    await rig.manager.on_utterance(utterance(1))
+    await rig.manager.wait_idle()
+    assert rig.player.plays == [REPLY]
+
+
+async def test_group_chat_asks_the_judge_when_the_name_is_missing() -> None:
+    asked: list[tuple[str, str, list[str]]] = []
+
+    async def judge(speaker: str, text: str, room: list[str]) -> bool:
+        asked.append((speaker, text, room))
+        return "you think" in text
+
+    rig = make_rig(
+        transcriber=FakeTranscriber(["pass the salt", "what do you think"]),
+        character_name="Obama",
+        human_count=lambda: 3,
+        address_judge=judge,
+    )
+    await rig.manager.on_utterance(utterance(1))
+    await rig.manager.wait_idle()
+    assert rig.player.plays == []
+    await rig.manager.on_utterance(utterance(2))
+    await rig.manager.wait_idle()
+    assert rig.player.plays == [REPLY]
+    # The judge saw the earlier line of the room as context.
+    assert asked[1][2] == ["User 1: pass the salt"]
+
+
+async def test_the_name_skips_the_judge() -> None:
+    async def judge(speaker: str, text: str, room: list[str]) -> bool:
+        raise AssertionError("name match must not need the judge")
+
+    rig = make_rig(
+        transcriber=FakeTranscriber(["Obama, hello"]),
+        character_name="Obama",
+        human_count=lambda: 2,
+        address_judge=judge,
+    )
+    await rig.manager.on_utterance(utterance(1))
+    await rig.manager.wait_idle()
+    assert rig.player.plays == [REPLY]
+
+
+async def test_group_follow_up_by_the_answered_person_skips_the_judge() -> None:
+    asked: list[str] = []
+
+    async def judge(speaker: str, text: str, room: list[str]) -> bool:
+        asked.append(text)
+        return False
+
+    rig = make_rig(
+        transcriber=UserTranscriber({1: "Obama, hello", 2: "me too friend"}),
+        character_name="Obama",
+        human_count=lambda: 2,
+        address_judge=judge,
+    )
+    await rig.manager.on_utterance(utterance(1))
+    await rig.manager.wait_idle()
+    assert rig.player.plays == [REPLY]
+    # Someone else speaking next is not a follow-up: the judge decides (and says no).
+    await rig.manager.on_utterance(utterance(2))
+    await rig.manager.wait_idle()
+    assert asked == ["me too friend"] and rig.player.plays == [REPLY]
+
+
+async def test_group_follow_up_from_the_same_person_is_answered_without_the_judge() -> None:
+    async def judge(speaker: str, text: str, room: list[str]) -> bool:
+        raise AssertionError("a follow-up must not need the judge")
+
+    rig = make_rig(
+        transcriber=FakeTranscriber(["Obama, hello", "and another thing"]),
+        character_name="Obama",
+        human_count=lambda: 2,
+        address_judge=judge,
+    )
+    await rig.manager.on_utterance(utterance(1))
+    await rig.manager.wait_idle()
+    await rig.manager.on_utterance(utterance(1))
+    await rig.manager.wait_idle()
+    assert rig.player.plays == [REPLY, REPLY]

@@ -17,6 +17,7 @@ from notamusicbot.domain.listen import (
     UtteranceEvent,
 )
 from notamusicbot.listen.conversation import Conversation
+from notamusicbot.listen.pacing import ChunkPacer
 from notamusicbot.listen.reply import ReplyAudio, ReplySynthesisError
 from notamusicbot.listen.turn_taking import TurnManager
 
@@ -268,6 +269,8 @@ def make_rig(
     *,
     reply: dict | None = None,
     respond_to: str = "all",
+    listen_only: bool = False,
+    announce=None,  # noqa: ANN001
     transcriber: FakeTranscriber | UserTranscriber | None = None,
     provider: FakeContentProvider | None = None,
     synth: FakeReplySynth | None = None,
@@ -275,9 +278,15 @@ def make_rig(
     backchannel: FakeBackchannel | None = None,
     clock: FakeClock | None = None,
     names: dict[int, str] | None = None,
+    pacer: ChunkPacer | None = None,
+    character_name: str = "",
+    human_count=None,  # noqa: ANN001
+    address_judge=None,  # noqa: ANN001
 ) -> Rig:
     reply_settings = ListenReplySettings(**({"per_user_cooldown_s": 0.0} | (reply or {})))
-    settings = ListenSettings(respond_to=respond_to, reply=reply_settings)  # type: ignore[arg-type]
+    settings = ListenSettings(  # type: ignore[arg-type]
+        respond_to=respond_to, listen_only=listen_only, reply=reply_settings
+    )
     clock = clock or FakeClock(start=100.0)
     tr = transcriber or FakeTranscriber(["tell me something fun"])
     conversation = Conversation(settings.reply.history_turns)
@@ -298,6 +307,12 @@ def make_rig(
         BOT_ID,
         guild_id=7,
         name_resolver=(lambda uid: (names or {}).get(uid, f"User {uid}")),
+        # Most tests use 2-3 word sentences; pad no openers unless a test asks for it.
+        pacer=pacer or ChunkPacer(min_opener_s=0.0),
+        announce=announce,
+        character_name=character_name,
+        human_count=human_count,
+        address_judge=address_judge,
     )
     return Rig(manager, clock, tr, conversation, prov, sy, pl, metrics)
 

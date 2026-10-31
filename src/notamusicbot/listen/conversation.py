@@ -25,7 +25,18 @@ ECHO_RATIO_THRESHOLD = 0.6
 # Whisper-style hallucinations (compared lowercased after strip).
 _NOISE_TRANSCRIPTS = frozenset({"thank you.", "thanks for watching.", "."})
 
+# The prompt shows the bot's own earlier replies cut to this many sentences: a model
+# that sees its past long answers writes long answers (its spoken text stays whole).
+BOT_HISTORY_SENTENCES = 2
 _NON_ALNUM = re.compile(r"[^\w\s]")
+
+
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
+
+
+def clip_sentences(text: str, limit: int) -> str:
+    """The first ``limit`` sentences of ``text``."""
+    return " ".join(_SENTENCE_END.split(text.strip())[: max(1, limit)])
 
 
 @dataclass(slots=True)
@@ -37,8 +48,11 @@ class ConversationTurn:
     is_bot: bool = False
     interrupted_after: int | None = None
 
-    def render(self) -> str:
-        line = f"{self.speaker}: {self.text}"
+    def render(self, max_sentences: int | None = None) -> str:
+        text = self.text
+        if max_sentences is not None and self.is_bot:
+            text = clip_sentences(text, max_sentences)
+        line = f"{self.speaker}: {text}"
         if self.interrupted_after is not None:
             line += f" [interrupted after sentence {self.interrupted_after}]"
         return line
@@ -95,7 +109,7 @@ def build_chat_request(
         persona_description=persona_description,
         requester_name=speaker_name,
         transcript_text=transcript_text,
-        chat_history=tuple(t.render() for t in history),
+        chat_history=tuple(t.render(BOT_HISTORY_SENTENCES) for t in history),
         system_prompt=system_prompt,
     )
 

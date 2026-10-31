@@ -12,6 +12,10 @@ self-hearing filter at the Discord boundary:
 * A member leaving the channel has their buffered audio cleared at once.
 * No audio or transcript touches disk; history lives in the in-memory
   ``Conversation`` and is cleared on stop.
+* ``listen.listen_only`` skips the reply half entirely: ASR still runs and each
+  accepted line is posted to the text channel, timestamped, via the turn
+  manager's ``announce`` hook (``_post_notice`` here). Nothing is synthesized
+  and no LLM is loaded.
 
 discord-ext-voice-recv 0.5.2a179 has no DAVE support: with ``wants_opus()``
 the frames it hands over are transport-decrypted but still DAVE-encrypted, so
@@ -22,10 +26,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import io
 import logging
+import threading
 import time
-from collections.abc import Coroutine
+from collections import deque
+from collections.abc import AsyncIterator, Coroutine
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -34,6 +39,7 @@ import discord
 from discord.ext import voice_recv
 
 from notamusicbot.domain.listen import UtteranceEvent
+from notamusicbot.listen.addressing import AddressJudge
 from notamusicbot.listen.conversation import Conversation
 from notamusicbot.listen.endpointer import Endpointer, EndpointerThread, ListenEvent
 from notamusicbot.listen.ingress import ListenIngress
@@ -124,32 +130,167 @@ class ListenDaveSink(voice_recv.AudioSink):
         self._ingress.accept_packet(user.id, payload)
 
 
+# One Discord audio frame: 20 ms of 48 kHz stereo s16le.
+FRAME_BYTES = 3840
+# How long the source keeps emitting silence for the next chunk before it ends.
+SOURCE_GRACE_FRAMES = 25
+
+
+class _SourceClosed(Exception):
+    """The audio source already ended; start a new one."""
+
+
+def frame_align(pcm: bytes) -> bytes:
+    """Whole 20 ms frames only: a partial tail is dropped (it is TTS decay, near silence).
+
+    Padding the tail instead would put up to 19 ms of silence at every chunk seam.
+    Clips shorter than one frame are padded to one.
+    """
+    if len(pcm) < FRAME_BYTES:
+        return pcm.ljust(FRAME_BYTES, b"\x00")
+    return pcm[: len(pcm) - len(pcm) % FRAME_BYTES]
+
+
+class ChunkedSource(discord.AudioSource):
+    """One continuous PCM stream that chunks are appended to while it plays.
+
+    Starting a fresh ``voice_client.play`` per chunk leaves a gap at every seam
+    (the previous player thread ending, the next one starting). Here the same
+    source keeps running: the next chunk's frames follow the previous one's
+    directly, and a short stretch of silence bridges a chunk that is a moment
+    late. ``feed`` runs on the event loop, ``read`` on discord's player thread.
+    """
+
+    def __init__(self, loop: asyncio.AbstractEventLoop, *, grace_frames: int = SOURCE_GRACE_FRAMES):
+        self._loop = loop
+        self._grace = grace_frames
+        self._lock = threading.Lock()
+        self._buf = bytearray()
+        self._appended = 0
+        self._consumed = 0
+        self._idle = 0
+        self._pending: deque[tuple[int, asyncio.Future[None]]] = deque()
+        self.closed = False
+
+    def feed(self, pcm: bytes) -> asyncio.Future[None]:
+        """Queue frame-aligned ``pcm``; the future resolves when its last frame is read."""
+        with self._lock:
+            if self.closed:
+                raise _SourceClosed
+            fut: asyncio.Future[None] = self._loop.create_future()
+            self._buf += pcm
+            self._appended += len(pcm)
+            self._idle = 0
+            self._pending.append((self._appended, fut))
+            return fut
+
+    def read(self) -> bytes:
+        with self._lock:
+            if self._buf:
+                frame = bytes(self._buf[:FRAME_BYTES])
+                del self._buf[:FRAME_BYTES]
+                self._consumed += FRAME_BYTES
+                self._idle = 0
+                while self._pending and self._pending[0][0] <= self._consumed:
+                    self._settle(self._pending.popleft()[1], None)
+                return frame
+            self._idle += 1
+            if self._idle > self._grace:
+                self.closed = True
+                return b""
+            return b"\x00" * FRAME_BYTES
+
+    def is_opus(self) -> bool:
+        return False
+
+    def finish(self, error: BaseException | None) -> None:
+        """The player ended (or stopped): release every waiting ``play`` call."""
+        with self._lock:
+            self.closed = True
+            self._buf.clear()
+            pending, self._pending = list(self._pending), deque()
+        for _end, fut in pending:
+            self._settle(fut, error)
+
+    def _settle(self, fut: asyncio.Future[None], error: BaseException | None) -> None:
+        def _set() -> None:
+            if fut.done():
+                return
+            if error is not None:
+                fut.set_exception(error)
+            else:
+                fut.set_result(None)
+
+        with contextlib.suppress(RuntimeError):  # loop already closed
+            self._loop.call_soon_threadsafe(_set)
+
+
+def _mark_ended(ended: asyncio.Future[None]) -> None:
+    if not ended.done():
+        ended.set_result(None)
+
+
 class VoicePlayer:
-    """``ReplyPlayerPort`` over the guild's voice client (the recv client itself)."""
+    """``ReplyPlayerPort`` over the guild's voice client (the recv client itself).
+
+    Successive ``play`` calls feed one :class:`ChunkedSource`, so a reply played in
+    several chunks is one continuous stream.
+    """
 
     def __init__(self, voice_client: Any) -> None:
         self._vc = voice_client
+        self._source: ChunkedSource | None = None
+        self._ended: asyncio.Future[None] | None = None
 
-    async def play(self, pcm: bytes) -> None:
+    async def _feed(self, pcm: bytes) -> asyncio.Future[None]:
+        """Queue frame-aligned ``pcm`` on the live source (starting one if needed)."""
         loop = asyncio.get_running_loop()
-        done: asyncio.Future[None] = loop.create_future()
+        if self._source is not None:
+            with contextlib.suppress(_SourceClosed):
+                return self._source.feed(pcm)
+        if self._ended is not None and not self._ended.done():
+            await self._ended  # the previous player thread is still winding down
+        source = ChunkedSource(loop, grace_frames=SOURCE_GRACE_FRAMES)
+        ended: asyncio.Future[None] = loop.create_future()
+        self._source, self._ended = source, ended
+        fut = source.feed(pcm)
 
         def _after(error: Exception | None) -> None:
             # Runs on discord's player thread.
-            def _finish() -> None:
-                if done.done():
-                    return
-                if error is not None:
-                    done.set_exception(error)
-                else:
-                    done.set_result(None)
-
+            source.finish(error)
             with contextlib.suppress(RuntimeError):  # loop already closed
-                loop.call_soon_threadsafe(_finish)
+                loop.call_soon_threadsafe(_mark_ended, ended)
 
-        self._vc.play(discord.PCMAudio(io.BytesIO(pcm)), after=_after)
+        self._vc.play(source, after=_after)
+        return fut
+
+    async def play(self, pcm: bytes) -> None:
+        fut = await self._feed(frame_align(pcm))
         try:
-            await done
+            await fut
+        except asyncio.CancelledError:
+            self.stop()
+            raise
+
+    async def play_stream(self, pieces: AsyncIterator[bytes]) -> None:
+        """Feed ``pieces`` as they arrive; return when the last frame has been played.
+
+        A piece rarely ends on a frame boundary, so the remainder rides along with
+        the next one (nothing is dropped); only the very end is padded with silence.
+        """
+        carry = b""
+        last: asyncio.Future[None] | None = None
+        try:
+            async for piece in pieces:
+                data = carry + piece
+                usable = len(data) - len(data) % FRAME_BYTES
+                carry = data[usable:]
+                if usable:
+                    last = await self._feed(data[:usable])
+            if carry:
+                last = await self._feed(carry + b"\x00" * (FRAME_BYTES - len(carry)))
+            if last is not None:
+                await last
         except asyncio.CancelledError:
             self.stop()
             raise
@@ -221,35 +362,43 @@ class ListenSession:
         provider = app.listen_content_provider
         pipeline = app.pipeline
         profile = app.voice_profiles.get(listen.voice_profile)
-        if provider is None or pipeline is None or profile is None:
+        # Listen-only needs no provider and no pipeline: it only transcribes.
+        required = (profile,) if listen.listen_only else (provider, pipeline, profile)
+        if any(part is None for part in required):
             raise RuntimeError("listen mode is not ready (provider, pipeline or voice profile)")
         if self._guild.voice_client is not None:
             raise RuntimeError("the bot is already in a voice channel in this guild")
 
         # Local-only: no hub lookups, then the LLM, then ASR (once).
         enforce_offline_models()
-        await provider.ensure_spark_preferred()  # type: ignore[attr-defined]
+        # Listen-only never replies: no provider warm-up, no TTS, no backchannel.
+        if not listen.listen_only:
+            await provider.ensure_spark_preferred()  # type: ignore[attr-defined]
         self._transcriber = build_transcriber(listen.asr, app.coordinator)
         load = getattr(self._transcriber, "load", None)
         if load is not None:
             await asyncio.to_thread(load)
 
         reply = listen.reply
-        synth = ReplySynthesizer(
-            pipeline,
-            profile,
-            artifact_root=app.settings.speech.output_dir,
-            tts_max_seconds_per_word=reply.tts_max_seconds_per_word,
-            tts_cap_floor_seconds=reply.tts_cap_floor_seconds,
-        )
+        synth: ReplySynthesizer | None = None
         backchannel = None
-        if reply.backchannel_enabled and reply.backchannel_texts:
-            directory = app.settings.speech.output_dir.parent / "listen" / "backchannel"
-            backchannel = BackchannelCache(directory, reply.backchannel_texts, synth)
-            try:
-                await backchannel.prerender()
-            except Exception:
-                logger.warning("listen: backchannel pre-render failed", exc_info=True)
+        if listen.listen_only:
+            pass  # the reply synth stays None: _start builds nothing it never calls
+        else:
+            synth = ReplySynthesizer(
+                pipeline,
+                profile,
+                artifact_root=app.settings.speech.output_dir,
+                tts_max_seconds_per_word=reply.tts_max_seconds_per_word,
+                tts_cap_floor_seconds=reply.tts_cap_floor_seconds,
+            )
+            if reply.backchannel_enabled and reply.backchannel_texts:
+                directory = app.settings.speech.output_dir.parent / "listen" / "backchannel"
+                backchannel = BackchannelCache(directory, reply.backchannel_texts, synth)
+                try:
+                    await backchannel.prerender()
+                except Exception:
+                    logger.warning("listen: backchannel pre-render failed", exc_info=True)
 
         self._vc = await self._channel.connect(cls=voice_recv.VoiceRecvClient, timeout=30.0)
         bot_id = self._bot.user.id
@@ -258,13 +407,14 @@ class ListenSession:
         vad = SileroVad if listen.vad.backend == "silero" else EnergyVad
         self._endpointer = Endpointer(vad, listen.vad, time.monotonic, self._on_event)
         self._poller = EndpointerThread(self._ingress, self._endpointer, ENDPOINT_POLL_INTERVAL_S)
+        announce = self._post_notice if listen.listen_only else None
         self._turns = TurnManager(
             listen,
             MonotonicClock(),
             self._transcriber,
             self._conversation,
             app.listen_content_provider,  # type: ignore[arg-type]
-            synth,
+            synth,  # type: ignore[arg-type]
             backchannel,
             VoicePlayer(self._vc),
             logger.info,
@@ -274,6 +424,12 @@ class ListenSession:
             system_prompt=profile.persona.chat_prompt,
             name_resolver=self._display_name,
             transcript_store=self._open_transcript_store(),
+            announce=announce,
+            character_name=profile.persona.display_name,
+            human_count=self._human_count,
+            address_judge=self._build_judge(
+                app.listen_content_provider, profile.persona.display_name
+            ),
         )
         self._sink = ListenDaveSink(
             self._ingress, bot_id, lambda: getattr(self._vc, "_connection", None)
@@ -296,6 +452,14 @@ class ListenSession:
             logger.warning("listen: could not post the start message in %s", self._channel.id)
 
     # ----------------------------------------------------------- event wiring
+
+    def _build_judge(self, provider: Any, character: str) -> Any:
+        return AddressJudge(provider, character=character).addressed
+
+    def _human_count(self) -> int:
+        """Humans (non-bots) in the voice channel the bot is in."""
+        channel = getattr(self._vc, "channel", None)
+        return sum(1 for m in getattr(channel, "members", ()) if not m.bot)
 
     def _display_name(self, user_id: int) -> str:
         member = self._guild.get_member(user_id)

@@ -82,7 +82,7 @@ def test_prompt_includes_only_last_two_of_five_turns() -> None:
     for old in ("old-one", "old-two", "old-three"):
         assert old not in prompt
     assert "Saiyan" in prompt
-    assert "as long or as short as the moment calls for" in prompt
+    assert "match the size and energy of what was just said" in prompt.lower()
     assert "no lists, no markdown, no emojis, no stage directions" in prompt
     assert "Bob just said: what is up" in prompt
 
@@ -379,3 +379,14 @@ def test_extend_bot_appends_only_to_a_trailing_bot_turn() -> None:
         "Alice: hi there",
         "Goku: First one here. Second one there.",
     ]
+
+
+def test_prompt_history_clips_the_bots_long_replies_but_not_the_users() -> None:
+    from notamusicbot.listen.conversation import Conversation, build_chat_request
+
+    conversation = Conversation(8)
+    conversation.add_user("Ann", "One. Two. Three. Four.")
+    conversation.add_bot("A. B. C. D. E.")
+    request = build_chat_request("p", "Ann", "next", conversation.history())
+    assert request.chat_history == ("Ann: One. Two. Three. Four.", "Goku: A. B.")
+    assert conversation.history()[1].text == "A. B. C. D. E."  # the stored turn is whole

@@ -23,9 +23,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
-from collections.abc import Callable
+from collections import deque
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import aclosing
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum, auto
 from time import monotonic
 from typing import TYPE_CHECKING, Any, Protocol
@@ -42,7 +44,8 @@ from notamusicbot.listen.conversation import (
     split_spoken_chunks,
 )
 from notamusicbot.listen.metrics import format_turn_metrics
-from notamusicbot.listen.reply import ReplyAudio, ReplySynthesisError
+from notamusicbot.listen.pacing import OPENER_WAIT_S, ChunkPacer
+from notamusicbot.listen.reply import ReplyAudio, ReplySynthesisError, StreamedReply
 from notamusicbot.listen.transcript_store import TranscriptStore
 
 if TYPE_CHECKING:
@@ -72,6 +75,12 @@ SYNTH_QUEUE_DEPTH = 2
 # The early backchannel needs at least this much speech (shorter utterances
 # are often noise or one-word asides that never get a reply).
 EARLY_BACKCHANNEL_MIN_AUDIO_S = 1.2
+# From this many humans in the channel (plus the bot) the bot must be called by name.
+GROUP_MIN_HUMANS = 2
+# In a group chat, someone the bot is not answering needs this much longer speech to barge in.
+GROUP_BYSTANDER_BARGE_FACTOR = 2.0
+# Room lines kept for the address judge.
+ROOM_LINES = 12
 # Float slack when comparing clock deltas.
 _EPS = 1e-9
 
@@ -88,6 +97,10 @@ class ReplyPlayerPort(Protocol):
 
     async def play(self, pcm: bytes) -> None:
         """Play ``pcm``; return when it finished or was stopped."""
+        ...
+
+    async def play_stream(self, pieces: AsyncIterator[bytes]) -> None:
+        """Play ``pieces`` as they arrive, back to back; return when the last one ended."""
         ...
 
     def stop(self) -> None:
@@ -133,7 +146,7 @@ class _ReplyFlow:
     chunker: StreamChunker
     # (chunk text, 1-based sentence index) then _END; unbounded so the LLM never waits.
     chunk_q: asyncio.Queue[Any] = field(default_factory=asyncio.Queue)
-    # (ReplyAudio, chunk text, sentence index) then _END; bounded = pipeline depth.
+    # (ReplyAudio, chunk text, first and last sentence index) then _END; bounded = pipeline depth.
     audio_q: asyncio.Queue[Any] = field(
         default_factory=lambda: asyncio.Queue(maxsize=SYNTH_QUEUE_DEPTH)
     )
@@ -163,6 +176,11 @@ class TurnManager:
         system_prompt: str = "",
         name_resolver: Callable[[int], str] | None = None,
         transcript_store: TranscriptStore | None = None,
+        announce: Callable[[str], Awaitable[None]] | None = None,
+        pacer: ChunkPacer | None = None,
+        character_name: str = "",
+        human_count: Callable[[], int] | None = None,
+        address_judge: Callable[[str, str, list[str]], Awaitable[bool]] | None = None,
     ) -> None:
         self._transcripts = transcript_store
         self._settings = settings
@@ -178,6 +196,15 @@ class TurnManager:
         self._guild_id = guild_id
         self._persona = persona_description
         self._system_prompt = system_prompt
+        # With two or more humans present the bot answers only when called by name.
+        self._character = character_name.strip().lower()
+        self._human_count = human_count
+        self._address_judge = address_judge
+        # Recent lines of the whole room (also those not meant for the bot), for the judge.
+        self._room: deque[str] = deque(maxlen=ROOM_LINES)
+        self._last_answered_user: int | None = None
+        # Listen-only transcript poster (the glue's channel.send); None = no chat post.
+        self._announce = announce
         self._name_of = name_resolver or (lambda user_id: f"User {user_id}")
 
         self._state = TurnState.IDLE
@@ -200,9 +227,13 @@ class TurnManager:
         self._bc_claimed = False
         self._barge_candidates: dict[int, float] = {}
         self._barge_tasks: set[asyncio.Task[None]] = set()
+        # In-flight transcript posts (listen-only); drained on shutdown.
+        self._announce_tasks: set[asyncio.Task[None]] = set()
         # 1-based index of the sentence being played; None before audio starts.
         self._playing_sentence: int | None = None
         self._synth_task: asyncio.Task[None] | None = None
+        # Sizes each chunk from the live synthesis speed and the audio queued ahead.
+        self._pacer = pacer or ChunkPacer()
         self._bot_turn_added = False
 
         self._last_bot_sentence = ""
@@ -272,7 +303,7 @@ class TurnManager:
             self._set_state(TurnState.LISTENING, event.user_id)
         if not self._can_barge_in():
             return
-        remaining = self._barge_remaining(event.t_start)
+        remaining = self._barge_remaining(event.t_start, event.user_id)
         if remaining <= _EPS:
             self._barge_in(event.user_id)
             return
@@ -314,11 +345,21 @@ class TurnManager:
             # The filters below can still reject after ASR ran: drop, never reply to it.
             accepted = self._accept(user_id, text, t_asr_done)
             self._log_asr_timing(event, transcript, t_asr_start, t_asr_done)
+            # The group-address judge decides whether to REPLY; listen-only posts
+            # every clean line, so the extra LLM call never runs.
+            if accepted and not self._settings.listen_only and self._group_call_required():
+                accepted = await self._called_in_group(user_id, text)
             if not accepted:
                 return
             if self._settings.privacy.log_transcripts:
                 logger.debug("listen transcript user=%s text=%r", user_id, text)
             self._note(self._name_of(user_id), text)
+            if self._settings.listen_only:
+                # Listen-only: the timestamped line above IS the turn; no reply.
+                # Stamp the cooldown here: _run_turn (which normally does) never runs.
+                self._last_reply_at[user_id] = self._clock()
+                return
+
             entry = _Pending(user_id, self._name_of(user_id), text, event.t_eos, t_asr_done)
             self._pending.pop(user_id, None)  # same user replaces; order = arrival
             self._pending[user_id] = entry
@@ -388,6 +429,37 @@ class TurnManager:
             return False
         return True
 
+    async def _called_in_group(self, user_id: int, text: str) -> bool:
+        """With several humans present: the name is a sure yes, otherwise ask the judge."""
+        name = self._name_of(user_id)
+        room = list(self._room)
+        self._room.append(f"{name}: {text}")
+        if self._character in text.lower():
+            return True
+        if self._is_follow_up(user_id, room):
+            logger.info("Group chat: follow-up to the person the bot just answered")
+            return True
+        if self._address_judge is None:
+            logger.info("Group chat: not addressed by name; utterance ignored")
+            return False
+        return await self._address_judge(name, text, room)
+
+    def _is_follow_up(self, user_id: int, room: list[str]) -> bool:
+        """The person the bot just answered speaks next, with nobody in between."""
+        return (
+            user_id == self._last_answered_user
+            and bool(room)
+            and room[-1].startswith(f"{self._character.title()}:")
+            and self._within_follow_up(self._clock())
+        )
+
+    def _group_call_required(self) -> bool:
+        return (
+            bool(self._character)
+            and self._human_count is not None
+            and self._human_count() >= GROUP_MIN_HUMANS
+        )
+
     def _addressed(self, text: str, now: float) -> bool:
         wake = self._settings.wake_word.strip().lower()
         if wake and wake in text.lower():
@@ -412,12 +484,14 @@ class TurnManager:
     def _can_barge_in(self) -> bool:
         return self._state is TurnState.SPEAKING or self._bc_active
 
-    def _barge_remaining(self, t_start: float) -> float:
+    def _barge_remaining(self, t_start: float, user_id: int) -> float:
         """Seconds until the speech starting at ``t_start`` counts as sustained."""
         start = t_start
         if self._bc_active and self._bc_started_at is not None:
             start = max(start, self._bc_started_at + BACKCHANNEL_BARGE_GUARD_S)
         needed = self._settings.reply.barge_in_min_speech_ms / 1000.0
+        if self._group_call_required() and user_id != self._last_answered_user:
+            needed *= GROUP_BYSTANDER_BARGE_FACTOR  # a bystander must talk longer to cut in
         return start + needed - self._clock()
 
     async def _barge_in_after(self, user_id: int, t_start: float, delay: float) -> None:
@@ -426,7 +500,7 @@ class TurnManager:
             return  # the user stopped (or a newer onset replaced this one)
         if not self._can_barge_in() or not self._is_speaker(user_id):
             return
-        if self._barge_remaining(t_start) > _EPS:
+        if self._barge_remaining(t_start, user_id) > _EPS:
             return
         self._barge_in(user_id)
 
@@ -523,6 +597,7 @@ class TurnManager:
                 reply.max_sentences, reply.first_chunk_max_words, reply.later_chunk_max_words
             )
         )
+        self._pacer.begin_turn()
         loop = asyncio.get_running_loop()
         flow.llm_task = loop.create_task(self._consume_llm(request, flow))
         self._synth_task = loop.create_task(self._synthesize_stream(flow))
@@ -587,6 +662,28 @@ class TurnManager:
             print(f"{who}: {text}", file=sys.stderr, flush=True)
         if self._transcripts is not None:
             self._transcripts.write(who, text)
+        if self._announce is not None:
+            self._spawn_announce(f"`{self._stamp()} {who}` {text}")
+
+    def _spawn_announce(self, line: str) -> None:
+        """Post one transcript line to the text channel; failures are logged, never raised."""
+
+        async def _post() -> None:
+            try:
+                await self._announce(line)  # type: ignore[misc]
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.warning("listen: transcript announce failed", exc_info=True)
+
+        task = asyncio.get_running_loop().create_task(_post())
+        self._announce_tasks.add(task)
+        task.add_done_callback(self._announce_tasks.discard)
+
+    @staticmethod
+    def _stamp() -> str:
+        """Wall-clock HH:MM for a posted transcript line (local time)."""
+        return datetime.now().astimezone().strftime("%H:%M")
 
     def _queue_chunks(self, flow: _ReplyFlow, chunks: list[StreamChunk]) -> None:
         for chunk in chunks:
@@ -599,17 +696,74 @@ class TurnManager:
             flow.chunk_q.put_nowait((chunk.text, chunk.sentence_index))
 
     async def _synthesize_stream(self, flow: _ReplyFlow) -> None:
-        """Producer: synthesize queued chunks in order into ``flow.audio_q``."""
+        """Producer: synthesize queued chunks in order into ``flow.audio_q``.
+
+        The first chunk goes out alone (it sets the time to first audio). Later
+        ones merge every already-finished chunk that still fits the pacer's word
+        budget, so a reply is a few large, steadily delivered pieces rather than
+        one sampling roll per sentence, without ever leaving a gap in playback.
+        """
         delivered = False
+        carry: Any = None  # an entry taken from chunk_q that did not fit the budget
         try:
             while True:
-                entry = await flow.chunk_q.get()
+                entry = carry if carry is not None else await flow.chunk_q.get()
+                carry = None
                 if entry is _END:
                     break
-                chunk, index = entry
-                audio = await self._synth.synthesize_sentence(chunk)
-                await flow.audio_q.put((audio, chunk, index))
+                texts, first_index = [entry[0]], entry[1]
+                last_index = first_index
+                budget = self._pacer.budget_words(self._clock())
+                words = len(entry[0].split())
+                ended = False
+                # A very short opener would end before the next chunk is ready:
+                # fold in the following sentence(s) rather than leave a gap.
+                target = self._pacer.opener_target_words()
+                while words < target:
+                    try:
+                        nxt = await asyncio.wait_for(flow.chunk_q.get(), OPENER_WAIT_S)
+                    except TimeoutError:
+                        break
+                    if nxt is _END:
+                        ended = True
+                        break
+                    texts.append(nxt[0])
+                    last_index = nxt[1]
+                    words += len(nxt[0].split())
+                while words < budget:
+                    try:
+                        nxt = flow.chunk_q.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
+                    if nxt is _END:
+                        ended = True
+                        break
+                    nxt_words = len(nxt[0].split())
+                    if words + nxt_words > budget:
+                        carry = nxt
+                        break
+                    texts.append(nxt[0])
+                    last_index = nxt[1]
+                    words += nxt_words
+                chunk = " ".join(texts)
+                started = self._clock()
+                audio = await self._synthesize_chunk(flow, chunk, first_index, last_index)
+                self._pacer.note_synthesis(words, audio.duration_s, self._clock() - started)
+                logger.info(
+                    "listen chunk sentences=%d-%d words=%d budget=%d "
+                    "audio=%.1fs synth=%.2fs rtf=%.2f",
+                    first_index,
+                    last_index,
+                    words,
+                    budget,
+                    audio.duration_s,
+                    self._clock() - started,
+                    self._pacer.rtf,
+                )
+                self._pacer.note_delivered(audio.duration_s)
                 delivered = True
+                if ended:
+                    break
         except ReplySynthesisError:
             self._warn_synthesis("failed", delivered)
             self._stop_llm(flow)
@@ -619,6 +773,34 @@ class TurnManager:
             self._warn_synthesis("crashed", delivered, exc_info=True)
             self._stop_llm(flow)
         await flow.audio_q.put(_END)
+
+    async def _synthesize_chunk(
+        self, flow: _ReplyFlow, chunk: str, first_index: int, last_index: int
+    ) -> ReplyAudio | StreamedReply:
+        """Synthesize one chunk onto ``flow.audio_q``; return once all its audio exists.
+
+        When the voice can stream, the chunk is queued for playback as soon as
+        its first piece exists and the rest follows while it plays.
+        """
+        if not getattr(self._synth, "can_stream", False):
+            audio = await self._synth.synthesize_sentence(chunk)
+            await flow.audio_q.put((audio, chunk, first_index, last_index))
+            return audio
+        reply = StreamedReply()
+        queued = False
+        try:
+            async with aclosing(self._synth.stream_sentence(chunk)) as pieces:
+                async for piece in pieces:
+                    reply.push(piece)
+                    if not queued:
+                        queued = True
+                        await flow.audio_q.put((reply, chunk, first_index, last_index))
+        finally:
+            reply.end()  # the player must never wait on audio that will not come
+        if reply.duration_s == 0.0:
+            msg = "reply synthesis produced no audio"
+            raise ReplySynthesisError(msg)
+        return reply
 
     @staticmethod
     def _warn_synthesis(what: str, delivered: bool, *, exc_info: bool = False) -> None:
@@ -650,9 +832,11 @@ class TurnManager:
         # The history holds the spoken text: every chunk produced so far, and
         # each later chunk is appended as the LLM stream delivers it.
         self._conversation.add_bot(" ".join(flow.spoken))
+        self._room.append(f"{self._character.title()}: {' '.join(flow.spoken)}")
         self._bot_turn_added = True
 
         user_id = lines[-1].user_id
+        self._last_answered_user = user_id
         m = ListenTurnMetrics(
             turn_id=turn_id,
             user_id=user_id,
@@ -667,16 +851,24 @@ class TurnManager:
 
         item: Any = first
         while item is not _END:
-            audio, _chunk, index = item
+            audio, _chunk, index, last_index = item
+            self._pacer.note_playback_started(self._clock())
             self._playing_sentence = index
-            self._last_bot_sentence = flow.chunker.sentence_text(index)
+            self._last_bot_sentence = " ".join(
+                flow.chunker.sentence_text(i) for i in range(index, last_index + 1)
+            )
             self._last_spoke_at = self._clock()
-            await self._player.play(audio.pcm)
+            if isinstance(audio, StreamedReply):
+                await self._player.play_stream(audio.pieces())
+            else:
+                await self._player.play(audio.pcm)
             self._last_spoke_at = self._clock()
             item = await flow.audio_q.get()
 
     def _start_early_backchannel(self, event: UtteranceEvent) -> None:
         """Play the clip at end of speech, before ASR, for a turn that will likely reply."""
+        if self._settings.listen_only:
+            return  # listen-only never speaks, so there is nothing to acknowledge
         if self._state is TurnState.SPEAKING or self._bc_claimed or self._bc_active:
             return
         if event.audio.duration_s < EARLY_BACKCHANNEL_MIN_AUDIO_S - _EPS:
@@ -728,6 +920,7 @@ class TurnManager:
         """Cancel every task, stop the player and drop the history."""
         self._closed = True
         tasks: list[asyncio.Task[Any]] = list(self._barge_tasks)
+        tasks.extend(self._announce_tasks)
         for task in (self._reply_task, self._bc_task):
             if task is not None:
                 tasks.append(task)
@@ -736,6 +929,7 @@ class TurnManager:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._barge_candidates.clear()
+        self._announce_tasks.clear()
         self._pending.clear()
         self._bc_active = False
         self._reply_task = None
