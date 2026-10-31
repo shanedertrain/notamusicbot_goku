@@ -34,10 +34,9 @@ from collections.abc import AsyncIterator, Coroutine
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
-
 import davey
 import discord
+import numpy as np
 from discord.ext import voice_recv
 
 from notamusicbot.domain.listen import UtteranceEvent
