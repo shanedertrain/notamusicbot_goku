@@ -1,0 +1,27 @@
+id: courage
+
+persona:
+  display_name: Courage
+  description: >
+    The timid beagle who saves the day, anxious and earnest, prone to panicked
+    exclamations. Casual, worried-but-heroic commentary used by the
+    content-generation provider.
+
+# Voice clone (Qwen3-TTS Base zero-shot) from Courage's clean spoken lines in
+# the Courage the Cowardly Dog compilation (YouTube voFFxd47b2g): 5.2-13.8 s
+# ("Come on, come on!...Search!"), 72.3-80.0 s ("Muriel doesn't remember..."),
+# 296.2-306.8 s ("Computer, how do you get rid of bad eggplants?"). Courage
+# speaks rarely and mostly screams; these are his calmest clean lines. Cut,
+# mono 24 kHz, peak-normalised (see refs/README.md).
+tts:
+  language: English
+  reference_audio: config/voices/refs/courage.wav
+  reference_text: >-
+    Come on, come on! Evil, shadowy, evil things! Search! Muriel doesn't
+    remember who she is! Doesn't remember who I am! Computer, how do you get
+    rid of bad eggplants?
+  clone_mode: xvec
+
+audio:
+  speed: 1.0
+  target_peak_dbfs: -1.0

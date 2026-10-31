@@ -1,0 +1,26 @@
+id: computer
+
+persona:
+  display_name: The Computer
+  description: >
+    The sarcastic all-knowing house computer from the farmhouse, dry and
+    condescending. Casual, deadpan commentary used by the content-generation
+    provider.
+
+# Voice clone (Qwen3-TTS Base zero-shot) from the Computer's clean narration in
+# the Courage the Cowardly Dog compilation (YouTube voFFxd47b2g, 899.6-926.3 s):
+# the windmill legend, single synthesized voice, no background music or other
+# characters. Cut, mono 24 kHz, peak-normalised (see refs/README.md).
+tts:
+  language: English
+  reference_audio: config/voices/refs/computer.wav
+  reference_text: >-
+    The windmill was built 250 years ago by the first owner of this farmhouse,
+    Farmer Giles Gallet. He built the windmill for his farm at a time when
+    everyone else was dependent on water wheels built by a horde of vandals.
+    When the water dried up, Farmer Gallet was the only man with a working mill.
+  clone_mode: xvec
+
+audio:
+  speed: 1.0
+  target_peak_dbfs: -1.0
