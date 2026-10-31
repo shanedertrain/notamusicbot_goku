@@ -20,6 +20,11 @@ tts:
     everyone else was dependent on water wheels built by a horde of vandals.
     When the water dried up, Farmer Gallet was the only man with a working mill.
   clone_mode: xvec
+  # The source voice is a flat synth; loose sampling lets the model drift into an
+  # expressive natural read (owner: "sounds like Trump, not the Computer"). Pin
+  # like obama's stable set.
+  temperature: 0.55
+  top_k: 20
 
 audio:
   speed: 1.0
