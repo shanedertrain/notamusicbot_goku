@@ -157,6 +157,20 @@ def _within_cap(pcm: bytes, sent: int, cap_frames: int) -> tuple[bytes, int, boo
     return np.ascontiguousarray(np.rint(clip), dtype="<i2").tobytes(), cap_frames, True
 
 
+def _trim_leading_silence(frames: np.ndarray, *, silence_dbfs: float) -> np.ndarray:
+    """Drop leading near-silence: the model's warm-up hiss before the first word.
+
+    Keeps a short natural lead-in (the first loud frame minus 120 ms) so words
+    do not start abrubtly against the previous chunk.
+    """
+    threshold = 32768.0 * 10.0 ** (silence_dbfs / 20.0)
+    loud = np.flatnonzero(np.abs(frames.astype(np.int32)).max(axis=1) >= threshold)
+    if loud.size == 0:
+        return frames
+    start = max(0, int(loud[0]) - int(0.12 * REPLY_SAMPLE_RATE_HZ))
+    return frames[start:]
+
+
 def _trim_tail_silence(frames: np.ndarray, *, silence_dbfs: float, fade_s: float) -> np.ndarray:
     """Drop trailing near-silence (TTS ring-down / whine) with a short fade.
 
@@ -187,7 +201,9 @@ def _read_pcm(path: Path) -> ReplyAudio:
         raise ReplySynthesisError(msg)
     data = _trim_tail_silence(
         data, silence_dbfs=REPLY_TAIL_SILENCE_DBFS, fade_s=REPLY_TAIL_FADE_S
-    ).astype("<i2")
+    )
+    data = _trim_leading_silence(data, silence_dbfs=REPLY_TAIL_SILENCE_DBFS)
+    data = data.astype("<i2")
     pcm = np.ascontiguousarray(data, dtype="<i2").tobytes()
     return ReplyAudio(pcm=pcm, duration_s=data.shape[0] / REPLY_SAMPLE_RATE_HZ)
 
@@ -292,6 +308,7 @@ class ReplySynthesizer:
         post = StreamingPostprocess(self._processing, self._peaks)
         source = self._pipeline.stream(request)
         sent = 0
+        head_trimmed = False
         started = time.perf_counter()
         try:
             async for audio, sample_rate in source:
@@ -301,6 +318,15 @@ class ReplySynthesizer:
                 if sent == 0:
                     logger.info("TTS first audio after %.2fs", time.perf_counter() - started)
                 piece, sent, capped = _within_cap(pcm, sent, cap_frames)
+                if piece and not head_trimmed:
+                    # The first piece carries the model's warm-up hiss; trim it
+                    # exactly once, same rule as the whole-clip path.
+                    head_trimmed = True
+                    frames = np.frombuffer(piece, dtype="<i2").reshape(-1, REPLY_CHANNELS)
+                    trimmed = _trim_leading_silence(
+                        frames, silence_dbfs=REPLY_TAIL_SILENCE_DBFS
+                    ).astype("<i2")
+                    piece = np.ascontiguousarray(trimmed).tobytes()
                 if piece:
                     yield piece
                 if capped:
