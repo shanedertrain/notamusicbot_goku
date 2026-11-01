@@ -55,6 +55,11 @@ TTS_MAX_SECONDS_PER_WORD = 1.0
 TTS_CAP_FLOOR_SECONDS = 2.0
 TTS_CAP_FADE_OUT_S = 0.08
 
+# Reply tail trim: the model rings down after the last word (a low whine on the
+# clone); anything below this level after the last loud frame is faded out.
+REPLY_TAIL_SILENCE_DBFS = -45.0
+REPLY_TAIL_FADE_S = 0.08
+
 
 class ReplySynthesisError(RuntimeError):
     """A reply could not be synthesized; the caller drops it (says nothing)."""
@@ -152,6 +157,23 @@ def _within_cap(pcm: bytes, sent: int, cap_frames: int) -> tuple[bytes, int, boo
     return np.ascontiguousarray(np.rint(clip), dtype="<i2").tobytes(), cap_frames, True
 
 
+def _trim_tail_silence(frames: np.ndarray, *, silence_dbfs: float, fade_s: float) -> np.ndarray:
+    """Drop trailing near-silence (TTS ring-down / whine) with a short fade.
+
+    Keeps at least one frame. Operates on a float copy; caller converts back.
+    """
+    threshold = 32768.0 * 10.0 ** (silence_dbfs / 20.0)
+    loud = np.flatnonzero(np.abs(frames.astype(np.int32)).max(axis=1) >= threshold)
+    keep = int(loud[-1]) + 1 if loud.size else frames.shape[0]
+    if keep >= frames.shape[0]:
+        return frames
+    faded = frames.copy().astype(np.float64)
+    fade = min(int(round(fade_s * REPLY_SAMPLE_RATE_HZ)), frames.shape[0] - keep)
+    if fade > 0:
+        faded[keep : keep + fade] *= np.linspace(1.0, 0.0, fade)[:, None]
+    return faded[: keep + fade]
+
+
 def _read_pcm(path: Path) -> ReplyAudio:
     """Load a final WAV as s16le stereo 48 kHz bytes (blocking; run in a thread)."""
     data, rate = sf.read(path, dtype="int16", always_2d=True)
@@ -163,6 +185,9 @@ def _read_pcm(path: Path) -> ReplyAudio:
     elif data.shape[1] != REPLY_CHANNELS:
         msg = f"final.wav has {data.shape[1]} channels, expected {REPLY_CHANNELS}"
         raise ReplySynthesisError(msg)
+    data = _trim_tail_silence(
+        data, silence_dbfs=REPLY_TAIL_SILENCE_DBFS, fade_s=REPLY_TAIL_FADE_S
+    ).astype("<i2")
     pcm = np.ascontiguousarray(data, dtype="<i2").tobytes()
     return ReplyAudio(pcm=pcm, duration_s=data.shape[0] / REPLY_SAMPLE_RATE_HZ)
 
@@ -287,7 +312,13 @@ class ReplySynthesizer:
                     return
             tail, sent, _capped = _within_cap(post.finish(), sent, cap_frames)
             if tail:
-                yield tail
+                # Same tail trim as the whole-clip path: fade the ring-down after
+                # the last loud frame instead of playing it as a whine.
+                frames = np.frombuffer(tail, dtype="<i2").reshape(-1, REPLY_CHANNELS)
+                trimmed = _trim_tail_silence(
+                    frames, silence_dbfs=REPLY_TAIL_SILENCE_DBFS, fade_s=REPLY_TAIL_FADE_S
+                ).astype("<i2")
+                yield np.ascontiguousarray(trimmed).tobytes()
         except asyncio.CancelledError:
             raise
         except ReplySynthesisError:
